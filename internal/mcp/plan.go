@@ -93,6 +93,8 @@ func plan(ctx context.Context, cloner Cloner, issues IssueReader, in PlanInput) 
 	if err != nil {
 		return PlanOutput{}, err
 	}
+	// The result is what the agent sees; a clone directory that could not
+	// be removed changes none of it, so that failure is not the tool's.
 	defer func() { _ = co.Close() }()
 	parsed, contractSHA, err := readContract(ctx, co, in.Repository)
 	if err != nil {

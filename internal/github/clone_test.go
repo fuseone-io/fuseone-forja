@@ -183,6 +183,31 @@ func TestCloner_noTokenSourceOrMalformedRepository_rejectedBeforeGit(t *testing.
 	assertEmptyDir(t, dir)
 }
 
+// A repository whose owner or name carries URL syntax would make the clone
+// URL point somewhere else, with the credential scoped to that URL. The
+// remote never sees such a request.
+func TestCloner_repositoryWithURLSyntax_rejectedBeforeAnyRequest(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("%s %s reached the remote", r.Method, r.URL)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	tokens := &countingTokens{value: cloneToken}
+	dir := t.TempDir()
+	cloner := &github.Cloner{Tokens: tokens, Dir: dir, Remote: server.URL + "/"}
+
+	for _, repo := range []string{"user:pw@evil.example/name", "owner/name?x=1", "owner/name#frag", "own er/name", "owner/..", "../name", "owner/name%2F"} {
+		if _, err := cloner.Clone(context.Background(), repo, ""); err == nil {
+			t.Errorf("Clone(%q) succeeded", repo)
+		}
+	}
+	if len(tokens.mints()) != 0 {
+		t.Errorf("a malformed repository minted %d tokens", len(tokens.mints()))
+	}
+	assertEmptyDir(t, dir)
+}
+
 // basicAuth is the Authorization value GitHub's git endpoint accepts for an
 // App or PAT token: basic with the user x-access-token.
 func basicAuth(token string) string {
@@ -249,7 +274,9 @@ func assertGitEnv(t *testing.T, env, token string) {
 	if !strings.Contains(env, "GIT_CONFIG_KEY_0=http.") || !strings.Contains(env, ".extraheader\n") {
 		t.Errorf("GIT_CONFIG_KEY_0 is not an http extraheader")
 	}
-	for _, want := range []string{"GIT_TERMINAL_PROMPT=0\n", "GIT_CONFIG_NOSYSTEM=1\n", "GIT_CONFIG_GLOBAL=/dev/null\n"} {
+	// An empty GIT_ASKPASS stops git from falling back to SSH_ASKPASS, the
+	// one prompt GIT_TERMINAL_PROMPT does not cover.
+	for _, want := range []string{"GIT_TERMINAL_PROMPT=0\n", "GIT_ASKPASS=\n", "GIT_CONFIG_NOSYSTEM=1\n", "GIT_CONFIG_GLOBAL=/dev/null\n"} {
 		if !strings.Contains(env, want) {
 			t.Errorf("git environment lacks %q", strings.TrimSpace(want))
 		}

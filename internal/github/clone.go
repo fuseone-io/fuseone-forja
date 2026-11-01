@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -40,7 +41,7 @@ type Cloner struct {
 // empty, as a shallow single-branch clone. A failure after the directory
 // was created removes it.
 func (c *Cloner) Clone(ctx context.Context, repo, branch string) (*Checkout, error) {
-	owner, name, err := splitRepo(repo)
+	url, err := c.cloneURL(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -55,16 +56,36 @@ func (c *Cloner) Clone(ctx context.Context, repo, branch string) (*Checkout, err
 	if err != nil {
 		return nil, fmt.Errorf("github: clone %s: %w", repo, err)
 	}
-	remote := c.Remote
-	if remote == "" {
-		remote = DefaultRemote
-	}
-	co, err := c.cloneInto(ctx, dir, remote+owner+"/"+name+".git", branch, tok.Value)
+	co, err := c.cloneInto(ctx, dir, url, branch, tok.Value)
 	if err != nil {
+		// The clone failure is the error; a directory that could not be
+		// removed on top of it adds nothing the caller can act on.
 		_ = os.RemoveAll(dir)
 		return nil, fmt.Errorf("github: clone %s (%s): %w", repo, describeBranch(branch), err)
 	}
 	return co, nil
+}
+
+// repoPart is the character set GitHub allows in an owner or a repository
+// name. Anything else could turn the clone URL into a different host or
+// path, with the credential scoped to it.
+var repoPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+// cloneURL builds Remote + owner/name.git, refusing a repository whose
+// parts GitHub itself would not accept.
+func (c *Cloner) cloneURL(repo string) (string, error) {
+	owner, name, err := splitRepo(repo)
+	if err != nil {
+		return "", err
+	}
+	if !repoPart.MatchString(owner) || !repoPart.MatchString(name) || owner == ".." || name == ".." {
+		return "", fmt.Errorf("github: repository %q has characters GitHub does not allow", repo)
+	}
+	remote := c.Remote
+	if remote == "" {
+		remote = DefaultRemote
+	}
+	return remote + owner + "/" + name + ".git", nil
 }
 
 func (c *Cloner) cloneInto(ctx context.Context, dir, url, branch, token string) (*Checkout, error) {
@@ -106,15 +127,17 @@ func cloneEnv(url, token string) []string {
 
 // baseEnv is the process environment without any GIT_* variable, so a
 // caller's GIT_DIR or configuration cannot reach the clone, plus the
-// settings that keep the operator's own configuration and helpers out.
+// settings that keep the operator's own configuration and prompts out. An
+// empty GIT_ASKPASS stops the fallback to SSH_ASKPASS, the one prompt
+// GIT_TERMINAL_PROMPT does not disable.
 func baseEnv() []string {
-	env := make([]string, 0, len(os.Environ())+6)
+	env := make([]string, 0, len(os.Environ())+7)
 	for _, kv := range os.Environ() {
 		if !strings.HasPrefix(kv, "GIT_") {
 			env = append(env, kv)
 		}
 	}
-	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
+	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_ASKPASS=", "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null")
 }
 
 // redact replaces an error that echoes the credential with one that does
