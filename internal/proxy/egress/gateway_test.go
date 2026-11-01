@@ -53,6 +53,15 @@ func plainDial(ctx context.Context, network, addr string) (net.Conn, error) {
 	return d.DialContext(ctx, network, addr)
 }
 
+// neverDial fails the test when the gateway opens any upstream: a refused
+// destination is refused before anything leaves.
+func neverDial(t *testing.T) func(context.Context, string, string) (net.Conn, error) {
+	return func(_ context.Context, _, addr string) (net.Conn, error) {
+		t.Errorf("gateway dialled %s for a destination it must refuse", addr)
+		return nil, errors.New("test: dial refused")
+	}
+}
+
 type gatewayUnderTest struct {
 	addr   string
 	log    *syncBuffer
@@ -133,7 +142,7 @@ func TestGateway_connectToUnlistedHost_403AndOneDenialLine(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			gw := startGateway(t, egress.Options{Allow: []string{"proxy.golang.org:443"}, Dial: plainDial})
+			gw := startGateway(t, egress.Options{Allow: []string{"proxy.golang.org:443"}, Dial: neverDial(t)})
 
 			res, _ := connect(t, gw, tt.target)
 			if res.StatusCode != http.StatusForbidden {
@@ -155,7 +164,7 @@ func TestGateway_plainHTTPRequest_deniedWithHostPortOnlyNoPath(t *testing.T) {
 	t.Parallel()
 	// Listing the host does not open plain HTTP: the allowlist admits
 	// tunnels only.
-	gw := startGateway(t, egress.Options{Allow: []string{"example.com:80"}, Dial: plainDial})
+	gw := startGateway(t, egress.Options{Allow: []string{"example.com:80"}, Dial: neverDial(t)})
 	proxyURL := &url.URL{Scheme: "http", Host: gw.addr}
 	client := &http.Client{Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)}}
 	req, err := http.NewRequest(http.MethodPost, "http://user:hunter2@Example.COM/patients/maria?token=s3cr3t", strings.NewReader("cpf=123.456.789-00"))
@@ -241,7 +250,7 @@ func TestGateway_listedHostResolvingToLoopback_deniedByDefaultDialer(t *testing.
 
 func TestGateway_longDestination_truncatedToBound(t *testing.T) {
 	t.Parallel()
-	gw := startGateway(t, egress.Options{})
+	gw := startGateway(t, egress.Options{Dial: neverDial(t)})
 	target := strings.Repeat("a", 3000) + ".example:443"
 
 	res, _ := connect(t, gw, target)
