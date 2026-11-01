@@ -64,6 +64,26 @@ func TestContractReader_commitGoneBetweenCalls_notReportedAsMissing(t *testing.T
 	}
 }
 
+// A contents body whose encoding is not base64 carries no file: the reader
+// must say so rather than hand back an empty contract.
+func TestContractReader_contentsNotBase64_errorNamesTheEncoding(t *testing.T) {
+	t.Parallel()
+	fake := newFakeGitHub(t, "ghs_test_token", pilotContract)
+	fake.encoding = "none"
+	reader := &github.ContractReader{Tokens: &countingTokens{value: "ghs_test_token"}, BaseURL: fake.URL()}
+
+	src, err := reader.Read(context.Background(), fakeRepo)
+	if err == nil {
+		t.Fatalf("Read succeeded with encoding none: body %q", src.Body)
+	}
+	if errors.Is(err, github.ErrContractMissing) {
+		t.Fatalf("an undecodable body is not a missing contract: %v", err)
+	}
+	if !strings.Contains(err.Error(), "none") || !strings.Contains(err.Error(), fakeSHA) {
+		t.Errorf("error %q does not name the encoding and the commit", err)
+	}
+}
+
 func TestContractReader_tokenMintedPerCallAndScopedToRepository(t *testing.T) {
 	t.Parallel()
 	fake := newFakeGitHub(t, "ghs_test_token", pilotContract)

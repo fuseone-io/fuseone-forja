@@ -14,18 +14,19 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/github"
 )
 
-// The bodies below copy what the measurer recorded against the pilot on
-// 2026-11-01: the contents call (200 with base64 content chunked in 60-char
-// lines, and 404 "Not Found" for a missing file), the "No commit found"
-// 404 for an unknown ref, and the branch and repository fields the reader
-// uses. Status and shape are the API's; values are the test's.
+// The bodies below have the API's status and shape: the contents call (200
+// with base64 content chunked in 60-char lines, and 404 "Not Found" for a
+// missing file), the "No commit found" 404 for an unknown ref, and the
+// branch and repository fields the reader uses. Values are the test's.
 
 const (
-	fakeOwner  = "fuseone-io"
-	fakeName   = "fuseone-forja"
-	fakeRepo   = fakeOwner + "/" + fakeName
-	fakeSHA    = "3d5656a3e223a7bc54b8e8f13086f562b84dc90c"
-	fakeBranch = "main"
+	fakeOwner = "fuseone-io"
+	fakeName  = "fuseone-forja"
+	fakeRepo  = fakeOwner + "/" + fakeName
+	fakeSHA   = "3d5656a3e223a7bc54b8e8f13086f562b84dc90c"
+	// fakeBranch is deliberately not main: a reader that assumes the name
+	// of the default branch instead of resolving it gets a 404 here.
+	fakeBranch = "trunk"
 )
 
 // fakeGitHub serves the three endpoints ContractReader uses and enforces the
@@ -39,12 +40,15 @@ type fakeGitHub struct {
 	// vanished makes the branch commit unknown to the contents endpoint,
 	// as after a force push between the two calls.
 	vanished bool
+	// encoding is what the contents endpoint declares; anything but base64
+	// comes with an empty content, as the API answers for a large file.
+	encoding string
 	server   *httptest.Server
 }
 
 func newFakeGitHub(t *testing.T, token string, contract []byte) *fakeGitHub {
 	t.Helper()
-	f := &fakeGitHub{t: t, token: token, contract: contract}
+	f := &fakeGitHub{t: t, token: token, contract: contract, encoding: "base64"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repos/{owner}/{name}", f.repository)
 	mux.HandleFunc("GET /repos/{owner}/{name}/branches/{branch}", f.branch)
@@ -104,10 +108,14 @@ func (f *fakeGitHub) contents(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusNotFound, `{"message":"Not Found","documentation_url":"https://docs.github.com/rest/repos/contents#get-repository-content","status":"404"}`)
 		return
 	}
+	content := chunkedBase64(f.contract)
+	if f.encoding != "base64" {
+		content = ""
+	}
 	body := map[string]any{
 		"name": ".forja.yaml", "path": ".forja.yaml", "sha": "ea53aa91deb7ba2bb2695aa876dce4636adf9a97",
-		"size": len(f.contract), "type": "file", "encoding": "base64",
-		"content":      chunkedBase64(f.contract),
+		"size": len(f.contract), "type": "file", "encoding": f.encoding,
+		"content":      content,
 		"url":          fmt.Sprintf("https://api.github.com/repos/%s/contents/.forja.yaml?ref=%s", fakeRepo, fakeSHA),
 		"html_url":     fmt.Sprintf("https://github.com/%s/blob/%s/.forja.yaml", fakeRepo, fakeSHA),
 		"git_url":      fmt.Sprintf("https://api.github.com/repos/%s/git/blobs/ea53aa91deb7ba2bb2695aa876dce4636adf9a97", fakeRepo),
