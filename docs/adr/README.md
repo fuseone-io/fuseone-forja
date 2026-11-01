@@ -10,3 +10,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0027](0027-pilot-repository.md) | Pilot repository and phase-0 maintainer (provisional default) | proposed — ratification pending |
 | [0029](0029-workspace-agent.md) | Agent that runs in the workspace (provisional default) | proposed — ratification pending |
 | [0033](0033-reservation-by-ref-with-lease.md) | Issue reservation by ref with lease | proposed |
+| [9999](9999-egress-gateway.md) | Per-run egress gateway | proposed |
