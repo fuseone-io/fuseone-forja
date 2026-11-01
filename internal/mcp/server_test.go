@@ -16,27 +16,33 @@ import (
 )
 
 // connect wires a server over in-memory transports with a contract reader,
-// a claimer and GitHub readers no test here calls, and closes both ends
-// when the test ends.
+// a claimer, GitHub readers and a gates runner no test here calls, and
+// closes both ends when the test ends.
 func connect(t *testing.T, store *runstore.Memory) *sdk.ClientSession {
 	t.Helper()
-	return connectWith(t, store, &fakeContracts{err: errors.New("no contract reader in this test")})
+	return connectWith(t, store, &fakeCloner{err: errors.New("no cloner in this test")}, &fakeGates{err: errors.New("no gates runner in this test")})
 }
 
-func connectWith(t *testing.T, store *runstore.Memory, contracts forja.ContractReader) *sdk.ClientSession {
+// connectWith is connect with the dependencies forja.doctor reaches.
+func connectWith(t *testing.T, store *runstore.Memory, cloner *fakeCloner, gates *fakeGates) *sdk.ClientSession {
 	t.Helper()
+	contracts := &fakeContracts{err: errors.New("no contract reader in this test")}
 	claims := &fakeClaims{calls: &callLog{}, claimErr: errors.New("no claimer in this test")}
-	return connectDeps(t, testDeps(store, contracts, claims))
+	deps := testDeps(store, contracts, claims)
+	deps.Cloner = cloner
+	deps.Gates = gates
+	return connectDeps(t, deps)
 }
 
 // testDeps is the wiring every test starts from: a fixed clock, sequential
-// run ids, and GitHub readers that refuse every call.
+// run ids, and GitHub readers and a gates runner that refuse every call.
 func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja.Claimer) forja.Deps {
 	ids := &sequence{}
 	return forja.Deps{
 		Runs: store, Contracts: contracts, Claims: claims,
 		Cloner: &fakeCloner{err: errors.New("no cloner in this test")},
 		Issues: &fakeIssues{err: errors.New("no issue reader in this test")},
+		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
 		NewID:  ids.next, Now: startedAt, Version: "test",
 	}
 }

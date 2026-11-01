@@ -11,14 +11,15 @@ import (
 )
 
 // Deps is everything the tools need from the edge: the stores, the
-// repository readers, and the clock and id generator injected so that the
-// handlers stay deterministic.
+// repository readers, the gates runner, and the clock and id generator
+// injected so that the handlers stay deterministic.
 type Deps struct {
 	Runs      RunStore
 	Contracts ContractReader
 	Claims    Claimer
 	Cloner    Cloner
 	Issues    IssueReader
+	Gates     GateRunner
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time
@@ -33,7 +34,7 @@ type Deps struct {
 // forja.verify answers ErrNotImplemented.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
-	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Contracts))
+	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Cloner, deps.Gates))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
 	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))

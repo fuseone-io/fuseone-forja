@@ -12,6 +12,12 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
+// ContractReader is what forja.implement needs from GitHub: the contract
+// at the commit of the base branch, with that commit's SHA.
+type ContractReader interface {
+	Read(ctx context.Context, repo string) (domain.ContractSource, error)
+}
+
 // Claimer is what forja.implement needs to hold an issue for one run.
 type Claimer interface {
 	Claim(ctx context.Context, req domain.ClaimRequest) (domain.Claim, error)

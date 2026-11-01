@@ -12,9 +12,11 @@ import (
 
 	"github.com/fuseone-io/fuseone-forja/internal/claim"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
+	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
 // The environment variables the claims are configured from.
@@ -30,9 +32,10 @@ const (
 // wire assembles the tools' dependencies from the environment. With no
 // credentials at all the server still serves the tools that need none,
 // and every GitHub-backed tool answers with the error naming the variables
-// to set; the claim store is then nil. A half-configured App or a
-// malformed lease is a startup failure. The wall clock and the id
-// generator are injected here, at the edge.
+// to set; the claim store is then nil. A half-configured App, a malformed
+// lease, or a Docker client that cannot be built from DOCKER_HOST and its
+// siblings is a startup failure. The wall clock and the id generator are
+// injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
 	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
 	lease, err := claimLease(getenv)
@@ -40,6 +43,11 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Lease = lease
+	docker, err := workspace.NewDocker()
+	if err != nil {
+		return mcp.Deps{}, nil, err
+	}
+	deps.Gates = &gates.Runner{Launcher: launcher{docker}, Now: time.Now}
 	tokens, err := github.TokenSourceFromEnv(getenv)
 	if errors.Is(err, github.ErrNoCredentials) {
 		deps.Contracts = unavailableContracts{err: err}
@@ -128,6 +136,31 @@ func (c cloner) Clone(ctx context.Context, repo, branch string) (mcp.Checkout, e
 		return nil, err
 	}
 	return co, nil
+}
+
+// launcher adapts workspace.Docker, which returns its own types, to the
+// interfaces the gates runner declares.
+type launcher struct {
+	*workspace.Docker
+}
+
+func (l launcher) Launch(ctx context.Context, image, tree string) (gates.Workspace, error) {
+	c, err := l.Docker.Launch(ctx, image, tree)
+	if err != nil {
+		return nil, err
+	}
+	return container{c}, nil
+}
+
+type container struct {
+	*workspace.Container
+}
+
+func (c container) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
+	res, err := c.Container.Exec(ctx, command)
+	// The two result types are field for field the same; the conversion
+	// makes the compiler refuse an adapter that drops one.
+	return gates.ExecResult(res), err
 }
 
 // unavailableContracts is the reader served when no credential is set.

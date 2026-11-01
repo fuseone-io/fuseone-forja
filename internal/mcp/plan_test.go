@@ -35,6 +35,7 @@ var planIssueStatement = domain.Issue{Number: planIssue, Title: "forja.plan: che
 type fakeCheckout struct {
 	sha    string
 	branch string
+	dir    string
 	files  map[string]string
 	dirs   map[string]bool
 	// failPath makes ReadFile of that path fail with failErr, an error that
@@ -46,6 +47,7 @@ type fakeCheckout struct {
 
 func (f *fakeCheckout) SHA() string    { return f.sha }
 func (f *fakeCheckout) Branch() string { return f.branch }
+func (f *fakeCheckout) Dir() string    { return f.dir }
 func (f *fakeCheckout) Close() error   { f.closed++; return nil }
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {
@@ -139,6 +141,7 @@ func pilotCheckout(agentContext ...string) *fakeCheckout {
 	return &fakeCheckout{
 		sha:    planSHA,
 		branch: planBranch,
+		dir:    "/tmp/forja-plan-pilot",
 		files: map[string]string{
 			".forja.yaml":     contractWith(agentContext...),
 			"CLAUDE.md":       "# Forja\n",
