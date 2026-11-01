@@ -19,10 +19,12 @@ type Cloner interface {
 }
 
 // Checkout is a clone pinned at one commit. Every read answers for that
-// commit; Close discards the clone.
+// commit; Dir is the tree on disk the gates run on; Close discards the
+// clone.
 type Checkout interface {
 	SHA() string
 	Branch() string
+	Dir() string
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	ListFiles(ctx context.Context, dir string) ([]string, error)
 	BlobSHA(ctx context.Context, path string) (string, error)
@@ -122,8 +124,8 @@ func plan(ctx context.Context, cloner Cloner, issues IssueReader, in PlanInput) 
 }
 
 // readContract parses .forja.yaml at the checkout's commit and returns it
-// with its blob SHA. A missing file wraps ErrContractMissing with the same
-// text doctor uses; a rejected contract lists its defects.
+// with its blob SHA. A missing file wraps ErrContractMissing; a rejected
+// contract lists its defects and still names the blob they sit in.
 func readContract(ctx context.Context, co Checkout, repo string) (domain.Contract, string, error) {
 	body, err := co.ReadFile(ctx, ".forja.yaml")
 	if errors.Is(err, github.ErrPathMissing) {
@@ -138,7 +140,7 @@ func readContract(ctx context.Context, co Checkout, repo string) (domain.Contrac
 	}
 	parsed, err := contract.Parse(body)
 	if err != nil {
-		return domain.Contract{}, "", fmt.Errorf("contract at %s rejected: %w", co.SHA(), err)
+		return domain.Contract{}, sha, fmt.Errorf("contract at %s rejected: %w", co.SHA(), err)
 	}
 	return parsed, sha, nil
 }

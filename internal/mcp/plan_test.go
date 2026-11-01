@@ -35,6 +35,7 @@ var planIssueStatement = domain.Issue{Number: planIssue, Title: "forja.plan: che
 type fakeCheckout struct {
 	sha    string
 	branch string
+	dir    string
 	files  map[string]string
 	dirs   map[string]bool
 	// failPath makes ReadFile of that path fail with failErr, an error that
@@ -46,6 +47,7 @@ type fakeCheckout struct {
 
 func (f *fakeCheckout) SHA() string    { return f.sha }
 func (f *fakeCheckout) Branch() string { return f.branch }
+func (f *fakeCheckout) Dir() string    { return f.dir }
 func (f *fakeCheckout) Close() error   { f.closed++; return nil }
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {
@@ -139,6 +141,7 @@ func pilotCheckout(agentContext ...string) *fakeCheckout {
 	return &fakeCheckout{
 		sha:    planSHA,
 		branch: planBranch,
+		dir:    "/tmp/forja-plan-pilot",
 		files: map[string]string{
 			".forja.yaml":     contractWith(agentContext...),
 			"CLAUDE.md":       "# Forja\n",
@@ -169,10 +172,10 @@ func contractWith(entries ...string) string {
 func connectPlan(t *testing.T, cloner *fakeCloner, issues *fakeIssues) *sdk.ClientSession {
 	t.Helper()
 	return connectDeps(t, forja.Deps{
-		Runs:      runstore.NewMemory(),
-		Contracts: &fakeContracts{err: errors.New("no contract reader in this test")},
-		Cloner:    cloner,
-		Issues:    issues,
+		Runs:   runstore.NewMemory(),
+		Cloner: cloner,
+		Issues: issues,
+		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
 	})
 }
 

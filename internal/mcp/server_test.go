@@ -16,19 +16,21 @@ import (
 )
 
 // connect wires New to a client over in-memory transports, with GitHub
-// readers no test here calls, and closes both ends when the test ends.
+// and Docker dependencies no test here calls, and closes both ends when
+// the test ends.
 func connect(t *testing.T, store *runstore.Memory) *sdk.ClientSession {
 	t.Helper()
-	return connectWith(t, store, &fakeContracts{err: errors.New("no contract reader in this test")})
+	return connectWith(t, store, &fakeCloner{err: errors.New("no cloner in this test")}, &fakeGates{err: errors.New("no gates runner in this test")})
 }
 
-func connectWith(t *testing.T, store *runstore.Memory, contracts forja.ContractReader) *sdk.ClientSession {
+// connectWith is connect with the dependencies forja.doctor reaches.
+func connectWith(t *testing.T, store *runstore.Memory, cloner *fakeCloner, gates *fakeGates) *sdk.ClientSession {
 	t.Helper()
 	return connectDeps(t, forja.Deps{
-		Runs:      store,
-		Contracts: contracts,
-		Cloner:    &fakeCloner{err: errors.New("no cloner in this test")},
-		Issues:    &fakeIssues{err: errors.New("no issue reader in this test")},
+		Runs:   store,
+		Cloner: cloner,
+		Issues: &fakeIssues{err: errors.New("no issue reader in this test")},
+		Gates:  gates,
 	})
 }
 

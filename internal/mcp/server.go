@@ -10,10 +10,10 @@ import (
 
 // Deps is everything the tools reach outside the process.
 type Deps struct {
-	Runs      RunReader
-	Contracts ContractReader
-	Cloner    Cloner
-	Issues    IssueReader
+	Runs   RunReader
+	Cloner Cloner
+	Issues IssueReader
+	Gates  GateRunner
 }
 
 // New builds the server with every tool registered. forja.status,
@@ -21,7 +21,7 @@ type Deps struct {
 // ErrNotImplemented.
 func New(deps Deps, version string) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: version}, nil)
-	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Contracts))
+	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Cloner, deps.Gates))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), notImplemented[ImplementInput, ImplementOutput](domain.ToolImplement))
 	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))
