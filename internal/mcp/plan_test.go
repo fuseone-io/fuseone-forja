@@ -463,6 +463,11 @@ func TestPlan_checkoutClosedOnSuccessAndOnEveryErrorPath(t *testing.T) {
 			co.failPath, co.failErr = "CLAUDE.md", errors.New("git cat-file: exit status 128")
 			return co
 		}, issues: &fakeIssues{issue: planIssueStatement}, isError: true},
+		{name: "agent_context read fails inside a directory", co: func() *fakeCheckout {
+			co := pilotCheckout("docs/")
+			co.failPath, co.failErr = "docs/b.md", errors.New("git cat-file: exit status 128")
+			return co
+		}, issues: &fakeIssues{issue: planIssueStatement}, isError: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
