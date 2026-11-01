@@ -177,6 +177,8 @@ func TestParse_invalid_errorNamesPathAndLine(t *testing.T) {
 		{name: "service without image", path: "services.postgres.image", line: 4, src: "version: 1\nimage: golang:1.25\nservices:\n  postgres:\n    env: {A: b}\ngates:\n  - name: build\n    run: make build\n"},
 		{name: "service env of the wrong kind", path: "services.postgres.env", line: 6, src: "version: 1\nimage: golang:1.25\nservices:\n  postgres:\n    image: postgres:17\n    env: [a]\ngates:\n  - name: build\n    run: make build\n"},
 		{name: "not a mapping", path: "", line: 1, src: "- a\n- b\n"},
+		{name: "duplicate top-level key", path: "image", line: 3, src: "version: 1\nimage: golang:1.25\nimage: golang:1.24\ngates:\n  - name: build\n    run: make build\n"},
+		{name: "duplicate service", path: "services.postgres", line: 6, src: "version: 1\nimage: golang:1.25\nservices:\n  postgres:\n    image: postgres:17\n  postgres:\n    image: postgres:16\ngates:\n  - name: build\n    run: make build\n"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
