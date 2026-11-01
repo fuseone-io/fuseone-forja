@@ -43,7 +43,7 @@ func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, geten
 		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 		return 1
 	}
-	server := mcp.New(runstore.NewMemory(), contracts, version)
+	server := mcp.New(mcp.Deps{Runs: runstore.NewMemory(), Contracts: contracts, Version: version})
 	err = server.Run(ctx, transport)
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0

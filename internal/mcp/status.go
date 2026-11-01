@@ -30,6 +30,9 @@ type StatusOutput struct {
 	StartedAt  time.Time `json:"started_at"`
 	// FinishedAt is absent while the run is not terminal.
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	// Supersedes names the run whose expired claim this run took over;
+	// absent when the issue was free.
+	Supersedes string `json:"supersedes,omitempty"`
 }
 
 func statusTool() *sdk.Tool {
@@ -59,5 +62,6 @@ func statusOutput(run domain.Run) StatusOutput {
 		State:      string(run.State),
 		StartedAt:  run.StartedAt,
 		FinishedAt: run.FinishedAt,
+		Supersedes: run.Supersedes,
 	}
 }
