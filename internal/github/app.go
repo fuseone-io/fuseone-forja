@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"time"
 )
 
@@ -17,7 +18,8 @@ type AppTokenSource struct {
 	AppID          string
 	InstallationID string
 	Key            *rsa.PrivateKey
-	// HTTP is the client used against BaseURL; nil means http.DefaultClient.
+	// HTTP is the client used against BaseURL; nil means a client with a
+	// default timeout.
 	HTTP *http.Client
 	// BaseURL is the API root; empty means DefaultBaseURL.
 	BaseURL string
@@ -59,7 +61,7 @@ func (s *AppTokenSource) Token(ctx context.Context, repo string) (Token, error) 
 	}
 	var minted mintResponse
 	api := newAPIClient(s.HTTP, s.BaseURL, jwt)
-	call := apiCall{path: "/app/installations/" + s.InstallationID + "/access_tokens", body: body, want: http.StatusCreated}
+	call := apiCall{path: "/app/installations/" + url.PathEscape(s.InstallationID) + "/access_tokens", body: body, want: http.StatusCreated}
 	if err := api.do(ctx, call, &minted); err != nil {
 		return Token{}, fmt.Errorf("github: mint installation token for %s: %w", repo, err)
 	}

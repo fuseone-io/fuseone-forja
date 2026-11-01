@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -20,6 +21,9 @@ const (
 	// token responses are small, and an error body is read only for its
 	// message.
 	maxBody = 1 << 20
+	// defaultTimeout bounds every call made with a client the caller did
+	// not supply, so a stalled API never stalls the tool.
+	defaultTimeout = 30 * time.Second
 )
 
 // StatusError is a response the API answered with a status the caller did
@@ -55,7 +59,7 @@ type apiClient struct {
 
 func newAPIClient(client *http.Client, base, token string) *apiClient {
 	if client == nil {
-		client = http.DefaultClient
+		client = &http.Client{Timeout: defaultTimeout}
 	}
 	if base == "" {
 		base = DefaultBaseURL
@@ -124,6 +128,8 @@ func (c *apiClient) statusError(res *http.Response) *StatusError {
 	var payload struct {
 		Message string `json:"message"`
 	}
+	// A body that is not the API's JSON error leaves the message empty;
+	// the status alone is the error, so the decode failure is not one.
 	_ = json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(&payload)
 	if c.token != "" && strings.Contains(payload.Message, c.token) {
 		payload.Message = ""

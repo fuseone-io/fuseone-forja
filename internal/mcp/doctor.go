@@ -58,21 +58,30 @@ func doctorHandler(contracts ContractReader) sdk.ToolHandlerFor[DoctorInput, Doc
 		if err != nil {
 			return nil, DoctorOutput{}, fmt.Errorf("%s: %w", domain.ToolDoctor, err)
 		}
-		return nil, doctorOutput(in.Repository, src), nil
+		out, err := doctorOutput(in.Repository, src)
+		if err != nil {
+			return nil, DoctorOutput{}, fmt.Errorf("%s: %w", domain.ToolDoctor, err)
+		}
+		return nil, out, nil
 	}
 }
 
-func doctorOutput(repo string, src domain.ContractSource) DoctorOutput {
+// doctorOutput turns the parse outcome into the wire form. Only field
+// errors are a result; any other parse failure is returned as an error.
+func doctorOutput(repo string, src domain.ContractSource) (DoctorOutput, error) {
 	out := DoctorOutput{Repository: repo, SHA: src.SHA, Errors: []DoctorError{}}
 	parsed, err := contract.Parse(src.Body)
 	var defects contract.Errors
-	if errors.As(err, &defects) {
+	switch {
+	case err == nil:
+		out.OK = true
+		out.Contract = &parsed
+	case errors.As(err, &defects):
 		for _, d := range defects {
 			out.Errors = append(out.Errors, DoctorError{Path: d.Path, Line: d.Line, Message: d.Message})
 		}
-		return out
+	default:
+		return DoctorOutput{}, err
 	}
-	out.OK = true
-	out.Contract = &parsed
-	return out
+	return out, nil
 }

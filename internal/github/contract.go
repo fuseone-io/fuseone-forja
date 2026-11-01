@@ -19,7 +19,8 @@ var ErrContractMissing = errors.New("contract missing")
 // that repository. The SHA it returns is that commit's, never the blob's.
 type ContractReader struct {
 	Tokens TokenSource
-	// HTTP is the client used against BaseURL; nil means http.DefaultClient.
+	// HTTP is the client used against BaseURL; nil means a client with a
+	// default timeout.
 	HTTP *http.Client
 	// BaseURL is the API root; empty means DefaultBaseURL.
 	BaseURL string
