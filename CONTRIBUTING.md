@@ -11,8 +11,8 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 
 ## Set up
 
-- Go 1.24 or later, Docker (the workspace runtime of the first slices), `gh` authenticated against `fuseone-io`.
-- There is no code yet. The first slice ([#5](https://github.com/fuseone-io/fuseone-forja/issues/5)) brings the `Makefile` and CI; until it lands, `make check` is the target to create, not to run.
+- Go 1.25 or later, golangci-lint v2.15.0 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`), Docker (the workspace runtime of the first slices), `gh` authenticated against `fuseone-io`.
+- `make check` runs build, vet, lint, tests and race; `make serve` starts the MCP server over stdio. The README says how to register it in a client.
 - Running a slice against the pilot repository needs the Forja GitHub App installed there ([#4](https://github.com/fuseone-io/fuseone-forja/issues/4)). Nothing in this repository needs your personal GitHub token.
 - Working with Claude Code: the roles in [`.claude/agents/`](.claude/agents/) (architect, developer, qa, security-reviewer, triager, measurer) and the rules they read in [`.claude/agent-rules.md`](.claude/agent-rules.md).
 

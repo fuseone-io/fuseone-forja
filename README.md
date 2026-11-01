@@ -31,7 +31,8 @@ classifies its tools in the Gate like any other.
 
 **Status:** phase 0 is proposed, not approved. The repository holds the PRD,
 the engineering rules and the backlog ([issues #1–#24](https://github.com/fuseone-io/fuseone-forja/issues)),
-each a vertical slice with its blockers listed inline. There is no code yet.
+each a vertical slice with its blockers listed inline. The code starts with
+the MCP server skeleton ([#5](https://github.com/fuseone-io/fuseone-forja/issues/5)).
 
 ## The shape of it
 
@@ -186,14 +187,29 @@ So is the agent that runs inside it ([#2](https://github.com/fuseone-io/fuseone-
 
 ## Running it locally
 
-Not yet. The first slice ([#5](https://github.com/fuseone-io/fuseone-forja/issues/5))
-brings the MCP server, a `Makefile` and CI. When it lands, this section will
-read:
+Prerequisites: Go 1.25 or later and [golangci-lint](https://golangci-lint.run)
+v2.15.0 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`).
+No token, no Docker and no GitHub App are needed for this.
 
 ```sh
 make check       # build, vet, lint, tests, race
-make serve       # the MCP server, locally
+make serve       # the MCP server over stdio
 ```
+
+`make build` writes the binary to `bin/forjad`. The server speaks MCP over
+stdio, so a client starts it as a subprocess:
+
+```sh
+# Claude Code
+claude mcp add forja -- /path/to/fuseone-forja/bin/forjad serve
+
+# MCP Inspector
+npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
+```
+
+Either client lists the five tools with their input and output schemas and
+the read/write annotation FuseOne's Gate reads. Only `forja.status` answers
+today; the other four return "not implemented" until their slices land.
 
 ## Layout
 
