@@ -1,4 +1,4 @@
-# ADR 9999 — Agente que roda no workspace (default provisório)
+# ADR 0029 — Agente que roda no workspace (default provisório)
 
 - **Status:** proposto — default tomado pelo time; **ratificação pendente do humano**
 - **Data:** 2026-11-01
