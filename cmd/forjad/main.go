@@ -12,10 +12,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"github.com/fuseone-io/fuseone-forja/internal/domain"
-	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
-	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
 
 const version = "0.0.0-dev"
@@ -34,47 +31,29 @@ func run(args []string, stderr io.Writer) int {
 	return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
 }
 
-// serve runs the server until the transport closes or ctx is cancelled. A
-// cancelled context is the operator stopping the server, not a failure.
+// serve recovers the claims a previous process left, then runs the server
+// until the transport closes or ctx is cancelled. A cancelled context is
+// the operator stopping the server, not a failure; a recovery that cannot
+// finish is one.
 func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, getenv func(string) string) int {
-	contracts, err := contractReader(getenv)
+	deps, store, err := wire(getenv, stderr)
 	if err != nil {
 		// The exit code is the only channel left when stderr itself fails.
 		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 		return 1
 	}
-	server := mcp.New(mcp.Deps{Runs: runstore.NewMemory(), Contracts: contracts, Version: version})
-	err = server.Run(ctx, transport)
+	if err := recoverClaims(ctx, store, stderr); err != nil {
+		// The exit code is the only channel left when stderr itself fails.
+		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
+		return 1
+	}
+	err = mcp.New(deps).Run(ctx, transport)
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}
 	// The exit code is the only channel left when stderr itself fails.
 	_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 	return 1
-}
-
-// contractReader builds the GitHub reader from the environment. With no
-// credentials at all the server still serves the tools that need none, and
-// forja.doctor answers with the error naming the variables to set. A
-// half-configured App is a startup failure.
-func contractReader(getenv func(string) string) (mcp.ContractReader, error) {
-	tokens, err := github.TokenSourceFromEnv(getenv)
-	if errors.Is(err, github.ErrNoCredentials) {
-		return unavailableContracts{err: err}, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &github.ContractReader{Tokens: tokens}, nil
-}
-
-// unavailableContracts is the reader served when no credential is set.
-type unavailableContracts struct {
-	err error
-}
-
-func (u unavailableContracts) Read(context.Context, string) (domain.ContractSource, error) {
-	return domain.ContractSource{}, u.err
 }
 
 func usage(w io.Writer) {

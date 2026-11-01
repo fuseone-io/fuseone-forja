@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,6 +97,149 @@ func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("missing credentials are not a startup failure, got stderr %q", stderr.String())
+	}
+}
+
+// With credentials but no state directory the server serves, and says
+// once on stderr that a claim left by a crash is only freed by its lease.
+func TestServe_noStateDir_warnsAndServes(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 0 {
+		t.Fatalf("serve without a state directory = %d, want 0: %s", code, stderr.String())
+	}
+	for _, want := range []string{"FORJA_STATE_DIR", "lease"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr %q does not mention %s", stderr.String(), want)
+		}
+	}
+	if lines := strings.Count(stderr.String(), "\n"); lines != 1 {
+		t.Errorf("stderr has %d lines, want exactly one warning: %q", lines, stderr.String())
+	}
+}
+
+func TestServe_stateDirSetAndEmpty_servesSilently(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": t.TempDir()}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 0 {
+		t.Fatalf("serve with an empty state directory = %d, want 0: %s", code, stderr.String())
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("an empty journal is nothing to report, got stderr %q", stderr.String())
+	}
+}
+
+// A journal that cannot be read means claims may be left behind that the
+// server cannot account for: that is a startup failure, not a warning.
+func TestServe_corruptJournal_exitsOne(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "claims"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "claims", "o__r__7.json"), []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": dir}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+		t.Fatalf("serve with a corrupt journal = %d, want 1: %s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "o__r__7.json") {
+		t.Fatalf("stderr %q does not name the corrupt entry", stderr.String())
+	}
+}
+
+func TestServe_invalidClaimLease_exitsOneNamingTheVariable(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{"not a duration": "soon", "zero": "0s", "negative": "-5m"}
+	for name, value := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_CLAIM_LEASE": value}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, serverTransport := sdk.NewInMemoryTransports()
+
+			var stderr bytes.Buffer
+			if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+				t.Fatalf("serve with FORJA_CLAIM_LEASE=%q = %d, want 1", value, code)
+			}
+			if !strings.Contains(stderr.String(), "FORJA_CLAIM_LEASE") {
+				t.Fatalf("stderr %q does not name the variable", stderr.String())
+			}
+		})
+	}
+}
+
+// Without credentials forja.implement fails before reserving anything,
+// naming the variables to set.
+func TestServe_noCredentials_implementFailsExplicitly(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clientTransport, serverTransport := sdk.NewInMemoryTransports()
+	var stderr bytes.Buffer
+	exited := make(chan int, 1)
+	go func() { exited <- serve(ctx, serverTransport, &stderr, emptyEnv) }()
+
+	client := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
+		Name:      "forja.implement",
+		Arguments: map[string]any{"repository": "fuseone-io/fuseone-forja", "issue": 12, "base_branch": "main"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(forja.implement): protocol error %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("forja.implement succeeded with no credentials: %v", res.StructuredContent)
+	}
+	text := ""
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	if !strings.Contains(text, "FORJA_GITHUB_TOKEN") || strings.Contains(text, "not wired") {
+		t.Errorf("error text %q must name the credentials, not a missing dependency", text)
+	}
+	_ = cs.Close()
+	cancel()
+	if code := <-exited; code != 0 {
+		t.Fatalf("serve = %d, want 0", code)
+	}
+}
+
+func TestNewRunID_hexOfSixteenRandomBytes(t *testing.T) {
+	t.Parallel()
+	seen := map[string]bool{}
+	for range 64 {
+		id := newRunID()
+		if len(id) != 32 || strings.Trim(id, "0123456789abcdef") != "" {
+			t.Fatalf("newRunID() = %q, want 32 lowercase hex characters", id)
+		}
+		if seen[id] {
+			t.Fatalf("newRunID() repeated %q", id)
+		}
+		seen[id] = true
 	}
 }
 
