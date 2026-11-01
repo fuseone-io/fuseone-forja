@@ -98,7 +98,7 @@ func doctor(ctx context.Context, cloner Cloner, runner GateRunner, repo string) 
 		return DoctorOutput{}, err
 	}
 	out.Contract = &parsed
-	out.addReport(parsed, report)
+	out.addReport(report)
 	return out, nil
 }
 
