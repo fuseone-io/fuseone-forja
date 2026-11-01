@@ -47,6 +47,9 @@ type Run struct {
 	StartedAt  time.Time
 	// FinishedAt is nil until the run reaches a terminal state.
 	FinishedAt *time.Time
+	// Supersedes is the id of the run whose expired claim this run took
+	// over; empty when the issue was free.
+	Supersedes string
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
