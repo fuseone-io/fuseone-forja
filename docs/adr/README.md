@@ -1,11 +1,11 @@
 # Architecture Decision Records
 
-Um ADR por decisão. O arquivo nasce como `9999-<slug>.md` e é renomeado para o
-número do PR que o introduz, logo após o PR ser aberto. Status possíveis:
-`proposto`, `aceito`, `substituído por NNNN`, `rejeitado`.
+One ADR per decision. The file is born as `9999-<slug>.md` and is renamed to
+the number of the PR that introduces it, right after the PR is opened.
+Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 
-| ADR | Título | Status |
+| ADR | Title | Status |
 |---|---|---|
-| [0026](0026-isolamento-do-workspace.md) | Isolamento do workspace e onde a Forja roda | proposto |
-| [0027](0027-repositorio-piloto.md) | Repositório piloto e mantenedor da fase 0 (default provisório) | proposto — ratificação pendente |
-| [0029](0029-agente-no-workspace.md) | Agente que roda no workspace (default provisório) | proposto — ratificação pendente |
+| [0026](0026-workspace-isolation.md) | Workspace isolation and where Forja runs | proposed |
+| [0027](0027-pilot-repository.md) | Pilot repository and phase-0 maintainer (provisional default) | proposed — ratification pending |
+| [0029](0029-workspace-agent.md) | Agent that runs in the workspace (provisional default) | proposed — ratification pending |

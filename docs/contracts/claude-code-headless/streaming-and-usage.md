@@ -1,12 +1,13 @@
-# Streaming SSE e o bloco `usage`
+# SSE streaming and the `usage` block
 
-Fonte: gravação `bare-200-1`. O gravador respondeu ao único
-`POST /v1/messages?beta=true` com `200`, `content-type: text/event-stream;
-charset=utf-8` e seis eventos SSE escritos à mão. O agente aceitou, imprimiu
-o texto como resultado e saiu com **exit 0** em 0,87 s. Não houve segundo
-`POST` (nem `count_tokens`, nem geração de título) depois do `message_stop`.
+Source: recording `bare-200-1`. The recorder answered the single
+`POST /v1/messages?beta=true` with `200`, `content-type: text/event-stream;
+charset=utf-8` and six hand-written SSE events. The agent accepted, printed
+the text as the result and exited with **exit 0** in 0,87 s. There was no
+second `POST` (neither `count_tokens` nor title generation) after the
+`message_stop`.
 
-## A resposta mínima que o agente aceitou
+## The minimal response the agent accepted
 
 ```
 event: message_start
@@ -28,27 +29,27 @@ event: message_stop
 data: {"type":"message_stop"}
 ```
 
-Cabeçalhos da resposta: `Content-Type: text/event-stream; charset=utf-8`,
-`Cache-Control: no-cache`, `Connection: close`, sem compressão.
+Response headers: `Content-Type: text/event-stream; charset=utf-8`,
+`Cache-Control: no-cache`, `Connection: close`, no compression.
 
-## Onde o proxy lê o consumo
+## Where the proxy reads consumption
 
-| Evento | Campo | Valor enviado | Valor que o agente reportou |
+| Event | Field | Value sent | Value the agent reported |
 |---|---|---|---|
 | `message_start` | `message.usage.input_tokens` | 1234 | `usage.input_tokens: 1234` |
 | `message_start` | `message.usage.cache_creation_input_tokens` / `cache_read_input_tokens` | 0 / 0 | 0 / 0 |
 | `message_delta` | `usage.output_tokens` | 56 | `usage.output_tokens: 56` |
 
-O proxy mede **input + output** por run somando, a cada resposta que
-repassa, `message_start.message.usage.input_tokens` (mais os dois campos de
-cache, se forem cobrados) e `message_delta.usage.output_tokens`. É a soma
-dessas duas leituras, no proxy, que compara com o teto; o que o agente
-imprime em `stdout` é derivado do mesmo stream e **não** serve de evidência —
-o workspace controla o `stdout`.
+The proxy measures **input + output** per run by adding, on each response it
+forwards, `message_start.message.usage.input_tokens` (plus the two cache
+fields, if they are billed) and `message_delta.usage.output_tokens`. It is
+the sum of those two readings, in the proxy, that is compared with the cap;
+what the agent prints to `stdout` is derived from the same stream and does
+**not** serve as evidence — the workspace controls `stdout`.
 
-## O JSON que `--output-format json` devolve
+## The JSON that `--output-format json` returns
 
-`stdout` de `bare-200-1`, uma linha, reformatada:
+`stdout` of `bare-200-1`, one line, reformatted:
 
 ```
 {"type":"result","subtype":"success","is_error":false,"terminal_reason":"completed",
@@ -75,13 +76,13 @@ o workspace controla o `stdout`.
  "subagent_stats":{"spawned":0, …}}
 ```
 
-`total_cost_usd` é calculado **no cliente** a partir da tabela de preços
-embutida (`costBasis: "list"`): 1234 × 4 / 10⁶ + 56 × 20 / 10⁶ = 0,006056. Em
-caso de erro de API o mesmo JSON sai com `is_error: true`,
-`terminal_reason: "api_error"` e `api_error_status` (ver
-[erros-e-retentativas.md](erros-e-retentativas.md)).
+`total_cost_usd` is computed **on the client** from the built-in price table
+(`costBasis: "list"`): 1234 × 4 / 10⁶ + 56 × 20 / 10⁶ = 0,006056. On an API
+error the same JSON comes out with `is_error: true`,
+`terminal_reason: "api_error"` and `api_error_status` (see
+[errors-and-retries.md](errors-and-retries.md)).
 
-Campos úteis ao plano de controle, lidos como **informação** e não como
-evidência: `is_error`, `terminal_reason`, `api_error_status`, `num_turns`,
-`duration_ms`, `permission_denials`. O código de saída do processo foi 0 no
-sucesso e 1 nos erros de API medidos.
+Fields useful to the control plane, read as **information** and not as
+evidence: `is_error`, `terminal_reason`, `api_error_status`, `num_turns`,
+`duration_ms`, `permission_denials`. The process exit code was 0 on success
+and 1 on the measured API errors.
