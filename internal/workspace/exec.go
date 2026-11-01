@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -28,14 +29,18 @@ type ExecResult struct {
 	Truncated bool
 }
 
-// Container is one running workspace.
+// Container is one running workspace, on a network of its own.
 type Container struct {
-	cli *client.Client
-	id  string
+	cli     *client.Client
+	id      string
+	network string
 }
 
 // ID is the daemon's identifier of the container.
 func (c *Container) ID() string { return c.id }
+
+// NetworkID is the daemon's identifier of the run's network.
+func (c *Container) NetworkID() string { return c.network }
 
 // Exec runs command with sh -c at workDir and returns its exit code and
 // streams. A non-zero exit is a result. The error is for a failure to run
@@ -109,12 +114,25 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 	}
 }
 
-// Close kills and removes the container. A container the daemon no longer
-// knows is already closed.
+// Close kills and removes the container, then its network. A container or
+// network the daemon no longer knows is already closed. Every removal is
+// attempted whatever the one before it returned.
 func (c *Container) Close(ctx context.Context) error {
-	_, err := c.cli.ContainerRemove(ctx, c.id, client.ContainerRemoveOptions{Force: true})
+	return errors.Join(
+		removeContainer(ctx, c.cli, c.id),
+		removeNetwork(ctx, c.cli, c.network),
+	)
+}
+
+// removeContainer kills and removes one container; one that was never
+// created or that the daemon no longer knows is already removed.
+func removeContainer(ctx context.Context, cli *client.Client, id string) error {
+	if id == "" {
+		return nil
+	}
+	_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("workspace: remove container: %w", err)
+		return fmt.Errorf("workspace: remove container %s: %w", id, err)
 	}
 	return nil
 }

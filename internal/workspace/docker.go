@@ -46,16 +46,38 @@ func (d *Docker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Launch pulls image when the daemon lacks it, starts a container that
-// idles at workDir with the image's own environment and nothing of the
-// control plane's, and copies tree into workDir. The tree is copied, not
-// mounted: the daemon may run in a VM that does not share this filesystem.
-// A failure after the container exists removes it.
+// Launch pulls image when the daemon lacks it, creates the run's own
+// network, starts a container on it that idles at workDir with the image's
+// own environment and nothing of the control plane's, and copies tree into
+// workDir. The tree is copied, not mounted: the daemon may run in a VM
+// that does not share this filesystem. A failure after the network exists
+// removes what was created.
 func (d *Docker) Launch(ctx context.Context, image, tree string) (*Container, error) {
-	if err := d.ensureImage(ctx, image); err != nil {
+	if err := ensureImage(ctx, d.cli, image); err != nil {
 		return nil, fmt.Errorf("workspace: image %s: %w", image, err)
 	}
-	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	network, err := createNetwork(ctx, d.cli)
+	if err != nil {
+		return nil, err
+	}
+	c := &Container{cli: d.cli, network: network}
+	if err := c.create(ctx, image, tree); err != nil {
+		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+		defer cancel()
+		// The launch failure is the error; a container or network that
+		// could not be removed on top of it adds nothing the caller can
+		// act on.
+		_ = c.Close(closeCtx)
+		return nil, err
+	}
+	return c, nil
+}
+
+// create creates the workspace container on the run network, starts it
+// and copies tree in. The network is set at creation: a container
+// connected afterwards does not get the embedded DNS.
+func (c *Container) create(ctx context.Context, image, tree string) error {
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:      image,
 			Cmd:        []string{"sleep", "infinity"},
@@ -63,33 +85,25 @@ func (d *Docker) Launch(ctx context.Context, image, tree string) (*Container, er
 			Env:        nil,
 			Labels:     map[string]string{labelRun: "doctor"},
 		},
-		HostConfig: &container.HostConfig{},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(c.network)},
 	})
 	if err != nil {
-		return nil, fmt.Errorf("workspace: create container from %s: %w", image, err)
+		return fmt.Errorf("workspace: create container from %s: %w", image, err)
 	}
-	c := &Container{cli: d.cli, id: created.ID}
-	if err := c.startWithTree(ctx, tree); err != nil {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
-		defer cancel()
-		// The launch failure is the error; a container that could not be
-		// removed on top of it adds nothing the caller can act on.
-		_ = c.Close(closeCtx)
-		return nil, err
-	}
-	return c, nil
+	c.id = created.ID
+	return c.startWithTree(ctx, tree)
 }
 
 // ensureImage pulls image only when the daemon does not already hold it.
-func (d *Docker) ensureImage(ctx context.Context, image string) error {
-	_, err := d.cli.ImageInspect(ctx, image)
+func ensureImage(ctx context.Context, cli *client.Client, image string) error {
+	_, err := cli.ImageInspect(ctx, image)
 	if err == nil {
 		return nil
 	}
 	if !cerrdefs.IsNotFound(err) {
 		return err
 	}
-	pull, err := d.cli.ImagePull(ctx, image, client.ImagePullOptions{})
+	pull, err := cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull: %w", err)
 	}
