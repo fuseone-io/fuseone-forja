@@ -177,6 +177,23 @@ func TestRunner_serviceNotReady_gateFailedWithReasonAndServiceLog_laterGatesSkip
 	assertResult(t, report.Gates[2], "make test", domain.StepSkipped, domain.NoExitCode, "", "")
 }
 
+func TestRunner_firstOfTwoNeedsNotReady_secondNeverStartedGateFailed(t *testing.T) {
+	t.Parallel()
+	services := ready()
+	services["postgres"] = scriptedService{notReady: true, reason: "service postgres exited with code 1"}
+	ws := &fakeWorkspace{script: servicesScript(), services: services}
+	e2e := domain.Gate{Name: "e2e", Run: "make e2e", Needs: []string{"postgres", "redis"}}
+
+	report := run(t, ws, servicesContract(e2e))
+	want := append(append([]string{}, setupEvents...), "start postgres", "close")
+	if got := ws.log(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("events = %q, want %q: nothing after the first service that is not ready", got, want)
+	}
+	if got := report.Gates[0]; got.Status != domain.StepFailed || got.Reason != "service postgres exited with code 1" {
+		t.Fatalf("e2e = {%s, reason %q}, want failed with postgres's reason", got.Status, got.Reason)
+	}
+}
+
 func TestRunner_runDeadlineDuringServiceStart_gateTimedOut(t *testing.T) {
 	t.Parallel()
 	services := ready()
