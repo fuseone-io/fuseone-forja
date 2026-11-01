@@ -8,3 +8,4 @@ número do PR que o introduz, logo após o PR ser aberto. Status possíveis:
 |---|---|---|
 | [0026](0026-isolamento-do-workspace.md) | Isolamento do workspace e onde a Forja roda | proposto |
 | [0027](0027-repositorio-piloto.md) | Repositório piloto e mantenedor da fase 0 (default provisório) | proposto — ratificação pendente |
+| [9999](9999-agente-no-workspace.md) | Agente que roda no workspace (default provisório) | proposto — ratificação pendente |
