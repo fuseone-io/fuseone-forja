@@ -59,7 +59,12 @@ func (w *fakeWorkspace) Exec(ctx context.Context, command string) (gates.ExecRes
 	return gates.ExecResult{ExitCode: s.exit, Stdout: []byte(s.stdout), Stderr: []byte(s.stderr)}, nil
 }
 
-func (w *fakeWorkspace) Close(context.Context) error {
+// Close fails on a context that already ended, as a daemon call does:
+// the runner must remove the workspace with a context of its own.
+func (w *fakeWorkspace) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: close: %w", err)
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closed++
