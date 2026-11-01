@@ -1,61 +1,61 @@
-# GitHub App da Forja — runbook de provisionamento
+# Forja's GitHub App — provisioning runbook
 
-- **Tipo:** runbook (não é ADR: as permissões vêm do PRD; o que falta é executar)
-- **Status:** default tomado pelo time; **provisionamento e ratificação pendentes do humano**
-- **Issue:** Refs #4 (fica aberta até o App existir e estar instalado)
-- **Data:** 2026-11-01
-- **Base medida:** `origin/main` em `ce95147dea46427850e944c22186195fb9e23c89`
-- **Repositório piloto assumido:** `fuseone-io/fuseone-forja` (default provisório do
-  [ADR 0027](adr/0027-repositorio-piloto.md); se o piloto real for outro, este
-  runbook se aplica a ele sem mudança, só troca o alvo da instalação e da ruleset)
+- **Type:** runbook (not an ADR: the permissions come from the PRD; what is missing is execution)
+- **Status:** default taken by the team; **provisioning and ratification pending from the human**
+- **Issue:** Refs #4 (stays open until the App exists and is installed)
+- **Date:** 2026-11-01
+- **Measured base:** `origin/main` at `ce95147dea46427850e944c22186195fb9e23c89`
+- **Assumed pilot repository:** `fuseone-io/fuseone-forja` (provisional default of
+  [ADR 0027](adr/0027-pilot-repository.md); if the real pilot is another one, this
+  runbook applies to it unchanged, only the installation and ruleset target changes)
 
-## Por que este documento e não o App
+## Why this document and not the App
 
-Registrar um GitHub App exige a interface web do GitHub, como **owner da
-organização** (ou membro, se a organização permitir que membros criem Apps —
-configuração que não pôde ser lida nesta sessão; ver "Medições"), e a chave
-privada gerada no registro precisa ir para o cofre que o plano de controle lê.
-Nenhuma das duas coisas um agente pode fazer: não tem sessão web, não tem o
-cofre, e não deve ter a chave.
+Registering a GitHub App requires GitHub's web interface, as **owner of the
+organization** (or member, if the organization allows members to create Apps
+— a setting that could not be read in this session; see "Measurements"), and
+the private key generated at registration needs to go to the vault the
+control plane reads. Neither of the two can an agent do: it has no web
+session, has no vault, and must not have the key.
 
-O humano pediu que o time seguisse sem interrupções. Este runbook, portanto,
-deixa pronto **tudo que é texto**: as permissões exatas, o manifesto para colar
-no fluxo "Register a GitHub App from a manifest", o escopo da instalação, como o
-plano de controle lê as credenciais, a ruleset que a `main` do piloto precisa e
-os comandos que provam que o App não consegue empurrar na `main`. O que só o
-humano pode fazer está no checklist ao fim.
+The human asked the team to proceed without interruptions. This runbook,
+therefore, leaves ready **everything that is text**: the exact permissions,
+the manifest to paste into the "Register a GitHub App from a manifest" flow,
+the installation scope, how the control plane reads the credentials, the
+ruleset the pilot's `main` needs and the commands that prove the App cannot
+push to `main`. What only the human can do is in the checklist at the end.
 
-## Permissões do App (mínimas)
+## App permissions (minimal)
 
-Uma instalação da Forja, um App. As permissões abaixo são as da issue #4 e do
-PRD; nenhuma a mais.
+One Forja installation, one App. The permissions below are those of issue #4
+and of the PRD; none beyond.
 
-| Permissão (API) | Nível | Para quê |
+| Permission (API) | Level | For what |
 |---|---|---|
-| `contents` | read & write | clone do repositório, push na branch própria do run, criar e remover `refs/forja/claims/<n>` |
-| `pull_requests` | write | abrir e atualizar o PR do run |
-| `statuses` | write | publicar `forja/gates` e `forja/qa` como commit statuses |
-| `metadata` | read | obrigatória em todo App; lista o repositório e seus metadados |
+| `contents` | read & write | clone the repository, push to the run's own branch, create and remove `refs/forja/claims/<n>` |
+| `pull_requests` | write | open and update the run's PR |
+| `statuses` | write | publish `forja/gates` and `forja/qa` as commit statuses |
+| `metadata` | read | mandatory on every App; lists the repository and its metadata |
 
-O que o App **não** tem, de propósito:
+What the App does **not** have, on purpose:
 
-- **Bypass de proteção de branch.** O App não entra em `bypass_actors` de
-  nenhuma ruleset. A `main` continua protegida para ele exatamente como para
-  qualquer colaborador sem bypass.
+- **Branch protection bypass.** The App does not enter the `bypass_actors` of
+  any ruleset. `main` stays protected for it exactly as for any collaborator
+  without bypass.
 - `administration`, `workflows`, `checks`, `issues`, `members`, `secrets`,
-  `actions`. Nada disso é necessário para o caso de uso "mantenedor liga a
-  fábrica no seu repo". Em particular, sem `workflows` o App não consegue
-  alterar `.github/workflows/**` — coerente com `human_merge_paths:
-  [.github/**]` no contrato.
-- Webhooks. A Forja é chamada pelo FuseOne via MCP, não por eventos do GitHub;
-  o manifesto nasce com `hook_attributes.active: false`.
+  `actions`. None of that is needed for the "maintainer turns the factory on
+  in their repo" use case. In particular, without `workflows` the App cannot
+  change `.github/workflows/**` — consistent with `human_merge_paths:
+  [.github/**]` in the contract.
+- Webhooks. Forja is called by FuseOne over MCP, not by GitHub events; the
+  manifest is born with `hook_attributes.active: false`.
 
-## Manifesto para registrar o App
+## Manifest to register the App
 
-Cole o JSON abaixo no fluxo de registro por manifesto da organização
-(`https://github.com/organizations/fuseone-io/settings/apps/new`, ou o
-formulário equivalente de "Register a GitHub App from a manifest"). O campo
-`url` e `redirect_url` são informativos; a Forja não usa OAuth de usuário.
+Paste the JSON below into the organization's manifest registration flow
+(`https://github.com/organizations/fuseone-io/settings/apps/new`, or the
+equivalent "Register a GitHub App from a manifest" form). The `url` and
+`redirect_url` fields are informational; Forja does not use user OAuth.
 
 ```json
 {
@@ -79,67 +79,70 @@ formulário equivalente de "Register a GitHub App from a manifest"). O campo
 }
 ```
 
-Observações sobre campos do formulário que o manifesto não cobre:
+Notes on form fields the manifest does not cover:
 
 - **Where can this GitHub App be installed?** → "Only on this account"
-  (`public: false` acima). A Forja de uma instalação do FuseOne é um App por
-  instalação, não um App de marketplace.
-- **Private key:** gere **uma** chave no registro e leve o `.pem` direto para o
-  cofre. Não deixe o arquivo baixado no laptop; não o cole em variável de
-  ambiente, em issue nem em chat.
-- Anote o **App ID** (visível na página do App) e, após instalar, o
-  **Installation ID** (último segmento da URL
+  (`public: false` above). The Forja of one FuseOne installation is one App
+  per installation, not a marketplace App.
+- **Private key:** generate **one** key at registration and take the `.pem`
+  straight to the vault. Do not leave the downloaded file on the laptop; do
+  not paste it into an environment variable, an issue or a chat.
+- Note the **App ID** (visible on the App's page) and, after installing, the
+  **Installation ID** (last segment of the URL
   `https://github.com/organizations/fuseone-io/settings/installations/<id>`).
 
-## Escopo da instalação
+## Installation scope
 
-**Apenas o repositório piloto.** Na tela de instalação, escolher "Only select
-repositories" e marcar só `fuseone-io/fuseone-forja` (ou o piloto real, quando
-nomeado). Nunca "All repositories": a Forja só precisa alcançar o repositório
-cujo contrato ela vai executar, e a lista de repositórios da instalação é a
-fronteira que o token de instalação respeita.
+**Only the pilot repository.** On the installation screen, choose "Only select
+repositories" and tick only `fuseone-io/fuseone-forja` (or the real pilot,
+once named). Never "All repositories": Forja only needs to reach the
+repository whose contract it will execute, and the installation's repository
+list is the boundary the installation token respects.
 
-Quando um segundo repositório entrar, ele é adicionado à **mesma** instalação,
-um por um, pelo humano. O token de instalação que o plano de controle gera para
-um run é ainda restringido ao repositório daquele run (`repositories: [<repo>]`
-no POST de `access_tokens`), de modo que um run nunca vê um token válido para
-outro repositório da instalação.
+When a second repository comes in, it is added to the **same** installation,
+one by one, by the human. The installation token the control plane generates
+for a run is further restricted to that run's repository (`repositories:
+[<repo>]` in the `access_tokens` POST), so that a run never sees a token valid
+for another repository of the installation.
 
-## Como o plano de controle lê as credenciais
+## How the control plane reads the credentials
 
-Nada disso chega ao workspace (regra 4 do `CLAUDE.md`). O workspace faz
-checkout, build e gates sobre uma árvore já clonada; push, PR e statuses
-acontecem no plano de controle com o token do App.
+None of this reaches the workspace (rule 4 of `CLAUDE.md`). The workspace
+does checkout, build and gates over an already cloned tree; push, PR and
+statuses happen in the control plane with the App's token.
 
-| Variável | Conteúdo | Obrigatória em produção |
+| Variable | Content | Mandatory in production |
 |---|---|---|
-| `FORJA_GITHUB_APP_ID` | App ID numérico | sim |
-| `FORJA_GITHUB_INSTALLATION_ID` | Installation ID numérico da instalação no piloto | sim |
-| `FORJA_GITHUB_PRIVATE_KEY_FILE` | **caminho** de um arquivo PEM montado pelo cofre (secret do Kubernetes, volume do Vault, etc.), legível só pelo processo `forjad` | sim |
-| `FORJA_GITHUB_TOKEN` | fine-grained PAT **restrito ao piloto**, com as mesmas quatro permissões acima | **nunca em produção**; só desenvolvimento e testes |
+| `FORJA_GITHUB_APP_ID` | numeric App ID | yes |
+| `FORJA_GITHUB_INSTALLATION_ID` | numeric Installation ID of the installation on the pilot | yes |
+| `FORJA_GITHUB_PRIVATE_KEY_FILE` | **path** to a PEM file mounted by the vault (Kubernetes secret, Vault volume, etc.), readable only by the `forjad` process | yes |
+| `FORJA_GITHUB_TOKEN` | fine-grained PAT **restricted to the pilot**, with the same four permissions above | **never in production**; development and tests only |
 
-Regras:
+Rules:
 
-1. A chave privada **nunca** vai em variável de ambiente, nem em base64. Só o
-   caminho. Variáveis vazam em `ps`, em dumps de ambiente e em logs de
-   processo; um arquivo com modo `0400` montado pelo cofre não.
-2. O plano de controle troca a chave por um **JWT de App** (RS256, validade de
-   até 10 min) e o JWT por um **token de instalação** (validade de 1 h) com
-   `POST /app/installations/{installation_id}/access_tokens`, restringindo
-   `repositories` ao repositório do run e `permissions` ao subconjunto que o
-   passo precisa (ex.: só `statuses: write` para publicar `forja/gates`).
-3. O token de instalação vive no processo do plano de controle, pelo tempo de
-   um run, e é a credencial que `clone`, `push`, `pulls` e `statuses` usam.
-   Ele é citado nos logs apenas por referência (run id), nunca pelo valor.
-4. `FORJA_GITHUB_TOKEN` existe para rodar `forjad` no laptop e nos testes de
-   integração sem um App. Ele entra pela **mesma interface** que o App
-   satisfaz, para que nenhum código fora do pacote `github` saiba qual dos dois
-   está por baixo. Quando `FORJA_GITHUB_APP_ID` está definido, `FORJA_GITHUB_TOKEN`
-   é ignorado e um aviso é registrado; quando nenhum dos dois está definido,
-   `forjad doctor` falha com erro explícito, não com um `401` adiante.
+1. The private key **never** goes in an environment variable, not even in
+   base64. Only the path. Variables leak in `ps`, in environment dumps and in
+   process logs; a file with mode `0400` mounted by the vault does not.
+2. The control plane exchanges the key for an **App JWT** (RS256, validity of
+   up to 10 min) and the JWT for an **installation token** (validity of 1 h)
+   with `POST /app/installations/{installation_id}/access_tokens`,
+   restricting `repositories` to the run's repository and `permissions` to
+   the subset the step needs (e.g. only `statuses: write` to publish
+   `forja/gates`).
+3. The installation token lives in the control plane's process, for the
+   duration of a run, and is the credential that `clone`, `push`, `pulls` and
+   `statuses` use. It is cited in logs only by reference (run id), never by
+   value.
+4. `FORJA_GITHUB_TOKEN` exists to run `forjad` on the laptop and in the
+   integration tests without an App. It enters through the **same interface**
+   the App satisfies, so that no code outside the `github` package knows
+   which of the two is underneath. When `FORJA_GITHUB_APP_ID` is set,
+   `FORJA_GITHUB_TOKEN` is ignored and a warning is logged; when neither is
+   set, `forjad doctor` fails with an explicit error, not with a `401` later.
 
-A interface, declarada por quem consome o token (pacote `internal/github`,
-ainda a ser criado pela fatia que fizer o primeiro clone):
+The interface, declared by the consumer of the token (package
+`internal/github`, still to be created by the slice that does the first
+clone):
 
 ```go
 // TokenSource yields a GitHub token scoped to one repository for one run.
@@ -155,31 +158,33 @@ type Token struct {
 }
 ```
 
-Duas implementações: `AppTokenSource` (App ID + Installation ID + PEM lido do
-caminho) e `StaticTokenSource` (o PAT). O teste de contrato roda contra as
-duas; a de App usa um servidor HTTP falso que imita a forma da resposta de
-`access_tokens` (campos `token`, `expires_at`, `permissions`, `repositories`).
+Two implementations: `AppTokenSource` (App ID + Installation ID + PEM read
+from the path) and `StaticTokenSource` (the PAT). The contract test runs
+against both; the App one uses a fake HTTP server that mimics the shape of
+the `access_tokens` response (fields `token`, `expires_at`, `permissions`,
+`repositories`).
 
-## Ruleset que a `main` do piloto precisa
+## Ruleset the pilot's `main` needs
 
-Hoje a `main` do piloto **não está protegida** (medições abaixo). A ruleset que
-o critério de aceite da issue #4 exige — "push direto na `main` pelo App
-continua bloqueado" — é esta, aplicada à branch default:
+Today the pilot's `main` is **not protected** (measurements below). The
+ruleset that issue #4's acceptance criterion requires — "direct push to
+`main` by the App stays blocked" — is this one, applied to the default
+branch:
 
-| Regra | Valor | Por quê |
+| Rule | Value | Why |
 |---|---|---|
-| `deletion` | — | ninguém apaga a `main` |
-| `non_fast_forward` | — | ninguém reescreve a `main` |
-| `pull_request` | `required_approving_review_count: 0`, `dismiss_stale_reviews_on_push: true`, `require_last_push_approval: false` | toda mudança entra por PR; sem push direto, nem pelo App. Zero aprovações obrigatórias porque o merge já é serial e humano (ou o merger do workflow com o token do humano); o humano decide se sobe para 1 ao ratificar |
-| `required_status_checks` | contexto `check` (integração `15368`, GitHub Actions), `strict_required_status_checks_policy: true` | `check` é o único check que existe na `main` hoje (medido); `forja/gates` e `forja/qa` entram aqui quando a Forja passar a publicá-los |
-| `bypass_actors` | **vazio** | o App não tem bypass; a conta humana também não precisa, porque merge por PR com `check` verde é o único caminho |
+| `deletion` | — | nobody deletes `main` |
+| `non_fast_forward` | — | nobody rewrites `main` |
+| `pull_request` | `required_approving_review_count: 0`, `dismiss_stale_reviews_on_push: true`, `require_last_push_approval: false` | every change enters through a PR; no direct push, not even by the App. Zero mandatory approvals because the merge is already serial and human (or the workflow's merger with the human's token); the human decides whether to raise it to 1 on ratification |
+| `required_status_checks` | context `check` (integration `15368`, GitHub Actions), `strict_required_status_checks_policy: true` | `check` is the only check that exists on `main` today (measured); `forja/gates` and `forja/qa` enter here when Forja starts publishing them |
+| `bypass_actors` | **empty** | the App has no bypass; the human account does not need one either, because merge by PR with a green `check` is the only path |
 
-Já existe uma ruleset chamada `default` (id `26307933`) no repositório, com
-`enforcement: disabled`, só `deletion` e `non_fast_forward`, e um
-`bypass_actors` para o usuário `phbpx` em modo `always`. O caminho mais curto é
-**atualizá-la** (PUT) em vez de criar uma segunda. Corpo para
+A ruleset named `default` (id `26307933`) already exists in the repository,
+with `enforcement: disabled`, only `deletion` and `non_fast_forward`, and a
+`bypass_actors` for user `phbpx` in `always` mode. The shortest path is to
+**update it** (PUT) instead of creating a second one. Body for
 `gh api -X PUT repos/fuseone-io/fuseone-forja/rulesets/26307933 --input ruleset.json`,
-rodado pelo humano (é escrita):
+run by the human (it is a write):
 
 ```json
 {
@@ -216,143 +221,145 @@ rodado pelo humano (é escrita):
 }
 ```
 
-Se o humano preferir manter o próprio bypass para emergências, a forma menos
-permissiva é `bypass_mode: "pull_request"` (bypass só via PR, nunca push
-direto) — e o App continua fora da lista em qualquer caso.
+If the human prefers to keep their own bypass for emergencies, the least
+permissive form is `bypass_mode: "pull_request"` (bypass only via PR, never
+direct push) — and the App stays out of the list in any case.
 
-## Verificação depois de instalar
+## Verification after installing
 
-Tudo abaixo é leitura ou uma escrita que **deve falhar**. `$TOKEN` é um token
-de instalação do App, gerado pelo plano de controle (ou, enquanto `forjad`
-não o faz, com qualquer ferramenta que assine o JWT RS256 e chame
-`access_tokens`). Nenhum destes comandos usa a chave privada diretamente.
+Everything below is a read or a write that **must fail**. `$TOKEN` is an
+installation token of the App, generated by the control plane (or, while
+`forjad` does not do it, with any tool that signs the RS256 JWT and calls
+`access_tokens`). None of these commands uses the private key directly.
 
-1. A ruleset está ativa na `main` e tem as quatro regras:
+1. The ruleset is active on `main` and has the four rules:
 
    ```sh
    gh api repos/fuseone-io/fuseone-forja/rules/branches/main \
      --jq '[.[] | .type] | sort'
-   # esperado: ["deletion","non_fast_forward","pull_request","required_status_checks"]
+   # expected: ["deletion","non_fast_forward","pull_request","required_status_checks"]
    ```
 
-2. O App está instalado **só** no piloto (requer owner da organização):
+2. The App is installed **only** on the pilot (requires organization owner):
 
    ```sh
    gh api orgs/fuseone-io/installations \
      --jq '.installations[] | select(.app_slug=="forja-fuseone-io") | {id, repository_selection, permissions}'
-   # esperado: repository_selection == "selected"; permissions == {contents:write, pull_requests:write, statuses:write, metadata:read}
+   # expected: repository_selection == "selected"; permissions == {contents:write, pull_requests:write, statuses:write, metadata:read}
 
    curl -sS -H "Authorization: Bearer $TOKEN" \
      https://api.github.com/installation/repositories \
      | jq '{total_count, repos: [.repositories[].full_name]}'
-   # esperado: {"total_count":1,"repos":["fuseone-io/fuseone-forja"]}
+   # expected: {"total_count":1,"repos":["fuseone-io/fuseone-forja"]}
    ```
 
-3. O token do App **não** empurra na `main` (a escrita tem de ser recusada):
+3. The App's token does **not** push to `main` (the write has to be refused):
 
    ```sh
-   /usr/bin/git -C /caminho/clone-descartavel \
+   /usr/bin/git -C /path/to/disposable-clone \
      -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $TOKEN" \
      push https://github.com/fuseone-io/fuseone-forja.git HEAD:refs/heads/main
-   # esperado: exit 1, com "GH013: Repository rule violations found for refs/heads/main"
-   # e "Changes must be made through a pull request."
+   # expected: exit 1, with "GH013: Repository rule violations found for refs/heads/main"
+   # and "Changes must be made through a pull request."
    ```
 
-4. O mesmo token **consegue** empurrar numa branch de run e criar a ref de
-   reserva (prova de que `contents: write` está lá):
+4. The same token **can** push to a run branch and create the claim ref
+   (proof that `contents: write` is there):
 
    ```sh
-   /usr/bin/git -C /caminho/clone-descartavel \
+   /usr/bin/git -C /path/to/disposable-clone \
      -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $TOKEN" \
      push https://github.com/fuseone-io/fuseone-forja.git HEAD:refs/heads/forja/smoke-4
-   # esperado: exit 0
+   # expected: exit 0
 
-   /usr/bin/git -C /caminho/clone-descartavel \
+   /usr/bin/git -C /path/to/disposable-clone \
      -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $TOKEN" \
      push https://github.com/fuseone-io/fuseone-forja.git :refs/heads/forja/smoke-4
-   # esperado: exit 0 (limpa a branch de teste)
+   # expected: exit 0 (cleans up the test branch)
    ```
 
-5. O token do App **não** tem bypass (deve ser `"never"`; `"always"` ou
-   `"pull_requests_only"` significa que o App entrou em `bypass_actors`):
+5. The App's token has **no** bypass (must be `"never"`; `"always"` or
+   `"pull_requests_only"` means the App entered `bypass_actors`):
 
    ```sh
    curl -sS -H "Authorization: Bearer $TOKEN" \
      https://api.github.com/repos/fuseone-io/fuseone-forja/rulesets/26307933 \
      | jq '.current_user_can_bypass'
-   # esperado: "never"
+   # expected: "never"
    ```
 
-Os resultados destes cinco comandos, colados num comentário da issue #4, são a
-evidência que fecha os critérios "sem bypass" e "push direto bloqueado".
+The results of these five commands, pasted into a comment on issue #4, are
+the evidence that closes the "no bypass" and "direct push blocked" criteria.
 
-## Medições feitas nesta sessão (somente leitura)
+## Measurements made in this session (read-only)
 
-Ambiente: `gh` autenticado como `phbpx` (OAuth token com escopos `admin:org,
-admin:public_key, delete_repo, gist, project, repo`), organização
-`fuseone-io`, repositório `fuseone-io/fuseone-forja`, `origin/main` em
-`ce95147`. Todos os comandos abaixo foram rodados em 2026-11-01.
+Environment: `gh` authenticated as `phbpx` (OAuth token with scopes `admin:org,
+admin:public_key, delete_repo, gist, project, repo`), organization
+`fuseone-io`, repository `fuseone-io/fuseone-forja`, `origin/main` at
+`ce95147`. All commands below were run on 2026-11-01.
 
-| Afirmação | Resultado | Comando |
+| Claim | Result | Command |
 |---|---|---|
-| O piloto é público, na organização `fuseone-io`, branch default `main` | **confirmado** | `gh api repos/fuseone-io/fuseone-forja --jq '{full_name,private,visibility,default_branch,owner_type:.owner.type}'` → `{"default_branch":"main","full_name":"fuseone-io/fuseone-forja","owner_type":"Organization","private":false,"visibility":"public"}` |
-| A organização está no plano `team` | **confirmado** | `gh api orgs/fuseone-io --jq '{login,plan:.plan.name,type}'` → `{"login":"fuseone-io","plan":"team","type":"Organization"}` |
-| A `main` do piloto tem proteção de branch clássica | **refutado** — não tem | `gh api repos/fuseone-io/fuseone-forja/branches/main/protection` → HTTP 404 `{"message":"Branch not protected"}`; `gh api repos/fuseone-io/fuseone-forja/branches/main --jq '{protected,protection}'` → `{"protected":false,"protection":{"enabled":false,"required_status_checks":{"checks":[],"contexts":[],"enforcement_level":"off"}}}` |
-| Alguma regra se aplica à `main` hoje | **refutado** — nenhuma | `gh api repos/fuseone-io/fuseone-forja/rules/branches/main` → `[]` |
-| Rulesets no repositório | **1 de 1**, desativada | `gh api repos/fuseone-io/fuseone-forja/rulesets` → 1 item: `{"id":26307933,"name":"default","target":"branch","enforcement":"disabled"}`; `gh api repos/fuseone-io/fuseone-forja/rulesets/26307933` → `rules: [deletion, non_fast_forward]`, `conditions.ref_name.include: ["~DEFAULT_BRANCH"]`, `bypass_actors: [{actor_id: 3296831, actor_type: User, bypass_mode: always}]`, `current_user_can_bypass: always` |
-| O ator de bypass `3296831` é `phbpx` | **confirmado** | `gh api user/3296831 --jq '{login,type}'` → `{"login":"phbpx","type":"User"}` |
-| Rulesets no nível da organização | **não medido** | `gh api orgs/fuseone-io/rulesets` → HTTP 404 `{"message":"Not Found"}` (o token é de um membro, não de owner) |
-| Apps instalados na organização | **não medido** | `gh api orgs/fuseone-io/installations` → HTTP 404 `{"message":"Not Found"}`; `gh api user/installations` → HTTP 403 `{"message":"You must authenticate with an access token authorized to a GitHub App in order to list installations"}` |
-| Quem é owner da organização | **confirmado**: `klinux`, `sergiomonteiro`; `phbpx` é **member** | `gh api 'orgs/fuseone-io/members?role=admin' --jq '[.[] | .login]'` → `["klinux","sergiomonteiro"]`; `gh api orgs/fuseone-io/memberships/phbpx --jq '{role,state}'` → `{"role":"member","state":"active"}` |
-| Admins do repositório | **confirmado**: 3 de 3 colaboradores são `admin` | `gh api repos/fuseone-io/fuseone-forja/collaborators --jq '[.[] | {login, role_name}]'` → `klinux`, `sergiomonteiro`, `phbpx`, todos `admin` |
-| Existe um check chamado `check` na `main`, para a ruleset exigir | **confirmado** | `gh api repos/fuseone-io/fuseone-forja/commits/main/check-runs --jq '[.check_runs[] \| {name, app_id: .app.id, app_slug: .app.slug}]'` → `[{"app_id":15368,"app_slug":"github-actions","name":"check"}]` (1 check run de 1) |
-| Commit statuses na `main` (onde `forja/gates` e `forja/qa` vão aparecer) | **0 de 0** hoje | `gh api repos/fuseone-io/fuseone-forja/commits/main/status --jq '{state,total_count}'` → `{"state":"pending","total_count":0}` |
-| Membros podem registrar GitHub Apps na organização | **não medido** | não há endpoint REST de leitura para essa configuração; só a UI de owner (`Settings → Member privileges → GitHub Apps`) |
+| The pilot is public, in the `fuseone-io` organization, default branch `main` | **confirmed** | `gh api repos/fuseone-io/fuseone-forja --jq '{full_name,private,visibility,default_branch,owner_type:.owner.type}'` → `{"default_branch":"main","full_name":"fuseone-io/fuseone-forja","owner_type":"Organization","private":false,"visibility":"public"}` |
+| The organization is on the `team` plan | **confirmed** | `gh api orgs/fuseone-io --jq '{login,plan:.plan.name,type}'` → `{"login":"fuseone-io","plan":"team","type":"Organization"}` |
+| The pilot's `main` has classic branch protection | **refuted** — it does not | `gh api repos/fuseone-io/fuseone-forja/branches/main/protection` → HTTP 404 `{"message":"Branch not protected"}`; `gh api repos/fuseone-io/fuseone-forja/branches/main --jq '{protected,protection}'` → `{"protected":false,"protection":{"enabled":false,"required_status_checks":{"checks":[],"contexts":[],"enforcement_level":"off"}}}` |
+| Some rule applies to `main` today | **refuted** — none | `gh api repos/fuseone-io/fuseone-forja/rules/branches/main` → `[]` |
+| Rulesets in the repository | **1 of 1**, disabled | `gh api repos/fuseone-io/fuseone-forja/rulesets` → 1 item: `{"id":26307933,"name":"default","target":"branch","enforcement":"disabled"}`; `gh api repos/fuseone-io/fuseone-forja/rulesets/26307933` → `rules: [deletion, non_fast_forward]`, `conditions.ref_name.include: ["~DEFAULT_BRANCH"]`, `bypass_actors: [{actor_id: 3296831, actor_type: User, bypass_mode: always}]`, `current_user_can_bypass: always` |
+| The bypass actor `3296831` is `phbpx` | **confirmed** | `gh api user/3296831 --jq '{login,type}'` → `{"login":"phbpx","type":"User"}` |
+| Organization-level rulesets | **not measured** | `gh api orgs/fuseone-io/rulesets` → HTTP 404 `{"message":"Not Found"}` (the token is a member's, not an owner's) |
+| Apps installed in the organization | **not measured** | `gh api orgs/fuseone-io/installations` → HTTP 404 `{"message":"Not Found"}`; `gh api user/installations` → HTTP 403 `{"message":"You must authenticate with an access token authorized to a GitHub App in order to list installations"}` |
+| Who owns the organization | **confirmed**: `klinux`, `sergiomonteiro`; `phbpx` is **member** | `gh api 'orgs/fuseone-io/members?role=admin' --jq '[.[] | .login]'` → `["klinux","sergiomonteiro"]`; `gh api orgs/fuseone-io/memberships/phbpx --jq '{role,state}'` → `{"role":"member","state":"active"}` |
+| Repository admins | **confirmed**: 3 of 3 collaborators are `admin` | `gh api repos/fuseone-io/fuseone-forja/collaborators --jq '[.[] | {login, role_name}]'` → `klinux`, `sergiomonteiro`, `phbpx`, all `admin` |
+| A check named `check` exists on `main`, for the ruleset to require | **confirmed** | `gh api repos/fuseone-io/fuseone-forja/commits/main/check-runs --jq '[.check_runs[] \| {name, app_id: .app.id, app_slug: .app.slug}]'` → `[{"app_id":15368,"app_slug":"github-actions","name":"check"}]` (1 check run of 1) |
+| Commit statuses on `main` (where `forja/gates` and `forja/qa` will appear) | **0 of 0** today | `gh api repos/fuseone-io/fuseone-forja/commits/main/status --jq '{state,total_count}'` → `{"state":"pending","total_count":0}` |
+| Members can register GitHub Apps in the organization | **not measured** | there is no REST read endpoint for that setting; only the owner UI (`Settings → Member privileges → GitHub Apps`) |
 
-### Achados para o humano
+### Findings for the human
 
-1. **A `main` do piloto está aberta hoje.** Nenhuma regra ativa, nenhuma
-   proteção clássica; a única ruleset está desativada e, mesmo ativa, não
-   exigiria PR nem check. O critério "push direto na `main` pelo App continua
-   bloqueado pela ruleset" é falso até a ruleset acima ser aplicada — para o
-   App e para qualquer colaborador.
-2. **Quem está operando (`phbpx`) é member, não owner, da organização.**
-   Registrar um App no nível da organização é ação de owner, a menos que a
-   organização permita a membros (não medido). Ou um owner (`klinux` ou
-   `sergiomonteiro`) registra o App, ou concede owner a quem vai operar a
-   Forja, ou habilita a permissão para membros.
-3. O check `check` existe e é publicado pela integração `15368` (GitHub
-   Actions); é o contexto que a ruleset deve exigir hoje.
+1. **The pilot's `main` is open today.** No active rule, no classic
+   protection; the only ruleset is disabled and, even active, would require
+   neither PR nor check. The criterion "direct push to `main` by the App
+   stays blocked by the ruleset" is false until the ruleset above is applied
+   — for the App and for any collaborator.
+2. **Whoever is operating (`phbpx`) is a member, not an owner, of the
+   organization.** Registering an App at the organization level is an owner
+   action, unless the organization allows members to (not measured). Either
+   an owner (`klinux` or `sergiomonteiro`) registers the App, or grants owner
+   to whoever will operate Forja, or enables the permission for members.
+3. The `check` check exists and is published by integration `15368` (GitHub
+   Actions); it is the context the ruleset must require today.
 
-## O que só o humano pode fazer
+## What only the human can do
 
-- [ ] Um **owner** da organização (`klinux` ou `sergiomonteiro`) registra o App
-      pelo manifesto acima em `fuseone-io`, ou concede owner a `phbpx`, ou
-      habilita "members can create GitHub Apps" — e diz qual das três escolheu.
-- [ ] Gerar **uma** chave privada no registro e gravá-la no cofre que o plano de
-      controle lê; o PEM é montado como arquivo no caminho de
-      `FORJA_GITHUB_PRIVATE_KEY_FILE`. Nenhuma cópia fora do cofre.
-- [ ] Instalar o App **só** em `fuseone-io/fuseone-forja` ("Only select
-      repositories"). Anotar App ID e Installation ID no cofre, ao lado da chave.
-- [ ] Aplicar a ruleset acima na `main` do piloto (PUT na ruleset `26307933`),
-      com `enforcement: active`, `bypass_actors: []` e o check `check`
-      obrigatório. Decidir se `required_approving_review_count` fica em 0 ou
-      sobe para 1.
-- [ ] Rodar os cinco comandos de "Verificação depois de instalar" e colar as
-      saídas (com os exit codes) num comentário da issue #4. Só então os
-      critérios "sem bypass" e "push direto bloqueado" estão **verificados**.
-- [ ] Ratificar o modelo de credenciais (`FORJA_GITHUB_APP_ID`,
+- [ ] An **owner** of the organization (`klinux` or `sergiomonteiro`)
+      registers the App from the manifest above in `fuseone-io`, or grants
+      owner to `phbpx`, or enables "members can create GitHub Apps" — and
+      says which of the three they chose.
+- [ ] Generate **one** private key at registration and store it in the vault
+      the control plane reads; the PEM is mounted as a file at the path in
+      `FORJA_GITHUB_PRIVATE_KEY_FILE`. No copy outside the vault.
+- [ ] Install the App **only** on `fuseone-io/fuseone-forja` ("Only select
+      repositories"). Note App ID and Installation ID in the vault, next to
+      the key.
+- [ ] Apply the ruleset above to the pilot's `main` (PUT on ruleset
+      `26307933`), with `enforcement: active`, `bypass_actors: []` and the
+      `check` check required. Decide whether `required_approving_review_count`
+      stays at 0 or goes up to 1.
+- [ ] Run the five commands of "Verification after installing" and paste the
+      outputs (with the exit codes) into a comment on issue #4. Only then are
+      the "no bypass" and "direct push blocked" criteria **verified**.
+- [ ] Ratify the credential model (`FORJA_GITHUB_APP_ID`,
       `FORJA_GITHUB_INSTALLATION_ID`, `FORJA_GITHUB_PRIVATE_KEY_FILE`;
-      `FORJA_GITHUB_TOKEN` só em desenvolvimento) antes da fatia que cria
+      `FORJA_GITHUB_TOKEN` only in development) before the slice that creates
       `internal/github`.
-- [ ] Se o piloto real (outra área, ADR 0027) for nomeado antes disso tudo,
-      apontar instalação e ruleset para ele em vez de `fuseone-forja`.
+- [ ] If the real pilot (another area, ADR 0027) is named before all this,
+      point installation and ruleset at it instead of `fuseone-forja`.
 
-## Referências
+## References
 
-- `docs/PRD.pdf` — caso de uso "Mantenedor liga a fábrica no seu repo".
-- `CLAUDE.md` — regras 3 (evidência escrita pelo plano de controle), 4
-  (nenhuma credencial entra no workspace) e 7 (nenhum segredo no repositório).
-- [ADR 0027](adr/0027-repositorio-piloto.md) — repositório piloto (default
-  provisório).
-- Issue #4; issue #1 (piloto).
+- `docs/PRD.pdf` — use case "Maintainer turns the factory on in their repo".
+- `CLAUDE.md` — rules 3 (evidence written by the control plane), 4 (no
+  credential enters the workspace) and 7 (no secret in the repository).
+- [ADR 0027](adr/0027-pilot-repository.md) — pilot repository (provisional
+  default).
+- Issue #4; issue #1 (pilot).
