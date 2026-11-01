@@ -200,6 +200,38 @@ func TestMemory_putStoresCopy_callerMutationAfterPutNotVisible(t *testing.T) {
 	}
 }
 
+// The denials are evidence: neither the writer after Put nor a reader
+// after Get can change what the store holds through a shared list.
+func TestMemory_get_egressListNotShared(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
+	want := domain.EgressDenial{At: at, Kind: domain.EgressConnect, Destination: "example.com:443"}
+	original := sampleRun("run-1")
+	original.Egress = domain.EgressReport{Denied: []domain.EgressDenial{want}, Count: 3}
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	original.Egress.Denied[0].Destination = "changed-after-put:443"
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Egress.Denied) != 1 || got.Egress.Denied[0] != want || got.Egress.Count != 3 {
+		t.Fatalf("egress after the writer's change = %+v, want [%+v] count 3", got.Egress, want)
+	}
+	got.Egress.Denied[0].Destination = "changed-after-get:443"
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.Egress.Denied[0] != want {
+		t.Fatalf("egress after a reader's change = %+v, want %+v", again.Egress.Denied[0], want)
+	}
+}
+
 func TestMemory_zeroValue_putThenGet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

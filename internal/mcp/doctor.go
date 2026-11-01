@@ -52,6 +52,9 @@ type DoctorOutput struct {
 	// when none did.
 	FailedStep string   `json:"failed_step,omitempty"`
 	Warnings   []string `json:"warnings"`
+	// RunID is the run the gates ran as, which forja.status reads; absent
+	// when the contract was rejected and nothing ran.
+	RunID string `json:"run_id,omitempty"`
 }
 
 func doctorTool() *sdk.Tool {
@@ -63,9 +66,9 @@ func doctorTool() *sdk.Tool {
 }
 
 // doctorHandler clones the default branch, validates the contract at that
-// commit and runs it on that tree. A clone, read or runner failure is a
-// tool error; a contract with defects or a red gate is a result the
-// maintainer iterates on.
+// commit and runs it on that tree as a recorded run. A clone, read or
+// runner failure is a tool error; a contract with defects or a red gate is
+// a result the maintainer iterates on.
 func doctorHandler(deps Deps) sdk.ToolHandlerFor[DoctorInput, DoctorOutput] {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in DoctorInput) (*sdk.CallToolResult, DoctorOutput, error) {
 		out, err := doctor(ctx, deps, in.Repository)
@@ -77,6 +80,9 @@ func doctorHandler(deps Deps) sdk.ToolHandlerFor[DoctorInput, DoctorOutput] {
 }
 
 func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
+	if deps.Cloner == nil || deps.Gates == nil || deps.Runs == nil || deps.NewID == nil || deps.Now == nil {
+		return DoctorOutput{}, errors.New("not wired: cloner, gates, runs, NewID and Now are all required")
+	}
 	co, err := deps.Cloner.Clone(ctx, repo, "")
 	if err != nil {
 		return DoctorOutput{}, err
@@ -94,13 +100,40 @@ func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
 	case err != nil:
 		return DoctorOutput{}, err
 	}
-	report, err := runGates(ctx, deps.Gates, deps.NewID(), parsed, co.Dir())
+	report, runID, err := recordedRun(ctx, deps, repo, parsed, co.Dir())
 	if err != nil {
 		return DoctorOutput{}, err
 	}
+	out.RunID = runID
 	out.Contract = &parsed
 	out.addReport(parsed, report)
 	return out, nil
+}
+
+// recordedRun records a doctor run as running, runs the gates as that run
+// and records its end: succeeded only when every step that had to run
+// passed, failed otherwise, with what the gateway refused either way.
+func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract, tree string) (domain.GateReport, string, error) {
+	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, State: domain.StateRunning, StartedAt: deps.Now()}
+	if err := deps.Runs.Put(ctx, run); err != nil {
+		return domain.GateReport{}, "", fmt.Errorf("record run: %w", err)
+	}
+	report, err := runGates(ctx, deps.Gates, run.ID, c, tree)
+	// The caller may be gone by now; the run must not stay in running.
+	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	finished := deps.Now()
+	run.FinishedAt, run.State, run.Egress = &finished, domain.StateFailed, report.Egress
+	if err == nil && report.OK() {
+		run.State = domain.StateSucceeded
+	}
+	if putErr := deps.Runs.Put(done, run); putErr != nil {
+		return domain.GateReport{}, "", errors.Join(err, fmt.Errorf("record run: %w", putErr))
+	}
+	if err != nil {
+		return domain.GateReport{}, "", fmt.Errorf("run %s: %w", run.ID, err)
+	}
+	return report, run.ID, nil
 }
 
 // runGates runs the contract under its own wall clock, or the default
