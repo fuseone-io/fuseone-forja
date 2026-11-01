@@ -12,8 +12,8 @@ import (
 )
 
 // AppTokenSource mints an installation token per call, restricted to the
-// repository asked for and to reading its contents. Nothing is cached: a
-// token lives as long as the call that needed it.
+// repository asked for and to reading its contents and issues. Nothing is
+// cached: a token lives as long as the call that needed it.
 type AppTokenSource struct {
 	AppID          string
 	InstallationID string
@@ -54,7 +54,7 @@ func (s *AppTokenSource) Token(ctx context.Context, repo string) (Token, error) 
 	}
 	body, err := json.Marshal(mintRequest{
 		Repositories: []string{name},
-		Permissions:  map[string]string{"contents": "read"},
+		Permissions:  map[string]string{"contents": "read", "issues": "read"},
 	})
 	if err != nil {
 		return Token{}, fmt.Errorf("github: mint installation token for %s: %w", repo, err)

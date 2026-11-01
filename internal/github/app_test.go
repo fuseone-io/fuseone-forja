@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func testKey(t *testing.T) *rsa.PrivateKey {
 const mintedToken = "ghs_12345_eyJhbGciOiJSUzI1NiJ9.notreallyajwt.signature"
 
 func accessTokensResponse() string {
-	return fmt.Sprintf(`{"token":%q,"expires_at":"2026-11-01T13:00:00Z","permissions":{"contents":"read"},"repository_selection":"selected","repositories":[{"id":1296269,"node_id":"MDEwOlJlcG9zaXRvcnkxMjk2MjY5","name":"fuseone-forja","full_name":"fuseone-io/fuseone-forja","private":false}]}`, mintedToken)
+	return fmt.Sprintf(`{"token":%q,"expires_at":"2026-11-01T13:00:00Z","permissions":{"contents":"read","issues":"read"},"repository_selection":"selected","repositories":[{"id":1296269,"node_id":"MDEwOlJlcG9zaXRvcnkxMjk2MjY5","name":"fuseone-forja","full_name":"fuseone-io/fuseone-forja","private":false}]}`, mintedToken)
 }
 
 // jwtClaims is what the fake endpoint read from the Authorization header.
@@ -133,7 +134,7 @@ func (f *fakeApp) verifyJWT(token string) jwtClaims {
 	return claims
 }
 
-func TestAppTokenSource_postsScopedInstallationTokenRequest(t *testing.T) {
+func TestAppTokenSource_mintsContentsReadAndIssuesReadForTheRepository(t *testing.T) {
 	t.Parallel()
 	key := testKey(t)
 	fake, server := newFakeApp(t, &key.PublicKey, http.StatusCreated, accessTokensResponse())
@@ -174,11 +175,11 @@ func assertMintRequest(t *testing.T, req mintRequest) {
 	if got := req.Repositories; len(got) != 1 || got[0] != "fuseone-forja" {
 		t.Errorf("repositories = %q, want [fuseone-forja] (name only)", got)
 	}
-	if got := req.Permissions["contents"]; got != "read" {
-		t.Errorf("permissions.contents = %q, want read", got)
-	}
-	if len(req.Permissions) != 1 {
-		t.Errorf("permissions = %v, want contents only", req.Permissions)
+	// Both read-only: the clone and the issue the agent will see. Nothing
+	// that writes is minted here.
+	want := map[string]string{"contents": "read", "issues": "read"}
+	if !reflect.DeepEqual(req.Permissions, want) {
+		t.Errorf("permissions = %v, want exactly %v", req.Permissions, want)
 	}
 }
 

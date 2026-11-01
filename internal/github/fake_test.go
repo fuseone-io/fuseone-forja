@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -29,10 +30,20 @@ const (
 	fakeBranch = "trunk"
 )
 
-// fakeGitHub serves the three endpoints ContractReader uses and enforces the
-// API's own invariants: a bearer token that is not the one minted is 401, a
-// ref that is not the branch commit does not exist, and a missing file is
-// "Not Found".
+// fakeIssue is the one issue the fake knows. A nil body is the API's null
+// for an issue created without one.
+type fakeIssue struct {
+	number int
+	title  string
+	body   *string
+}
+
+// fakeGitHub serves the endpoints the readers use and enforces the API's
+// own invariants: a bearer token that is not the one minted is 401, a ref
+// that is not the branch commit does not exist, a missing file or an
+// unknown issue number is "Not Found", and a pull request number answers
+// with a pull_request object. Every request is recorded; anything but a
+// GET fails the test, because the readers write nothing.
 type fakeGitHub struct {
 	t        *testing.T
 	token    string
@@ -43,7 +54,15 @@ type fakeGitHub struct {
 	// encoding is what the contents endpoint declares; anything but base64
 	// comes with an empty content, as the API answers for a large file.
 	encoding string
-	server   *httptest.Server
+	issue    fakeIssue
+	// pullRequest is a number that is a pull request, not an issue.
+	pullRequest int
+	// issuesDown makes the issues endpoint answer 500.
+	issuesDown bool
+	server     *httptest.Server
+
+	mu      sync.Mutex
+	methods []string
 }
 
 func newFakeGitHub(t *testing.T, token string, contract []byte) *fakeGitHub {
@@ -53,12 +72,69 @@ func newFakeGitHub(t *testing.T, token string, contract []byte) *fakeGitHub {
 	mux.HandleFunc("GET /repos/{owner}/{name}", f.repository)
 	mux.HandleFunc("GET /repos/{owner}/{name}/branches/{branch}", f.branch)
 	mux.HandleFunc("GET /repos/{owner}/{name}/contents/{path...}", f.contents)
-	f.server = httptest.NewServer(mux)
+	mux.HandleFunc("GET /repos/{owner}/{name}/issues/{number}", f.issues)
+	f.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.methods = append(f.methods, r.Method)
+		f.mu.Unlock()
+		if r.Method != http.MethodGet {
+			f.t.Errorf("%s %s: a reader wrote to the API", r.Method, r.URL)
+			writeJSON(w, http.StatusMethodNotAllowed, `{"message":"Method Not Allowed"}`)
+			return
+		}
+		mux.ServeHTTP(w, r)
+	}))
 	t.Cleanup(f.server.Close)
 	return f
 }
 
 func (f *fakeGitHub) URL() string { return f.server.URL }
+
+// requests is every HTTP method the fake saw, in order.
+func (f *fakeGitHub) requests() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.methods...)
+}
+
+// issues copies the measured shape of GET /repos/{owner}/{name}/issues/{n}:
+// number, title, body (null when the issue has none), state, and a
+// pull_request object only when the number is a pull request. An unknown
+// number is 404 "Not Found".
+func (f *fakeGitHub) issues(w http.ResponseWriter, r *http.Request) {
+	if !f.authorised(w, r) {
+		return
+	}
+	if f.issuesDown {
+		writeJSON(w, http.StatusInternalServerError, `{"message":"Server Error"}`)
+		return
+	}
+	number, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil || (number != f.issue.number && number != f.pullRequest) {
+		writeJSON(w, http.StatusNotFound, `{"message":"Not Found","documentation_url":"https://docs.github.com/rest/issues/issues#get-an-issue","status":"404"}`)
+		return
+	}
+	body := map[string]any{
+		"url":    fmt.Sprintf("https://api.github.com/repos/%s/issues/%d", fakeRepo, number),
+		"number": number, "title": f.issue.title, "body": f.issue.body, "state": "open",
+		"user":   map[string]any{"login": "phbpx", "type": "User"},
+		"labels": []any{},
+	}
+	if number == f.pullRequest {
+		body["pull_request"] = map[string]any{
+			"url":       fmt.Sprintf("https://api.github.com/repos/%s/pulls/%d", fakeRepo, number),
+			"html_url":  fmt.Sprintf("https://github.com/%s/pull/%d", fakeRepo, number),
+			"diff_url":  fmt.Sprintf("https://github.com/%s/pull/%d.diff", fakeRepo, number),
+			"patch_url": fmt.Sprintf("https://github.com/%s/pull/%d.patch", fakeRepo, number),
+			"merged_at": nil,
+		}
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		f.t.Fatalf("marshal issue body: %v", err)
+	}
+	writeJSON(w, http.StatusOK, string(raw))
+}
 
 // authorised rejects any request that does not carry the minted token or
 // the JSON media type, as the API does.

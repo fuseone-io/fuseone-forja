@@ -14,20 +14,6 @@ import (
 // yet. It travels as a tool error, never as a protocol error.
 var ErrNotImplemented = errors.New("not implemented")
 
-// PlanInput is the argument of forja.plan.
-type PlanInput struct {
-	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
-	Issue      int    `json:"issue" jsonschema:"issue number to plan"`
-}
-
-// PlanOutput is the result of forja.plan.
-type PlanOutput struct {
-	Repository   string   `json:"repository"`
-	Issue        int      `json:"issue"`
-	SHA          string   `json:"sha"`
-	AgentContext []string `json:"agent_context"`
-}
-
 // ImplementInput is the argument of forja.implement.
 type ImplementInput struct {
 	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
@@ -60,14 +46,6 @@ func readClass() *sdk.ToolAnnotations {
 func writeClass() *sdk.ToolAnnotations {
 	destructive := true
 	return &sdk.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive}
-}
-
-func planTool() *sdk.Tool {
-	return &sdk.Tool{
-		Name:        string(domain.ToolPlan),
-		Description: "Checkout and agent_context for an issue: what the agent will see.",
-		Annotations: readClass(),
-	}
 }
 
 func implementTool() *sdk.Tool {

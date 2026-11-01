@@ -51,12 +51,12 @@ func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	}
 }
 
-// Without credentials the server still serves; only forja.doctor fails,
-// and it says which variables to set instead of failing later with a 401.
-func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
-	t.Parallel()
+// serveWithoutCredentials starts serve with an empty environment and
+// connects a client. finish stops the server and asserts it exited clean:
+// missing credentials are not a startup failure.
+func serveWithoutCredentials(t *testing.T) (*sdk.ClientSession, func()) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 	var stderr bytes.Buffer
 	exited := make(chan int, 1)
@@ -65,17 +65,28 @@ func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil)
 	cs, err := client.Connect(ctx, clientTransport, nil)
 	if err != nil {
+		cancel()
 		t.Fatalf("client.Connect: %v", err)
 	}
-	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
-		Name:      "forja.doctor",
-		Arguments: map[string]any{"repository": "fuseone-io/fuseone-forja"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool(forja.doctor): protocol error %v", err)
+	finish := func() {
+		_ = cs.Close()
+		cancel()
+		if code := <-exited; code != 0 {
+			t.Fatalf("serve = %d, want 0", code)
+		}
+		if stderr.Len() != 0 {
+			t.Fatalf("missing credentials are not a startup failure, got stderr %q", stderr.String())
+		}
 	}
+	return cs, finish
+}
+
+// assertNamesCredentialVariables checks a tool error that says which
+// variables to set instead of failing later with a 401.
+func assertNamesCredentialVariables(t *testing.T, tool string, res *sdk.CallToolResult) {
+	t.Helper()
 	if !res.IsError {
-		t.Fatalf("forja.doctor succeeded with no credentials: %v", res.StructuredContent)
+		t.Fatalf("%s succeeded with no credentials: %v", tool, res.StructuredContent)
 	}
 	text := ""
 	for _, c := range res.Content {
@@ -83,19 +94,44 @@ func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
 			text += tc.Text
 		}
 	}
-	for _, want := range []string{"FORJA_GITHUB_APP_ID", "FORJA_GITHUB_TOKEN"} {
+	for _, want := range []string{tool, "FORJA_GITHUB_APP_ID", "FORJA_GITHUB_TOKEN"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("error text %q does not name %s", text, want)
 		}
 	}
-	_ = cs.Close()
-	cancel()
-	if code := <-exited; code != 0 {
-		t.Fatalf("serve = %d, want 0", code)
+}
+
+// Without credentials the server still serves; only forja.doctor fails.
+func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
+	t.Parallel()
+	cs, finish := serveWithoutCredentials(t)
+
+	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{
+		Name:      "forja.doctor",
+		Arguments: map[string]any{"repository": "fuseone-io/fuseone-forja"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(forja.doctor): protocol error %v", err)
 	}
-	if stderr.Len() != 0 {
-		t.Fatalf("missing credentials are not a startup failure, got stderr %q", stderr.String())
+	assertNamesCredentialVariables(t, "forja.doctor", res)
+	finish()
+}
+
+// forja.plan needs the same credentials for its clone and its issue read;
+// without them it fails before touching git or the API.
+func TestServe_noCredentials_planFailsExplicitly(t *testing.T) {
+	t.Parallel()
+	cs, finish := serveWithoutCredentials(t)
+
+	res, err := cs.CallTool(context.Background(), &sdk.CallToolParams{
+		Name:      "forja.plan",
+		Arguments: map[string]any{"repository": "fuseone-io/fuseone-forja", "issue": 7},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(forja.plan): protocol error %v", err)
 	}
+	assertNamesCredentialVariables(t, "forja.plan", res)
+	finish()
 }
 
 // The context is already cancelled: a serve that got as far as running the
