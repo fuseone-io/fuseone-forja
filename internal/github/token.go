@@ -31,10 +31,12 @@ func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 // with, keyed by scope name with the access level as value.
 type Permissions map[string]string
 
-// The two permission sets the control plane asks for: reading the contract
-// and writing the refs that reserve an issue.
+// The permission sets the control plane asks for: reading the contract and
+// cloning the base branch, reading the issue, and writing the refs that
+// reserve an issue.
 var (
 	ReadContents  = Permissions{"contents": "read"}
+	ReadIssues    = Permissions{"issues": "read"}
 	WriteContents = Permissions{"contents": "write"}
 )
 

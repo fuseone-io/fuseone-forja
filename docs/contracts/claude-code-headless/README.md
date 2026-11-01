@@ -1,95 +1,95 @@
-# Contrato observado: Claude Code headless → API do modelo
+# Observed contract: Claude Code headless → model API
 
-Gravações do protocolo HTTP que o Claude Code em modo headless (`claude -p`)
-fala com o endereço em `ANTHROPIC_BASE_URL`. É o que o proxy de modelo da
-Forja (`internal/proxy/model`) precisa aceitar, repassar e medir. Nada aqui
-é lido da documentação: cada linha veio de uma requisição recebida por um
-listener local nesta sessão.
+Recordings of the HTTP protocol that Claude Code in headless mode (`claude -p`)
+speaks with the address in `ANTHROPIC_BASE_URL`. It is what Forja's model
+proxy (`internal/proxy/model`) needs to accept, forward and measure. Nothing
+here is read from documentation: every line came from a request received by
+a local listener in this session.
 
-Documentos:
+Documents:
 
-| Documento | O que registra |
+| Document | What it records |
 |---|---|
-| [requisicao-messages.md](requisicao-messages.md) | Endpoints, método, query string, cabeçalhos e forma do corpo de `POST /v1/messages` |
-| [erros-e-retentativas.md](erros-e-retentativas.md) | O que o agente faz quando o proxy responde 400, 401 e 429 — cronologia das retentativas e código de saída |
-| [streaming-e-usage.md](streaming-e-usage.md) | Resposta SSE mínima que o agente aceita, onde o bloco `usage` aparece e o JSON que o `--output-format json` devolve |
-| [recorder.py](recorder.py) | O gravador: listener HTTP + execução do `claude -p` sob o mesmo processo, para reproduzir as medições |
+| [messages-request.md](messages-request.md) | Endpoints, method, query string, headers and body shape of `POST /v1/messages` |
+| [errors-and-retries.md](errors-and-retries.md) | What the agent does when the proxy answers 400, 401 and 429 — retry chronology and exit code |
+| [streaming-and-usage.md](streaming-and-usage.md) | Minimal SSE response the agent accepts, where the `usage` block appears and the JSON that `--output-format json` returns |
+| [recorder.py](recorder.py) | The recorder: HTTP listener + execution of `claude -p` under the same process, to reproduce the measurements |
 
-## Método
+## Method
 
-- **Versão medida:** `claude --version` → `2.1.316 (Claude Code)`, instalado
-  em `/Users/phb/.local/bin/claude`. `User-Agent` observado:
+- **Measured version:** `claude --version` → `2.1.316 (Claude Code)`, installed
+  at `/Users/phb/.local/bin/claude`. Observed `User-Agent`:
   `claude-cli/2.1.316 (external, sdk-cli)`.
-- **Listener:** `recorder.py` sobe um `ThreadingHTTPServer` em
-  `127.0.0.1:<porta aleatória>`, registra método, caminho, cabeçalhos (valores
-  de `x-api-key`, `authorization` e `cookie` redigidos para comprimento e
-  igualdade com o token do run) e a forma do corpo JSON (chaves, tamanhos,
-  nomes de ferramentas), e responde com o status pedido na linha de comando.
-- **Ambiente do agente:** o gravador apaga todas as variáveis `ANTHROPIC_*`,
-  `CLAUDECODE` e `CLAUDE_CODE_ENTRYPOINT` do ambiente herdado e define só
-  `ANTHROPIC_BASE_URL=http://127.0.0.1:<porta>` e
-  `ANTHROPIC_API_KEY=forja-run-token-<rótulo>` — um token opaco, não uma chave
-  real. O diretório de trabalho é um workspace descartável com um único
-  `README.md` de 107 bytes.
-- **Tarefa:** `"List the files in this directory and say what README.md
-  contains."` em todas as gravações.
-- **Flags padrão do agente:** `-p --bare --output-format json
+- **Listener:** `recorder.py` starts a `ThreadingHTTPServer` on
+  `127.0.0.1:<random port>`, records method, path, headers (values of
+  `x-api-key`, `authorization` and `cookie` redacted to length and equality
+  with the run token) and the shape of the JSON body (keys, sizes, tool
+  names), and answers with the status requested on the command line.
+- **Agent environment:** the recorder clears every `ANTHROPIC_*`,
+  `CLAUDECODE` and `CLAUDE_CODE_ENTRYPOINT` variable from the inherited
+  environment and sets only `ANTHROPIC_BASE_URL=http://127.0.0.1:<port>` and
+  `ANTHROPIC_API_KEY=forja-run-token-<label>` — an opaque token, not a real
+  key. The working directory is a disposable workspace with a single
+  `README.md` of 107 bytes.
+- **Task:** `"List the files in this directory and say what README.md
+  contains."` in every recording.
+- **Default agent flags:** `-p --bare --output-format json
   --permission-mode dontAsk --permission-prompts none --tools
-  Read,Edit,Write,Bash,Glob,Grep --max-budget-usd 1`. As variações estão em
-  cada documento.
-- **Onde rodou:** laptop do mantenedor (macOS, arm64), não um container. O
-  listener e o agente estavam na mesma máquina; latência de rede não entra em
-  nenhum número.
+  Read,Edit,Write,Bash,Glob,Grep --max-budget-usd 1`. The variations are in
+  each document.
+- **Where it ran:** the maintainer's laptop (macOS, arm64), not a container.
+  The listener and the agent were on the same machine; network latency enters
+  none of the numbers.
 
-Comando que produz uma gravação (um processo, em primeiro plano):
+Command that produces a recording (one process, in the foreground):
 
 ```
-python3 -I recorder.py <dir-saida> <rótulo> <workspace> <status> [timeout_s] -- \
+python3 -I recorder.py <out-dir> <label> <workspace> <status> [timeout_s] -- \
   -p --bare --output-format json --permission-mode dontAsk --permission-prompts none \
   --tools Read,Edit,Write,Bash,Glob,Grep --max-budget-usd 1 \
   "List the files in this directory and say what README.md contains."
 ```
 
-## Gravações desta sessão
+## Recordings of this session
 
-11 gravações, 66 `POST` ao todo, todas em 2026-11-01.
+11 recordings, 66 `POST` in total, all on 2026-11-01.
 
-| Rótulo | Status devolvido | `POST`s | Saída do `claude` | Tempo total |
+| Label | Status returned | `POST`s | `claude` exit | Total time |
 |---|---|---|---|---|
-| `bare-1` | 401 | 9 | encerrado pelo gravador aos 120 s, ainda retentando | 120,01 s |
-| `bare-401-2` | 401 | 9 | idem | 120,01 s |
-| `bare-401-3` | 401 | 9 | idem | 120,02 s |
-| `bare-429-1` | 429 (`retry-after: 1`) | 9 | encerrado pelo gravador aos 120 s, ainda retentando | 120,02 s |
-| `bare-429-long-1` | 429 (`retry-after: 1`) | 11 | exit 1 por conta própria, `api_error_status: 429` | 180,61 s |
+| `bare-1` | 401 | 9 | killed by the recorder at 120 s, still retrying | 120,01 s |
+| `bare-401-2` | 401 | 9 | same | 120,01 s |
+| `bare-401-3` | 401 | 9 | same | 120,02 s |
+| `bare-429-1` | 429 (`retry-after: 1`) | 9 | killed by the recorder at 120 s, still retrying | 120,02 s |
+| `bare-429-long-1` | 429 (`retry-after: 1`) | 11 | exit 1 on its own, `api_error_status: 429` | 180,61 s |
 | `bare-400-1` | 400 | 3 | exit 1, `api_error_status: 400` | 1,29 s |
 | `bare-400-raw-1` | 400 | 3 | exit 1 | 1,23 s |
-| `bare-default-tools-400-1` (sem `--tools`) | 400 | 3 | exit 1 | 0,85 s |
-| `bare-restricted-400-1` (com `--restricted`) | 400 | 3 | exit 1 | 1,10 s |
-| `bare-200-1` | 200 SSE falso | 1 | exit 0, `result: "forja-recorder-ok"` | 0,87 s |
-| `nobare-400-1` (sem `--bare`) | 400 | 6 | exit 1 | 3,80 s |
+| `bare-default-tools-400-1` (without `--tools`) | 400 | 3 | exit 1 | 0,85 s |
+| `bare-restricted-400-1` (with `--restricted`) | 400 | 3 | exit 1 | 1,10 s |
+| `bare-200-1` | 200 fake SSE | 1 | exit 0, `result: "forja-recorder-ok"` | 0,87 s |
+| `nobare-400-1` (without `--bare`) | 400 | 6 | exit 1 | 3,80 s |
 
-## Afirmações checadas
+## Claims checked
 
-| Afirmação | Resultado | Evidência |
+| Claim | Result | Evidence |
 |---|---|---|
-| `ANTHROPIC_BASE_URL` é honrado | **confirmado** | 11 de 11 gravações: todas as requisições chegaram ao listener em `127.0.0.1`; nenhuma saída para `api.anthropic.com` era possível sem a variável e nenhuma gravação ficou vazia |
-| `ANTHROPIC_API_KEY` é enviado tal qual, em `x-api-key` | **confirmado** | 66 de 66 `POST` com `x-api-key` igual, byte a byte, ao token `forja-run-token-<rótulo>` do run; nenhum `authorization` |
-| O agente faz streaming | **confirmado** | 66 de 66 `POST` com `"stream": true` no corpo; a resposta SSE falsa de `bare-200-1` foi aceita e o agente saiu com exit 0 |
-| `anthropic-version` e `anthropic-beta` são enviados | **confirmado** | `anthropic-version: 2023-06-01` em 66 de 66; `anthropic-beta` em 66 de 66 (lista em `requisicao-messages.md`) |
-| O agente chama `POST /v1/messages/count_tokens` | **não observado** | 0 de 66 requisições; os únicos caminhos vistos foram `HEAD /api/hello` e `POST /v1/messages?beta=true`. Não medido em sessão longa (compactação) nem com `--autocompact` — todas as gravações terminaram na primeira resposta útil |
-| `--bare` basta para o agente não ler configuração do host | **confirmado para o que foi medido** | Com `--bare`, 3 ferramentas e 4 470 bytes de corpo; sem `--bare`, 12 e depois 51 ferramentas (27 delas `mcp__*` do host) e 179 267 bytes. Sem `--bare` o `stderr` avisou: `claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login` |
-| O proxy pode negar com 429 e o agente para | **refutado como "para na hora"** | 429 é retentado: 11 tentativas em 180,0 s antes do exit 1 (1 amostra completa; 1 amostra de 120 s cortada com 9 tentativas). 400 **não** é retentado: exit 1 em menos de 1,3 s em 4 de 4 gravações |
+| `ANTHROPIC_BASE_URL` is honoured | **confirmed** | 11 of 11 recordings: every request reached the listener on `127.0.0.1`; no exit to `api.anthropic.com` was possible without the variable and no recording came out empty |
+| `ANTHROPIC_API_KEY` is sent as is, in `x-api-key` | **confirmed** | 66 of 66 `POST` with `x-api-key` equal, byte for byte, to the run's `forja-run-token-<label>` token; no `authorization` |
+| The agent streams | **confirmed** | 66 of 66 `POST` with `"stream": true` in the body; the fake SSE response of `bare-200-1` was accepted and the agent exited with exit 0 |
+| `anthropic-version` and `anthropic-beta` are sent | **confirmed** | `anthropic-version: 2023-06-01` in 66 of 66; `anthropic-beta` in 66 of 66 (list in `messages-request.md`) |
+| The agent calls `POST /v1/messages/count_tokens` | **not observed** | 0 of 66 requests; the only paths seen were `HEAD /api/hello` and `POST /v1/messages?beta=true`. Not measured in a long session (compaction) nor with `--autocompact` — every recording ended at the first useful response |
+| `--bare` is enough for the agent not to read the host's configuration | **confirmed for what was measured** | With `--bare`, 3 tools and 4 470 bytes of body; without `--bare`, 12 and then 51 tools (27 of them `mcp__*` from the host) and 179 267 bytes. Without `--bare` the `stderr` warned: `claude.ai connectors are disabled because ANTHROPIC_API_KEY or another auth source is set and takes precedence over your claude.ai login` |
+| The proxy can deny with 429 and the agent stops | **refuted as "stops immediately"** | 429 is retried: 11 attempts in 180,0 s before exit 1 (1 complete sample; 1 sample of 120 s cut with 9 attempts). 400 is **not** retried: exit 1 in under 1,3 s in 4 of 4 recordings |
 
-## Não medido
+## Not measured
 
-- Tokens, minutos e taxa de gates verdes de um run real: exigem o proxy e o
-  repositório piloto. Nenhuma gravação chegou a um modelo.
-- Comportamento em container sem credencial: o Docker local existe
+- Tokens, minutes and green-gate rate of a real run: they require the proxy
+  and the pilot repository. No recording reached a model.
+- Behaviour in a container with no credential: local Docker exists
   (`docker info --format '{{.ServerVersion}} {{.OperatingSystem}}'` →
-  `29.5.2 Ubuntu 24.04.4 LTS`), mas rodar o agente lá sem o proxy repetiria
-  as mesmas gravações com latência a mais.
-- `count_tokens`, compactação e `--autocompact`: ver tabela acima.
-- Por que `--tools Read,Edit,Write,Bash,Glob,Grep` resultou em apenas `Bash`,
-  `Edit` e `Read` no array `tools` (3 de 6 pedidas, em 9 de 9 gravações com
-  `--bare` e `--tools`; sem `--tools`, as mesmas 3): observado, causa não
-  medida.
+  `29.5.2 Ubuntu 24.04.4 LTS`), but running the agent there without the proxy
+  would repeat the same recordings with added latency.
+- `count_tokens`, compaction and `--autocompact`: see table above.
+- Why `--tools Read,Edit,Write,Bash,Glob,Grep` resulted in only `Bash`,
+  `Edit` and `Read` in the `tools` array (3 of 6 requested, in 9 of 9
+  recordings with `--bare` and `--tools`; without `--tools`, the same 3):
+  observed, cause not measured.

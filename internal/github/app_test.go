@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -39,7 +40,7 @@ func testKey(t *testing.T) *rsa.PrivateKey {
 const mintedToken = "ghs_12345_eyJhbGciOiJSUzI1NiJ9.notreallyajwt.signature"
 
 func accessTokensResponse() string {
-	return fmt.Sprintf(`{"token":%q,"expires_at":"2026-11-01T13:00:00Z","permissions":{"contents":"read"},"repository_selection":"selected","repositories":[{"id":1296269,"node_id":"MDEwOlJlcG9zaXRvcnkxMjk2MjY5","name":"fuseone-forja","full_name":"fuseone-io/fuseone-forja","private":false}]}`, mintedToken)
+	return fmt.Sprintf(`{"token":%q,"expires_at":"2026-11-01T13:00:00Z","permissions":{"contents":"read","issues":"read"},"repository_selection":"selected","repositories":[{"id":1296269,"node_id":"MDEwOlJlcG9zaXRvcnkxMjk2MjY5","name":"fuseone-forja","full_name":"fuseone-io/fuseone-forja","private":false}]}`, mintedToken)
 }
 
 // jwtClaims is what the fake endpoint read from the Authorization header.
@@ -134,17 +135,19 @@ func (f *fakeApp) verifyJWT(token string) jwtClaims {
 }
 
 // The installation token carries exactly the permissions the call asked
-// for: the reader asks to read, the ref writer asks to write, and neither
-// gets the other's level.
+// for: the contract reader and the cloner ask to read contents, the issue
+// reader asks to read issues, the ref writer asks to write contents, and
+// none gets another's scope or level.
 func TestAppTokenSource_postsScopedInstallationTokenRequest(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name  string
 		perms github.Permissions
-		want  string
+		want  map[string]string
 	}{
-		{name: "read contents", perms: github.ReadContents, want: "read"},
-		{name: "write contents", perms: github.WriteContents, want: "write"},
+		{name: "read contents", perms: github.ReadContents, want: map[string]string{"contents": "read"}},
+		{name: "read issues", perms: github.ReadIssues, want: map[string]string{"issues": "read"}},
+		{name: "write contents", perms: github.WriteContents, want: map[string]string{"contents": "write"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -203,16 +206,13 @@ func assertClaims(t *testing.T, claims jwtClaims, appID string) {
 	}
 }
 
-func assertMintRequest(t *testing.T, req mintRequest, contents string) {
+func assertMintRequest(t *testing.T, req mintRequest, want map[string]string) {
 	t.Helper()
 	if got := req.Repositories; len(got) != 1 || got[0] != "fuseone-forja" {
 		t.Errorf("repositories = %q, want [fuseone-forja] (name only)", got)
 	}
-	if got := req.Permissions["contents"]; got != contents {
-		t.Errorf("permissions.contents = %q, want %s", got, contents)
-	}
-	if len(req.Permissions) != 1 {
-		t.Errorf("permissions = %v, want contents only", req.Permissions)
+	if !reflect.DeepEqual(req.Permissions, want) {
+		t.Errorf("permissions = %v, want exactly %v", req.Permissions, want)
 	}
 }
 

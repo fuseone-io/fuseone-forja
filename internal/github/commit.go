@@ -23,7 +23,8 @@ type objectResponse struct {
 	SHA string `json:"sha"`
 }
 
-type treeEntry struct {
+// treeRequestEntry is one entry of POST /git/trees.
+type treeRequestEntry struct {
 	Path string `json:"path"`
 	Mode string `json:"mode"`
 	Type string `json:"type"`
@@ -46,7 +47,7 @@ func (r *Refs) CommitFile(ctx context.Context, repo string, file FileCommit) (st
 	if err != nil {
 		return "", fmt.Errorf("github: commit file of %s: blob: %w", repo, err)
 	}
-	tree, err := post(ctx, api, base+"/git/trees", map[string][]treeEntry{
+	tree, err := post(ctx, api, base+"/git/trees", map[string][]treeRequestEntry{
 		"tree": {{Path: file.Path, Mode: "100644", Type: "blob", SHA: blob}},
 	})
 	if err != nil {

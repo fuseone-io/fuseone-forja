@@ -29,10 +29,10 @@ const (
 
 // wire assembles the tools' dependencies from the environment. With no
 // credentials at all the server still serves the tools that need none,
-// and the others answer with the error naming the variables to set; the
-// claim store is then nil. A half-configured App or a malformed lease is a
-// startup failure. The wall clock and the id generator are injected here,
-// at the edge.
+// and every GitHub-backed tool answers with the error naming the variables
+// to set; the claim store is then nil. A half-configured App or a
+// malformed lease is a startup failure. The wall clock and the id
+// generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
 	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
 	lease, err := claimLease(getenv)
@@ -44,12 +44,16 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	if errors.Is(err, github.ErrNoCredentials) {
 		deps.Contracts = unavailableContracts{err: err}
 		deps.Claims = unavailableClaims{err: err}
+		deps.Cloner = unavailablePlan{err: err}
+		deps.Issues = unavailablePlan{err: err}
 		return deps, nil, nil
 	}
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
 	deps.Contracts = &github.ContractReader{Tokens: tokens}
+	deps.Cloner = cloner{&github.Cloner{Tokens: tokens}}
+	deps.Issues = &github.IssueReader{Tokens: tokens}
 	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
@@ -111,6 +115,21 @@ func newRunID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// cloner adapts github.Cloner, which returns its own struct, to the
+// interface forja.plan declares. A failed clone yields a nil interface,
+// never a typed nil inside one.
+type cloner struct {
+	*github.Cloner
+}
+
+func (c cloner) Clone(ctx context.Context, repo, branch string) (mcp.Checkout, error) {
+	co, err := c.Cloner.Clone(ctx, repo, branch)
+	if err != nil {
+		return nil, err
+	}
+	return co, nil
+}
+
 // unavailableContracts is the reader served when no credential is set.
 type unavailableContracts struct {
 	err error
@@ -131,4 +150,18 @@ func (u unavailableClaims) Claim(context.Context, domain.ClaimRequest) (domain.C
 
 func (u unavailableClaims) Release(context.Context, domain.Claim) error {
 	return u.err
+}
+
+// unavailablePlan is the cloner and issue reader served when no credential
+// is set.
+type unavailablePlan struct {
+	err error
+}
+
+func (u unavailablePlan) Clone(context.Context, string, string) (mcp.Checkout, error) {
+	return nil, u.err
+}
+
+func (u unavailablePlan) Read(context.Context, string, int) (domain.Issue, error) {
+	return domain.Issue{}, u.err
 }

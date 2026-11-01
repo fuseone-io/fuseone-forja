@@ -17,6 +17,8 @@ type Deps struct {
 	Runs      RunStore
 	Contracts ContractReader
 	Claims    Claimer
+	Cloner    Cloner
+	Issues    IssueReader
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time
@@ -27,12 +29,12 @@ type Deps struct {
 }
 
 // New builds the server with every tool registered. forja.status,
-// forja.doctor and forja.implement are backed by behaviour; the others
-// answer ErrNotImplemented.
+// forja.doctor, forja.plan and forja.implement are backed by behaviour;
+// forja.verify answers ErrNotImplemented.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
 	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Contracts))
-	sdk.AddTool(server, planTool(), notImplemented[PlanInput, PlanOutput](domain.ToolPlan))
+	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
 	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))
 	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs))
