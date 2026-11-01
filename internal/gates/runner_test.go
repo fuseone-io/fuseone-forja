@@ -1,0 +1,355 @@
+package gates_test
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/gates"
+)
+
+const pilotImage = "golang:1.25"
+
+// pilotContract is two setup steps and three gates, like the pilot's.
+func pilotContract() domain.Contract {
+	return domain.Contract{
+		Image: pilotImage,
+		Setup: []string{"go mod download", "go install lint@v2"},
+		Gates: []domain.Gate{
+			{Name: "build", Run: "make build"},
+			{Name: "vet", Run: "make vet"},
+			{Name: "test", Run: "make test"},
+		},
+	}
+}
+
+// allGreen scripts every step of pilotContract to exit 0 with a stream of
+// its own.
+func allGreen() map[string]scripted {
+	return map[string]scripted{
+		"go mod download":    {stdout: "downloaded\n"},
+		"go install lint@v2": {},
+		"make build":         {stdout: "built\n"},
+		"make vet":           {stderr: "vet notes\n"},
+		"make test":          {stdout: "ok\n"},
+	}
+}
+
+// ticking is a clock that advances one second per reading, so every
+// measured duration is a known, non-zero number.
+func ticking() func() time.Time {
+	t := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	return func() time.Time {
+		t = t.Add(time.Second)
+		return t
+	}
+}
+
+func newRunner(ws *fakeWorkspace) (*gates.Runner, *fakeLauncher) {
+	launcher := &fakeLauncher{ws: ws}
+	return &gates.Runner{Launcher: launcher, Now: ticking()}, launcher
+}
+
+func names(results []domain.GateResult) []string {
+	out := make([]string, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func statuses(results []domain.GateResult) []domain.StepStatus {
+	out := make([]domain.StepStatus, 0, len(results))
+	for _, r := range results {
+		out = append(out, r.Status)
+	}
+	return out
+}
+
+func TestRunner_setupThenGates_runInDeclaredOrder(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: allGreen()}
+	runner, launcher := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), pilotContract(), "/tmp/forja-plan-1")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	wantCommands := []string{"go mod download", "go install lint@v2", "make build", "make vet", "make test"}
+	if got := ws.ran(); !reflect.DeepEqual(got, wantCommands) {
+		t.Fatalf("commands ran = %q, want %q", got, wantCommands)
+	}
+	if launcher.image != pilotImage || launcher.tree != "/tmp/forja-plan-1" {
+		t.Fatalf("launched %q on %q, want %q on /tmp/forja-plan-1", launcher.image, launcher.tree, pilotImage)
+	}
+	assertGreenReport(t, report)
+	assertResult(t, report.Setup[0], "go mod download", domain.StepPassed, 0, "downloaded\n", "")
+	assertResult(t, report.Gates[1], "make vet", domain.StepPassed, 0, "", "vet notes\n")
+}
+
+// assertGreenReport checks the names, order, verdict and measured
+// durations of a run of pilotContract where everything passed.
+func assertGreenReport(t *testing.T, report domain.GateReport) {
+	t.Helper()
+	if got := names(report.Setup); !reflect.DeepEqual(got, []string{"setup[0]", "setup[1]"}) {
+		t.Errorf("setup names = %q, want setup[0], setup[1]", got)
+	}
+	if got := names(report.Gates); !reflect.DeepEqual(got, []string{"build", "vet", "test"}) {
+		t.Errorf("gate names = %q, want the contract's order", got)
+	}
+	if !report.OK() || report.FailedStep != "" {
+		t.Errorf("report not OK: FailedStep = %q", report.FailedStep)
+	}
+	for _, r := range append(report.Setup, report.Gates...) {
+		if r.Duration != time.Second {
+			t.Errorf("%s: Duration = %v, want the clock's one second between start and end", r.Name, r.Duration)
+		}
+	}
+}
+
+func assertResult(t *testing.T, got domain.GateResult, command string, status domain.StepStatus, exit int, stdout, stderr string) {
+	t.Helper()
+	if got.Command != command || got.Status != status || got.ExitCode != exit {
+		t.Errorf("%s = {%q %s %d}, want {%q %s %d}", got.Name, got.Command, got.Status, got.ExitCode, command, status, exit)
+	}
+	if string(got.Stdout) != stdout || string(got.Stderr) != stderr {
+		t.Errorf("%s streams = (%q, %q), want (%q, %q)", got.Name, got.Stdout, got.Stderr, stdout, stderr)
+	}
+}
+
+func TestRunner_firstGateRed_laterGatesSkipped(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make vet"] = scripted{exit: 2, stderr: "vet: shadowed err\n"}
+	ws := &fakeWorkspace{script: script}
+	runner, _ := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.FailedStep != "vet" || report.OK() {
+		t.Fatalf("FailedStep = %q, OK = %v; want vet and not OK", report.FailedStep, report.OK())
+	}
+	want := []domain.StepStatus{domain.StepPassed, domain.StepFailed, domain.StepSkipped}
+	if got := statuses(report.Gates); !reflect.DeepEqual(got, want) {
+		t.Fatalf("gate statuses = %v, want %v", got, want)
+	}
+	assertResult(t, report.Gates[1], "make vet", domain.StepFailed, 2, "", "vet: shadowed err\n")
+	assertResult(t, report.Gates[2], "make test", domain.StepSkipped, domain.NoExitCode, "", "")
+	if report.Gates[2].Duration != 0 {
+		t.Errorf("skipped gate Duration = %v, want 0", report.Gates[2].Duration)
+	}
+	if ran := ws.ran(); ran[len(ran)-1] != "make vet" {
+		t.Errorf("commands ran = %q, want none after make vet", ran)
+	}
+}
+
+func TestRunner_setupRed_noGateRuns(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["go install lint@v2"] = scripted{exit: 1, stderr: "requires go >= 1.26.0\n"}
+	ws := &fakeWorkspace{script: script}
+	runner, _ := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.FailedStep != "setup[1]" {
+		t.Fatalf("FailedStep = %q, want setup[1]", report.FailedStep)
+	}
+	if got := statuses(report.Setup); !reflect.DeepEqual(got, []domain.StepStatus{domain.StepPassed, domain.StepFailed}) {
+		t.Errorf("setup statuses = %v, want passed, failed", got)
+	}
+	want := []domain.StepStatus{domain.StepSkipped, domain.StepSkipped, domain.StepSkipped}
+	if got := statuses(report.Gates); !reflect.DeepEqual(got, want) {
+		t.Errorf("gate statuses = %v, want every gate skipped", got)
+	}
+	if got := ws.ran(); !reflect.DeepEqual(got, []string{"go mod download", "go install lint@v2"}) {
+		t.Errorf("commands ran = %q, want the two setup steps only", got)
+	}
+	if len(report.Gates) != 3 {
+		t.Errorf("report lists %d gates, want every declared gate even when none ran", len(report.Gates))
+	}
+}
+
+func TestRunner_gateWithNeeds_skippedWithoutStoppingTheRun(t *testing.T) {
+	t.Parallel()
+	c := pilotContract()
+	c.Gates = []domain.Gate{
+		{Name: "build", Run: "make build"},
+		{Name: "integration", Run: "make integration-test", Needs: []string{"postgres"}},
+		{Name: "test", Run: "make test"},
+	}
+	ws := &fakeWorkspace{script: allGreen()}
+	runner, _ := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), c, "/tree")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []domain.StepStatus{domain.StepPassed, domain.StepSkipped, domain.StepPassed}
+	if got := statuses(report.Gates); !reflect.DeepEqual(got, want) {
+		t.Fatalf("gate statuses = %v, want %v", got, want)
+	}
+	assertResult(t, report.Gates[1], "make integration-test", domain.StepSkipped, domain.NoExitCode, "", "")
+	if !report.OK() || report.FailedStep != "" {
+		t.Errorf("FailedStep = %q, want empty: a gate waiting for its services is not a failure", report.FailedStep)
+	}
+	for _, cmd := range ws.ran() {
+		if cmd == "make integration-test" {
+			t.Errorf("the gate with needs was sent to the workspace")
+		}
+	}
+}
+
+func TestRunner_closeCalled_onSuccessFailureAndTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		script     func() map[string]scripted
+		deadline   time.Duration
+		failedStep string
+		status     domain.StepStatus
+	}{
+		{name: "success", script: allGreen, status: domain.StepPassed},
+		{name: "red gate", script: func() map[string]scripted {
+			s := allGreen()
+			s["make build"] = scripted{exit: 1}
+			return s
+		}, failedStep: "build", status: domain.StepFailed},
+		{name: "timeout", script: func() map[string]scripted {
+			s := allGreen()
+			s["make build"] = scripted{block: true, stdout: "compiling"}
+			return s
+		}, deadline: 50 * time.Millisecond, failedStep: "build", status: domain.StepTimedOut},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ws := &fakeWorkspace{script: tt.script()}
+			runner, _ := newRunner(ws)
+			ctx := context.Background()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+			}
+
+			report, err := runner.Run(ctx, pilotContract(), "/tree")
+			if err != nil {
+				t.Fatalf("Run: %v, want nil: the run's own deadline is a result", err)
+			}
+			if ws.closes() != 1 {
+				t.Fatalf("Close called %d times, want exactly once", ws.closes())
+			}
+			if report.FailedStep != tt.failedStep || report.Gates[0].Status != tt.status {
+				t.Fatalf("FailedStep = %q, build status = %s; want %q, %s", report.FailedStep, report.Gates[0].Status, tt.failedStep, tt.status)
+			}
+			if tt.status == domain.StepTimedOut {
+				assertTimedOut(t, report)
+			}
+		})
+	}
+}
+
+// assertTimedOut checks the shape of a report whose first gate outlived
+// the deadline: no exit code, the partial log kept, the rest skipped.
+func assertTimedOut(t *testing.T, report domain.GateReport) {
+	t.Helper()
+	build := report.Gates[0]
+	if build.ExitCode != domain.NoExitCode || string(build.Stdout) != "compiling" {
+		t.Errorf("timed out gate = {exit %d, stdout %q}, want {exit -1, stdout \"compiling\"}", build.ExitCode, build.Stdout)
+	}
+	if build.Duration <= 0 {
+		t.Errorf("timed out gate Duration = %v, want the time it ran", build.Duration)
+	}
+	if got := statuses(report.Gates[1:]); !reflect.DeepEqual(got, []domain.StepStatus{domain.StepSkipped, domain.StepSkipped}) {
+		t.Errorf("statuses after the timeout = %v, want skipped", got)
+	}
+}
+
+func TestRunner_ctxCancelled_isAnErrorNotAReport(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make build"] = scripted{block: true}
+	ws := &fakeWorkspace{script: script}
+	runner, _ := newRunner(ws)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		// Cancel as soon as the blocked command has been received.
+		for len(ws.ran()) < 3 {
+			time.Sleep(time.Millisecond)
+		}
+		cancel()
+	}()
+
+	_, err := runner.Run(ctx, pilotContract(), "/tree")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Run after cancellation = %v, want context.Canceled", err)
+	}
+	if ws.closes() != 1 {
+		t.Fatalf("Close called %d times, want exactly once", ws.closes())
+	}
+}
+
+func TestRunner_launchFails_errorNamesImageAndNothingRan(t *testing.T) {
+	t.Parallel()
+	launcher := &fakeLauncher{err: errors.New("pull access denied")}
+	runner := &gates.Runner{Launcher: launcher, Now: ticking()}
+
+	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err == nil {
+		t.Fatal("Run with a failed launch = nil error")
+	}
+	for _, want := range []string{pilotImage, "pull access denied"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not name %q", err, want)
+		}
+	}
+}
+
+func TestRunner_execFailsToRun_errorNotAFailedGate(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make build"] = scripted{err: errors.New("daemon: connection reset")}
+	ws := &fakeWorkspace{script: script}
+	runner, _ := newRunner(ws)
+
+	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err == nil || !strings.Contains(err.Error(), "connection reset") || !strings.Contains(err.Error(), "build") {
+		t.Fatalf("Run = %v, want an error naming the gate and the daemon failure", err)
+	}
+	if ws.closes() != 1 {
+		t.Fatalf("Close called %d times, want exactly once", ws.closes())
+	}
+}
+
+func TestRunner_closeFails_reportedAsError(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: allGreen(), closeErr: errors.New("daemon: remove failed")}
+	runner, _ := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err == nil || !strings.Contains(err.Error(), "remove failed") {
+		t.Fatalf("Run = %v, want the Close failure: a container left behind is not a clean run", err)
+	}
+	if !report.OK() {
+		t.Errorf("the report of the run itself is lost: %+v", report)
+	}
+}
+
+func TestRunner_noNow_fails(t *testing.T) {
+	t.Parallel()
+	runner := &gates.Runner{Launcher: &fakeLauncher{ws: &fakeWorkspace{script: allGreen()}}}
+
+	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	if err == nil {
+		t.Fatal("Run without a clock = nil error, want a configuration error")
+	}
+}
