@@ -139,7 +139,7 @@ func (e *execution) step(ctx context.Context, s step) (domain.GateResult, error)
 	out, err := e.ws.Exec(ctx, s.command)
 	res := domain.GateResult{Name: s.name, Command: s.command, ExitCode: out.ExitCode, Duration: e.now().Sub(start), Stdout: out.Stdout, Stderr: out.Stderr}
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		res.Status, res.ExitCode = domain.StepTimedOut, domain.NoExitCode
 		e.failed = s.name
 	case err != nil:
