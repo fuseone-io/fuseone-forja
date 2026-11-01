@@ -1,0 +1,54 @@
+# Forja contract for this repository (PRD v1 shape, adapted).
+# Provisional: the phase-0 pilot is still a human decision. See docs/adr/.
+# Read by the control plane from the base commit, never from the agent's tree.
+version: 1
+image: golang:1.25
+
+setup:
+  - go mod download
+  # make lint needs golangci-lint on PATH; the CI pins v2.15.0.
+  # v2.15.0 declares go 1.26.0 in its go.mod, so this step depends on the
+  # toolchain switch working under golang:1.25. forja.doctor decides.
+  - go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0
+
+# No sidecar today. A real Postgres appears when the run store grows an
+# integration test; it will be declared here with a `needs:` on that gate.
+services: {}
+
+# No private dependency: go.mod resolves entirely through proxy.golang.org.
+registries: []
+
+# Order matters; every gate must exit 0. The commands are the Makefile's own.
+gates:
+  - name: build
+    run: make build
+  - name: vet
+    run: make vet
+  - name: lint
+    run: make lint
+  - name: test
+    run: make test
+  - name: race
+    run: make race
+
+verify:
+  exclude: ["**/*.md", "docs/**"]
+
+proof_paths:
+  - .forja.yaml
+  - Makefile
+  - .golangci.yml
+  - "**/testdata/**"
+  - "**/*_test.go"
+
+human_merge_paths:
+  - .github/**
+
+limits:
+  wall_clock: 30m
+  max_diff_lines: 400
+
+agent_context:
+  - CLAUDE.md
+  - CONTRIBUTING.md
+  - docs/
