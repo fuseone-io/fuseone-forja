@@ -1,0 +1,33 @@
+version: 1
+image: golang:1.24
+setup:
+  - make deps
+services:
+  postgres: { image: postgres:17, env: { POSTGRES_PASSWORD: test } }
+registries:
+  - ghcr.io/my-org
+gates:                       # order matters; every one must exit 0
+  - name: build
+    run: make build
+  - name: lint
+    run: make lint
+  - name: test
+    run: make test
+  - name: integration
+    run: make integration-test
+    needs: [postgres]
+verify:
+  exclude: ["**/*.md", "migrations/**"]
+proof_paths:                 # a change here is visible and asks for a human merge
+  - .forja.yaml
+  - Makefile
+  - scripts/**
+  - "**/*_test.go"
+human_merge_paths:
+  - .github/**
+limits:
+  wall_clock: 30m
+  max_diff_lines: 400
+agent_context:
+  - CLAUDE.md
+  - CONTRIBUTING.md
