@@ -81,7 +81,7 @@ func New(opts Options) (*Gateway, error) {
 // error when a denial could not be logged: from then on no attempt would
 // be recorded, so the gateway stops and the workspace reaches nothing.
 func (g *Gateway) Serve(ctx context.Context, ln net.Listener) error {
-	if err := g.write(entry{Event: eventReady, Run: g.runID, At: g.now()}); err != nil {
+	if err := g.write(entry{Event: eventReady, Run: g.runID, At: g.now(), Addr: ln.Addr().String()}); err != nil {
 		_ = ln.Close()
 		return fmt.Errorf("egress: write readiness: %w", err)
 	}

@@ -29,6 +29,8 @@ type entry struct {
 	At          time.Time         `json:"at"`
 	Kind        domain.EgressKind `json:"kind,omitempty"`
 	Destination string            `json:"destination,omitempty"`
+	// Addr is where a ready gateway listens.
+	Addr string `json:"addr,omitempty"`
 }
 
 // encode is the line for e, newline included: the JSON encoder escapes

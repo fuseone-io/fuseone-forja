@@ -1,4 +1,5 @@
-// Command forjad is Forja's binary. Today it serves the MCP server over stdio.
+// Command forjad is Forja's binary: the MCP server over stdio, and the
+// egress gateway the control plane starts next to each run's workspace.
 package main
 
 import (
@@ -18,17 +19,20 @@ import (
 const version = "0.0.0-dev"
 
 func main() {
-	os.Exit(run(os.Args[1:], os.Stderr))
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
-func run(args []string, stderr io.Writer) int {
-	if len(args) != 1 || args[0] != "serve" {
-		usage(stderr)
-		return 2
-	}
+func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
+	switch {
+	case len(args) == 1 && args[0] == "serve":
+		return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
+	case len(args) >= 1 && args[0] == "gateway":
+		return gateway(ctx, args[1:], stdout, stderr)
+	}
+	usage(stderr)
+	return 2
 }
 
 // serve recovers the claims a previous process left, then runs the server
@@ -58,5 +62,7 @@ func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, geten
 
 func usage(w io.Writer) {
 	// The exit code is the only channel left when stderr itself fails.
-	_, _ = fmt.Fprint(w, "usage: forjad serve\n\n  serve  run the MCP server over stdio\n")
+	_, _ = fmt.Fprint(w, "usage: forjad serve\n       forjad gateway -run <id> [-allow host:port,...] [-listen addr]\n\n"+
+		"  serve    run the MCP server over stdio\n"+
+		"  gateway  run the egress gateway of one run's workspace\n")
 }

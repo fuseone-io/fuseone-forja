@@ -1,8 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +31,7 @@ func TestRun_notServe_usageAndExit2(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var stderr bytes.Buffer
-			if code := run(tt.args, &stderr); code != 2 {
+			if code := run(tt.args, io.Discard, &stderr); code != 2 {
 				t.Fatalf("run(%q) = %d, want 2", tt.args, code)
 			}
 			if !strings.Contains(stderr.String(), "usage: forjad serve") {
@@ -35,6 +39,86 @@ func TestRun_notServe_usageAndExit2(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRun_gatewayMisconfigured_exit2NamingTheProblem(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "no run id", args: []string{"gateway", "-allow", "proxy.golang.org:443"}, want: "-run"},
+		{name: "malformed allow entry", args: []string{"gateway", "-run", "r1", "-allow", "https://proxy.golang.org"}, want: "https://proxy.golang.org"},
+		{name: "extra argument", args: []string{"gateway", "-run", "r1", "extra"}, want: "usage"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			if code := run(tt.args, &stdout, &stderr); code != 2 {
+				t.Fatalf("run(%q) = %d, want 2", tt.args, code)
+			}
+			if !strings.Contains(stderr.String(), tt.want) {
+				t.Errorf("stderr %q does not name %q", stderr.String(), tt.want)
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want nothing: a gateway that did not start is never ready", stdout.String())
+			}
+		})
+	}
+}
+
+// The subcommand is the gateway the workspace container is given: it says
+// it is ready on stdout, refuses what is not listed with one line there,
+// and exits 0 when stopped.
+func TestGatewayCommand_readyThenDenialLineThenCleanStop(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdoutR, stdoutW := io.Pipe()
+	var stderr bytes.Buffer
+	exited := make(chan int, 1)
+	go func() {
+		exited <- gateway(ctx, []string{"-run", "run-7", "-listen", "127.0.0.1:0", "-allow", "proxy.golang.org:443"}, stdoutW, &stderr)
+		_ = stdoutW.Close()
+	}()
+	lines := bufio.NewScanner(stdoutR)
+
+	addr := readyAddr(t, lines)
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := io.WriteString(conn, "CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	if !lines.Scan() || !strings.Contains(lines.Text(), `"destination":"example.com:443"`) || !strings.Contains(lines.Text(), `"run":"run-7"`) {
+		t.Fatalf("line after the CONNECT = %q, want the denial of example.com:443 for run-7", lines.Text())
+	}
+	cancel()
+	go func() { _, _ = io.Copy(io.Discard, stdoutR) }()
+	if code := <-exited; code != 0 {
+		t.Fatalf("gateway after cancel = %d, want 0; stderr %q", code, stderr.String())
+	}
+}
+
+// readyAddr reads the readiness line and returns the address it names.
+func readyAddr(t *testing.T, lines *bufio.Scanner) string {
+	t.Helper()
+	if !lines.Scan() {
+		t.Fatalf("no readiness line: %v", lines.Err())
+	}
+	var ready struct {
+		Event string `json:"event"`
+		Run   string `json:"run"`
+		Addr  string `json:"addr"`
+	}
+	if err := json.Unmarshal(lines.Bytes(), &ready); err != nil || ready.Event != "ready" || ready.Run != "run-7" || ready.Addr == "" {
+		t.Fatalf("first line = %q (%v), want the readiness of run-7 with its address", lines.Text(), err)
+	}
+	return ready.Addr
 }
 
 func emptyEnv(string) string { return "" }
