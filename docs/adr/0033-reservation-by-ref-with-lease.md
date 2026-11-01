@@ -1,4 +1,4 @@
-# ADR 9999 — Issue reservation by ref with lease
+# ADR 0033 — Issue reservation by ref with lease
 
 - **Status:** proposed
 - **Date:** 2026-11-01
