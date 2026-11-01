@@ -96,20 +96,35 @@ func TestJournal_missingDirectory_listsNothingAndPutCreatesIt(t *testing.T) {
 	}
 }
 
-// A file in the directory that is not a journal entry is a failure to
-// report, not a claim to forget.
+// A file in the directory that is not a complete journal entry is a
+// failure to report, not a claim to forget: without every field the ref it
+// names cannot be verified, and a silent skip would leave it behind.
 func TestJournal_undecodableEntry_listFailsNamingTheFile(t *testing.T) {
 	t.Parallel()
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "o__r__7.json"), []byte("not json"), 0o600); err != nil {
-		t.Fatalf("write: %v", err)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{name: "not json", body: "not json"},
+		{name: "no run id and no sha", body: `{"repository":"o/r","issue":7}`},
+		{name: "issue zero", body: `{"repository":"o/r","issue":0,"run_id":"run","sha":"s"}`},
+		{name: "no repository", body: `{"issue":7,"run_id":"run","sha":"s"}`},
 	}
-	_, err := (&claim.Journal{Dir: dir}).List()
-	if err == nil {
-		t.Fatal("List succeeded over an undecodable entry")
-	}
-	if !strings.Contains(err.Error(), "o__r__7.json") {
-		t.Fatalf("error %q does not name the file", err)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "o__r__7.json"), []byte(tt.body), 0o600); err != nil {
+				t.Fatalf("write: %v", err)
+			}
+			_, err := (&claim.Journal{Dir: dir}).List()
+			if err == nil {
+				t.Fatal("List succeeded over an entry that is not a claim")
+			}
+			if !strings.Contains(err.Error(), "o__r__7.json") {
+				t.Fatalf("error %q does not name the file", err)
+			}
+		})
 	}
 }
 

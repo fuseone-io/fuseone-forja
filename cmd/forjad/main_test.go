@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -181,6 +182,35 @@ func TestServe_invalidClaimLease_exitsOneNamingTheVariable(t *testing.T) {
 			}
 			if !strings.Contains(stderr.String(), "FORJA_CLAIM_LEASE") {
 				t.Fatalf("stderr %q does not name the variable", stderr.String())
+			}
+		})
+	}
+}
+
+// The configured lease is what the tools hold the issue for; unset, the
+// contract's wall clock decides.
+func TestWire_claimLease_configuredReachesTheTools(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		value string
+		want  time.Duration
+	}{
+		{name: "configured", value: "50m", want: 50 * time.Minute},
+		{name: "unset", value: "", want: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_CLAIM_LEASE": tt.value}
+			var stderr bytes.Buffer
+
+			deps, _, err := wire(func(k string) string { return env[k] }, &stderr)
+			if err != nil {
+				t.Fatalf("wire: %v", err)
+			}
+			if deps.Lease != tt.want {
+				t.Fatalf("Deps.Lease = %v with FORJA_CLAIM_LEASE=%q, want %v", deps.Lease, tt.value, tt.want)
 			}
 		})
 	}

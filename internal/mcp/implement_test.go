@@ -111,6 +111,21 @@ func (r *recordingRuns) Put(ctx context.Context, run domain.Run) error {
 	return r.Memory.Put(ctx, run)
 }
 
+// failingRuns is the recording store with every Put of a run in failState
+// refused.
+type failingRuns struct {
+	*recordingRuns
+	failState domain.RunState
+}
+
+func (r *failingRuns) Put(ctx context.Context, run domain.Run) error {
+	if run.State == r.failState {
+		r.calls.add("put " + string(run.State))
+		return errors.New("run store down")
+	}
+	return r.recordingRuns.Put(ctx, run)
+}
+
 // implementFixture is a server wired with a granting claimer over a valid
 // contract with wall_clock 30m.
 type implementFixture struct {
@@ -239,6 +254,29 @@ func TestImplement_releaseFails_runFailedAndErrorReturned(t *testing.T) {
 	run, err := fx.runs.Get(context.Background(), "run-1")
 	if err != nil || run.State != domain.StateFailed || run.FinishedAt == nil {
 		t.Fatalf("run = %+v, %v; want failed and finished", run, err)
+	}
+}
+
+// A claim is held only while a run is recorded against it: when the running
+// record cannot be written, the ref comes off before the error goes back.
+func TestImplement_recordRunningFails_claimStillReleased(t *testing.T) {
+	t.Parallel()
+	calls := &callLog{}
+	claims := &fakeClaims{calls: calls}
+	runs := &failingRuns{recordingRuns: &recordingRuns{Memory: runstore.NewMemory(), calls: calls}, failState: domain.StateRunning}
+	contracts := &fakeContracts{src: domain.ContractSource{SHA: doctorSHA, Body: contractWithWallClock}}
+	cs := connectDeps(t, testDeps(runs, contracts, claims))
+
+	res := callImplement(t, cs, implementIssue)
+	if !res.IsError || !strings.Contains(textOf(res), "run store down") {
+		t.Fatalf("IsError = %v, text %q; want a tool error carrying the store failure", res.IsError, textOf(res))
+	}
+	want := []string{"claim", "put running", "release"}
+	if got := calls.list(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %q, want %q: the claim is released even though no run was recorded", got, want)
+	}
+	if released := claims.releasedClaims(); len(released) != 1 || released[0].RunID != "run-1" {
+		t.Fatalf("released = %+v, want the claim granted to run-1", released)
 	}
 }
 

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -362,6 +364,33 @@ func TestStore_claim_invalidRequest_rejectedBeforeAnyCall(t *testing.T) {
 	}
 	if calls := fake.callLog(); len(calls) != 0 {
 		t.Fatalf("an invalid request reached the repository: %q", calls)
+	}
+}
+
+// A claim nobody could recover after a crash is no claim: when the journal
+// cannot record it, the ref just created comes back off and the request is
+// refused, with the issue left free.
+func TestStore_claim_journalFails_refReleasedAndClaimRefused(t *testing.T) {
+	t.Parallel()
+	fake := newFakeRefs()
+	notADir := filepath.Join(t.TempDir(), "claims")
+	if err := os.WriteFile(notADir, []byte("a file where the journal directory should be"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := claim.NewStore(fake, clock(t0()), &claim.Journal{Dir: notADir})
+
+	_, err := store.Claim(context.Background(), request("run-1"))
+	if err == nil {
+		t.Fatal("Claim succeeded although the journal could not record it")
+	}
+	if errors.Is(err, domain.ErrClaimHeld) {
+		t.Fatalf("a journal failure was reported as a held claim: %v", err)
+	}
+	if sha, present := fake.refSHA(repo, ref); present {
+		t.Fatalf("ref still points at %s after the journal failed; nothing would release it after a crash", sha)
+	}
+	if calls := fake.callLog(); len(calls) == 0 || calls[len(calls)-1] != "DeleteRef" {
+		t.Fatalf("calls = %q, want the ref deleted after the journal failed", calls)
 	}
 }
 
