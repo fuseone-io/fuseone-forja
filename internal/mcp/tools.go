@@ -14,19 +14,6 @@ import (
 // yet. It travels as a tool error, never as a protocol error.
 var ErrNotImplemented = errors.New("not implemented")
 
-// DoctorInput is the argument of forja.doctor.
-type DoctorInput struct {
-	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
-}
-
-// DoctorOutput is the result of forja.doctor.
-type DoctorOutput struct {
-	Repository string   `json:"repository"`
-	SHA        string   `json:"sha"`
-	OK         bool     `json:"ok"`
-	Errors     []string `json:"errors"`
-}
-
 // PlanInput is the argument of forja.plan.
 type PlanInput struct {
 	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
@@ -73,14 +60,6 @@ func readClass() *sdk.ToolAnnotations {
 func writeClass() *sdk.ToolAnnotations {
 	destructive := true
 	return &sdk.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: &destructive}
-}
-
-func doctorTool() *sdk.Tool {
-	return &sdk.Tool{
-		Name:        string(domain.ToolDoctor),
-		Description: "Run the repository's .forja.yaml contract against its default branch, with no push.",
-		Annotations: readClass(),
-	}
 }
 
 func planTool() *sdk.Tool {

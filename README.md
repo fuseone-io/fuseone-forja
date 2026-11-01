@@ -189,12 +189,25 @@ So is the agent that runs inside it ([#2](https://github.com/fuseone-io/fuseone-
 
 Prerequisites: Go 1.25 or later and [golangci-lint](https://golangci-lint.run)
 v2.15.0 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`).
-No token, no Docker and no GitHub App are needed for this.
+No token, no Docker and no GitHub App are needed for the checks.
 
 ```sh
 make check       # build, vet, lint, tests, race
 make serve       # the MCP server over stdio
 ```
+
+`forja.doctor` reads the contract through the GitHub API and needs a
+credential in the environment. The server starts without one; the tool then
+fails naming the variables. The full provisioning runbook, including the
+App's permissions and the private key's handling, is
+[docs/github-app.md](docs/github-app.md).
+
+| Variable | Content | When |
+|---|---|---|
+| `FORJA_GITHUB_APP_ID` | numeric App ID | production |
+| `FORJA_GITHUB_INSTALLATION_ID` | numeric Installation ID on the pilot | production |
+| `FORJA_GITHUB_PRIVATE_KEY_FILE` | **path** to the PEM file mounted by the vault; the key never goes in a variable | production |
+| `FORJA_GITHUB_TOKEN` | fine-grained PAT restricted to the pilot | development only; ignored when `FORJA_GITHUB_APP_ID` is set |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
@@ -208,8 +221,10 @@ npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
 ```
 
 Either client lists the five tools with their input and output schemas and
-the read/write annotation FuseOne's Gate reads. Only `forja.status` answers
-today; the other four return "not implemented" until their slices land.
+the read/write annotation FuseOne's Gate reads. `forja.status` and
+`forja.doctor` answer today (the doctor validates the contract and returns the
+commit SHA it read it from; running the gates is a later slice); the other
+three return "not implemented" until their slices land.
 
 ## Layout
 

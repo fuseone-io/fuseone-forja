@@ -34,6 +34,8 @@ func TestRun_notServe_usageAndExit2(t *testing.T) {
 	}
 }
 
+func emptyEnv(string) string { return "" }
+
 func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -41,10 +43,75 @@ func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	_, serverTransport := sdk.NewInMemoryTransports()
 
 	var stderr bytes.Buffer
-	if code := serve(ctx, serverTransport, &stderr); code != 0 {
+	if code := serve(ctx, serverTransport, &stderr, emptyEnv); code != 0 {
 		t.Fatalf("serve after cancellation = %d, want 0", code)
 	}
 	if stderr.Len() != 0 {
 		t.Fatalf("a stop by signal is not a failure, got stderr %q", stderr.String())
+	}
+}
+
+// Without credentials the server still serves; only forja.doctor fails,
+// and it says which variables to set instead of failing later with a 401.
+func TestServe_noCredentials_startsAndDoctorFailsExplicitly(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	clientTransport, serverTransport := sdk.NewInMemoryTransports()
+	var stderr bytes.Buffer
+	exited := make(chan int, 1)
+	go func() { exited <- serve(ctx, serverTransport, &stderr, emptyEnv) }()
+
+	client := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("client.Connect: %v", err)
+	}
+	res, err := cs.CallTool(ctx, &sdk.CallToolParams{
+		Name:      "forja.doctor",
+		Arguments: map[string]any{"repository": "fuseone-io/fuseone-forja"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(forja.doctor): protocol error %v", err)
+	}
+	if !res.IsError {
+		t.Fatalf("forja.doctor succeeded with no credentials: %v", res.StructuredContent)
+	}
+	text := ""
+	for _, c := range res.Content {
+		if tc, ok := c.(*sdk.TextContent); ok {
+			text += tc.Text
+		}
+	}
+	for _, want := range []string{"FORJA_GITHUB_APP_ID", "FORJA_GITHUB_TOKEN"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("error text %q does not name %s", text, want)
+		}
+	}
+	_ = cs.Close()
+	cancel()
+	if code := <-exited; code != 0 {
+		t.Fatalf("serve = %d, want 0", code)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("missing credentials are not a startup failure, got stderr %q", stderr.String())
+	}
+}
+
+// The context is already cancelled: a serve that got as far as running the
+// server would return 0 at once instead of hanging.
+func TestServe_misconfiguredApp_exitsOneNamingTheVariable(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_GITHUB_APP_ID": "12345", "FORJA_GITHUB_INSTALLATION_ID": "777"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+		t.Fatalf("serve with a half-configured App = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "FORJA_GITHUB_PRIVATE_KEY_FILE") {
+		t.Fatalf("stderr %q does not name the missing variable", stderr.String())
 	}
 }
