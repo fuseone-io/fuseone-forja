@@ -172,6 +172,39 @@ func TestDocker_ctxDeadline_duringExec_containerRemoved(t *testing.T) {
 	assertGone(t, c.ID())
 }
 
+// labelledContainers counts the containers this package marks as its own,
+// running or not.
+func labelledContainers(t *testing.T) int {
+	t.Helper()
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	list, err := cli.ContainerList(context.Background(), client.ContainerListOptions{
+		All:     true,
+		Filters: client.Filters{}.Add("label", "forja.run=doctor"),
+	})
+	if err != nil {
+		t.Fatalf("ContainerList: %v", err)
+	}
+	return len(list.Items)
+}
+
+func TestDocker_launch_treeMissing_errorAndNoContainerLeft(t *testing.T) {
+	d := newDocker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	before := labelledContainers(t)
+
+	_, err := d.Launch(ctx, testImage, filepath.Join(t.TempDir(), "no-such-tree"))
+	if err == nil {
+		t.Fatal("Launch(missing tree) = nil error, want a copy failure")
+	}
+	if after := labelledContainers(t); after != before {
+		t.Fatalf("labelled containers went from %d to %d: the container of a failed launch was left behind", before, after)
+	}
+}
+
 func TestDocker_launch_imageUnknown_errorNamesIt(t *testing.T) {
 	d := newDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
