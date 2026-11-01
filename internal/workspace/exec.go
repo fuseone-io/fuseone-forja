@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -29,11 +30,27 @@ type ExecResult struct {
 	Truncated bool
 }
 
-// Container is one running workspace, on a network of its own.
+// Container is one running workspace, on a network of its own, with the
+// sidecars started for it.
 type Container struct {
 	cli     *client.Client
 	id      string
 	network string
+
+	mu       sync.Mutex
+	sidecars []string
+}
+
+func (c *Container) track(id string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sidecars = append(c.sidecars, id)
+}
+
+func (c *Container) tracked() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.sidecars...)
 }
 
 // ID is the daemon's identifier of the container.
@@ -114,14 +131,18 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 	}
 }
 
-// Close kills and removes the container, then its network. A container or
-// network the daemon no longer knows is already closed. Every removal is
-// attempted whatever the one before it returned.
+// Close kills and removes every sidecar, then the container, then its
+// network, which the daemon removes only once nothing is attached to it.
+// A container or network the daemon no longer knows is already closed.
+// Every removal is attempted whatever the one before it returned.
 func (c *Container) Close(ctx context.Context) error {
-	return errors.Join(
-		removeContainer(ctx, c.cli, c.id),
-		removeNetwork(ctx, c.cli, c.network),
-	)
+	sidecars := c.tracked()
+	errs := make([]error, 0, len(sidecars)+2)
+	for _, id := range sidecars {
+		errs = append(errs, removeContainer(ctx, c.cli, id))
+	}
+	errs = append(errs, removeContainer(ctx, c.cli, c.id), removeNetwork(ctx, c.cli, c.network))
+	return errors.Join(errs...)
 }
 
 // removeContainer kills and removes one container; one that was never

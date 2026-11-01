@@ -11,6 +11,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
@@ -154,13 +155,16 @@ func TestDocker_env_isTheImagesOnly(t *testing.T) {
 	d := newDocker(t)
 	c := launch(t, d, treeWith(t))
 	ctx := context.Background()
+	// A service's env is the sidecar's alone, never the tree's.
+	withEnv := domain.Service{Image: sidecarImage, Env: map[string]string{"SIDECAR_ONLY_PASSWORD": "secret-sidecar-89ab"}}
+	startReady(t, c, "cache", withEnv)
 
 	res, err := c.Exec(ctx, "env")
 	if err != nil || res.ExitCode != 0 {
 		t.Fatalf("Exec(env) = %v, exit %d", err, res.ExitCode)
 	}
 	env := string(res.Stdout)
-	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key"} {
+	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key", "SIDECAR_ONLY_PASSWORD", "secret-sidecar"} {
 		if strings.Contains(env, leak) {
 			t.Errorf("container env carries %q:\n%s", leak, env)
 		}
