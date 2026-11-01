@@ -61,7 +61,7 @@ equivalent "Register a GitHub App from a manifest" form). The `url` and
 {
   "name": "Forja (fuseone-io)",
   "url": "https://github.com/fuseone-io/fuseone-forja",
-  "description": "Runtime de execucao da fabrica de software FuseOne. Abre PRs com evidencia verificavel; sem bypass de protecao de branch.",
+  "description": "Execution runtime of the FuseOne software factory. Opens PRs with verifiable evidence; no branch protection bypass.",
   "public": false,
   "default_permissions": {
     "contents": "write",
