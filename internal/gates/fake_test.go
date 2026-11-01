@@ -14,6 +14,8 @@ type scripted struct {
 	exit   int
 	stdout string
 	stderr string
+	// truncated says the workspace cut a stream to its tail.
+	truncated bool
 	// block makes the command wait for ctx to end and fail with ctx's
 	// error, the way a gate that outlives the deadline does.
 	block bool
@@ -56,7 +58,7 @@ func (w *fakeWorkspace) Exec(ctx context.Context, command string) (gates.ExecRes
 		w.mu.Lock()
 		return gates.ExecResult{ExitCode: -1, Stdout: []byte(s.stdout)}, ctx.Err()
 	}
-	return gates.ExecResult{ExitCode: s.exit, Stdout: []byte(s.stdout), Stderr: []byte(s.stderr)}, nil
+	return gates.ExecResult{ExitCode: s.exit, Stdout: []byte(s.stdout), Stderr: []byte(s.stderr), Truncated: s.truncated}, nil
 }
 
 // Close fails on a context that already ended, as a daemon call does:

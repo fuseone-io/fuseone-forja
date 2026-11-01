@@ -75,7 +75,9 @@ type container struct {
 
 func (c container) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
 	res, err := c.Container.Exec(ctx, command)
-	return gates.ExecResult{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, err
+	// The two result types are field for field the same; the conversion
+	// makes the compiler refuse an adapter that drops one.
+	return gates.ExecResult(res), err
 }
 
 // unavailablePlan is the cloner and issue reader served when no credential

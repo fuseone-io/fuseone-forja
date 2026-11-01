@@ -121,6 +121,34 @@ func assertResult(t *testing.T, got domain.GateResult, command string, status do
 	}
 }
 
+// The workspace bounds the streams; the runner carries its word on it
+// into the result, red or green, and never raises it on its own.
+func TestRunner_streamCutByWorkspace_truncatedCarriedIntoResult(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make build"] = scripted{stdout: "...last lines\n", truncated: true}
+	script["make vet"] = scripted{exit: 2, stderr: "...last lines\n", truncated: true}
+	ws := &fakeWorkspace{script: script}
+	runner, _ := newRunner(ws)
+
+	report, err := runner.Run(context.Background(), pilotContract(), "/tmp/forja-plan-1")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	for _, r := range report.Setup {
+		if r.Truncated {
+			t.Errorf("%s: Truncated = true, the workspace did not cut it", r.Name)
+		}
+	}
+	build, vet := report.Gates[0], report.Gates[1]
+	if !build.Truncated || string(build.Stdout) != "...last lines\n" {
+		t.Errorf("build = {truncated %v, stdout %q}, want {true, the tail as the workspace gave it}", build.Truncated, build.Stdout)
+	}
+	if !vet.Truncated || vet.Status != domain.StepFailed {
+		t.Errorf("vet = {truncated %v, status %s}, want {true, failed}", vet.Truncated, vet.Status)
+	}
+}
+
 func TestRunner_firstGateRed_laterGatesSkipped(t *testing.T) {
 	t.Parallel()
 	script := allGreen()

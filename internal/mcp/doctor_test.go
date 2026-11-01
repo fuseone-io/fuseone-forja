@@ -324,24 +324,27 @@ func assertDeadlineWithin(t *testing.T, gates *fakeGates, before time.Time, wall
 	}
 }
 
-func TestDoctor_logOver64KiB_tailKeptAndTruncatedTrue(t *testing.T) {
+// The streams are bounded where they are read, in the workspace; the
+// doctor hands the tail and the flag on as they came and never cuts again.
+func TestDoctor_streamCutByWorkspace_tailAndFlagPassedThrough(t *testing.T) {
 	t.Parallel()
-	big := strings.Repeat("x", 70*1024) + "TAIL"
+	tail := strings.Repeat("x", 70*1024) + "TAIL"
 	report := greenReport()
-	report.Gates[0].Stdout = []byte(big)
+	report.Gates[0].Stdout = []byte(tail)
 	report.Gates[0].Stderr = []byte("short")
+	report.Gates[0].Truncated = true
 	cs := connectDoctor(t, &fakeCloner{co: doctorCheckout(doctorContract)}, &fakeGates{report: report})
 
 	got := decodeDoctor(t, callDoctor(t, cs, doctorRepo))
 	build := got.Gates[0]
-	if len(build.Stdout) != 64*1024 || !strings.HasSuffix(build.Stdout, "TAIL") || !build.Truncated {
-		t.Fatalf("stdout len %d, suffix %q, truncated %v; want 64 KiB ending in TAIL and truncated", len(build.Stdout), build.Stdout[len(build.Stdout)-4:], build.Truncated)
+	if build.Stdout != tail || !build.Truncated {
+		t.Fatalf("stdout len %d, truncated %v; want the %d bytes the workspace kept and truncated", len(build.Stdout), build.Truncated, len(tail))
 	}
 	if build.Stderr != "short" {
 		t.Errorf("stderr = %q, want untouched", build.Stderr)
 	}
 	if got.Gates[1].Truncated {
-		t.Errorf("a short log is marked truncated")
+		t.Errorf("a stream the workspace did not cut is marked truncated")
 	}
 }
 

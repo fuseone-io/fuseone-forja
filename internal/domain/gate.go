@@ -27,8 +27,11 @@ type GateResult struct {
 	Status   StepStatus
 	ExitCode int
 	Duration time.Duration
-	Stdout   []byte
-	Stderr   []byte
+	// Stdout and Stderr are the tail of each stream as the workspace kept
+	// it; Truncated says a stream had more than was kept.
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 // GateReport lists every declared step of a run, in the order the contract

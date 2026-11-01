@@ -20,12 +20,14 @@ const DefaultWallClock = 30 * time.Minute
 // already be dead.
 const closeTimeout = 30 * time.Second
 
-// ExecResult is what one command left behind. The streams are raw bytes;
-// the runner never reads them.
+// ExecResult is what one command left behind. The streams are raw bytes,
+// bounded by the workspace, which says so in Truncated; the runner never
+// reads them.
 type ExecResult struct {
-	ExitCode int
-	Stdout   []byte
-	Stderr   []byte
+	ExitCode  int
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 // Workspace is an ephemeral tree the commands run in.
@@ -137,7 +139,10 @@ func (e *execution) step(ctx context.Context, s step) (domain.GateResult, error)
 	}
 	start := e.now()
 	out, err := e.ws.Exec(ctx, s.command)
-	res := domain.GateResult{Name: s.name, Command: s.command, ExitCode: out.ExitCode, Duration: e.now().Sub(start), Stdout: out.Stdout, Stderr: out.Stderr}
+	res := domain.GateResult{
+		Name: s.name, Command: s.command, ExitCode: out.ExitCode, Duration: e.now().Sub(start),
+		Stdout: out.Stdout, Stderr: out.Stderr, Truncated: out.Truncated,
+	}
 	switch {
 	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		res.Status, res.ExitCode = domain.StepTimedOut, domain.NoExitCode

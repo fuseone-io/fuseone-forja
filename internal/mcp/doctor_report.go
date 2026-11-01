@@ -8,13 +8,9 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// maxLogBytes is how much of each stream a step report carries. The tail
-// is what a maintainer reads first on a red gate; the whole log stays in
-// the domain report.
-const maxLogBytes = 64 << 10
-
 // StepReport is one setup step or gate as the maintainer reads it: the
-// command, its exit code and the tail of its raw streams.
+// command, its exit code and the tail of its raw streams, as the workspace
+// kept them.
 type StepReport struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
@@ -25,7 +21,7 @@ type StepReport struct {
 	Duration time.Duration `json:"duration"`
 	Stdout   string        `json:"stdout"`
 	Stderr   string        `json:"stderr"`
-	// Truncated says a stream was cut to its last maxLogBytes.
+	// Truncated says the workspace cut a stream to its tail.
 	Truncated bool `json:"truncated"`
 }
 
@@ -42,28 +38,18 @@ func (o *DoctorOutput) addReport(c domain.Contract, report domain.GateReport) {
 func stepReports(results []domain.GateResult) []StepReport {
 	out := make([]StepReport, 0, len(results))
 	for _, r := range results {
-		stdout, cutOut := tail(r.Stdout)
-		stderr, cutErr := tail(r.Stderr)
 		out = append(out, StepReport{
 			Name:      r.Name,
 			Command:   r.Command,
 			Status:    string(r.Status),
 			ExitCode:  r.ExitCode,
 			Duration:  r.Duration,
-			Stdout:    stdout,
-			Stderr:    stderr,
-			Truncated: cutOut || cutErr,
+			Stdout:    string(r.Stdout),
+			Stderr:    string(r.Stderr),
+			Truncated: r.Truncated,
 		})
 	}
 	return out
-}
-
-// tail keeps the last maxLogBytes of a stream and says whether it cut.
-func tail(b []byte) (string, bool) {
-	if len(b) <= maxLogBytes {
-		return string(b), false
-	}
-	return string(b[len(b)-maxLogBytes:]), true
 }
 
 // needsWarnings names every gate the run skipped for its services.

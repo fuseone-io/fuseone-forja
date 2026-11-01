@@ -32,7 +32,7 @@ type pilotWorkspace struct {
 
 func (w pilotWorkspace) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
 	res, err := w.Container.Exec(ctx, command)
-	return gates.ExecResult{ExitCode: res.ExitCode, Stdout: res.Stdout, Stderr: res.Stderr}, err
+	return gates.ExecResult(res), err
 }
 
 // TestPilot_doctorContractOnThisRepository runs this repository's own
