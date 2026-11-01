@@ -241,14 +241,52 @@ func TestCloner_tokenInEnvironmentNotArgumentsNotConfig(t *testing.T) {
 		t.Fatalf("Clone: %v", err)
 	}
 	t.Cleanup(func() { _ = co.Close() })
+	if _, err := co.ReadFile(context.Background(), "CLAUDE.md"); err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
 
 	args := readFile(t, argsFile)
 	assertNoCredential(t, "git arguments", args, cloneToken)
 	if !strings.Contains(args, "credential.helper=\n") {
 		t.Errorf("git arguments do not disable credential helpers:\n%s", args)
 	}
-	assertGitEnv(t, readFile(t, envFile), cloneToken)
+	env := readFile(t, envFile)
+	assertGitEnv(t, env, cloneToken)
 	assertNoCredential(t, ".git/config of the checkout", readFile(t, filepath.Join(co.Dir(), ".git", "config")), cloneToken)
+
+	// The stand-in records every git it ran: the clone, the reads that pin
+	// the checkout and the read of the file. Only the clone needs the
+	// credential.
+	if runs := strings.Count(env, "GIT_CONFIG_NOSYSTEM=1\n"); runs < 3 {
+		t.Fatalf("stand-in recorded %d git invocations, want the clone, the pin and the file read", runs)
+	}
+	if n := strings.Count(env, "GIT_CONFIG_VALUE_0="); n != 1 {
+		t.Errorf("the credential reached %d git invocations, want only the clone", n)
+	}
+}
+
+// A git that echoes the header it was handed, as a verbose failure or a
+// trace would, must not put the credential into the error: the encoded
+// form decodes to the token.
+func TestCloner_gitEchoesTheHeader_errorWithheldAndDirectoryRemoved(t *testing.T) {
+	t.Parallel()
+	bin := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nprintf 'fatal: header %s rejected\\n' \"$GIT_CONFIG_VALUE_0\" >&2\nexit 128\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stand-in: %v", err)
+	}
+	dir := t.TempDir()
+	cloner := &github.Cloner{Tokens: &countingTokens{value: cloneToken}, Dir: dir, Remote: "file:///nonexistent/", Git: bin}
+
+	_, err := cloner.Clone(context.Background(), fakeRepo, "main")
+	if err == nil {
+		t.Fatal("Clone succeeded with a git that exits 128")
+	}
+	assertNoCredential(t, "error", err.Error(), cloneToken)
+	if !strings.Contains(err.Error(), fakeRepo) {
+		t.Errorf("error %q does not name the repository", err)
+	}
+	assertEmptyDir(t, dir)
 }
 
 // assertNoCredential checks that text carries neither the raw token nor its

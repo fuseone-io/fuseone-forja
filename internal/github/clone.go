@@ -90,9 +90,9 @@ func (c *Cloner) cloneURL(repo string) (string, error) {
 
 func (c *Cloner) cloneInto(ctx context.Context, dir, url, branch, token string) (*Checkout, error) {
 	git := gitCmd{bin: c.Git}
-	env := cloneEnv(url, token)
+	env, basic := cloneEnv(url, token)
 	if _, err := git.run(ctx, "", env, cloneArgs(branch, url, dir)...); err != nil {
-		return nil, redact(err, token, env[len(env)-1])
+		return nil, redact(err, token, basic)
 	}
 	return openCheckout(ctx, git, dir)
 }
@@ -115,14 +115,15 @@ func cloneArgs(branch, url, dir string) []string {
 }
 
 // cloneEnv is baseEnv plus the credential, as an extraheader scoped to the
-// remote URL. The header is the last entry so callers can redact it.
-func cloneEnv(url, token string) []string {
-	basic := base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
+// remote URL. basic is the encoded credential the header carries: it
+// decodes to the token, so callers redact it as they redact the token.
+func cloneEnv(url, token string) (env []string, basic string) {
+	basic = base64.StdEncoding.EncodeToString([]byte("x-access-token:" + token))
 	return append(baseEnv(),
 		"GIT_CONFIG_COUNT=1",
 		"GIT_CONFIG_KEY_0=http."+url+".extraheader",
 		"GIT_CONFIG_VALUE_0=Authorization: Basic "+basic,
-	)
+	), basic
 }
 
 // baseEnv is the process environment without any GIT_* variable, so a
@@ -141,7 +142,7 @@ func baseEnv() []string {
 }
 
 // redact replaces an error that echoes the credential with one that does
-// not; the header value is checked as well as the raw token.
+// not; the encoded form is checked as well as the raw token.
 func redact(err error, secrets ...string) error {
 	text := err.Error()
 	for _, s := range secrets {
