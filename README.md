@@ -1,6 +1,9 @@
 <div align="center">
 
-<h1>Forja</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-wordmark-dark.svg">
+  <img src="docs/assets/logo-wordmark-light.svg" alt="FuseOne Forja" width="320">
+</picture>
 
 <p><strong>The execution runtime of the FuseOne software factory.</strong><br>
 An MCP server that takes "implement issue X in repository Y" and returns a PR
