@@ -1,4 +1,4 @@
-# ADR 9999 — Repositório piloto e mantenedor da fase 0 (default provisório)
+# ADR 0027 — Repositório piloto e mantenedor da fase 0 (default provisório)
 
 - **Status:** proposto — default tomado pelo time; **ratificação pendente do humano**
 - **Data:** 2026-11-01
