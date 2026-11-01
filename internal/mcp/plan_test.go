@@ -171,12 +171,12 @@ func contractWith(entries ...string) string {
 
 func connectPlan(t *testing.T, cloner *fakeCloner, issues *fakeIssues) *sdk.ClientSession {
 	t.Helper()
-	return connectDeps(t, forja.Deps{
-		Runs:   runstore.NewMemory(),
-		Cloner: cloner,
-		Issues: issues,
-		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
-	})
+	contracts := &fakeContracts{err: errors.New("no contract reader in this test")}
+	claims := &fakeClaims{calls: &callLog{}, claimErr: errors.New("no claimer in this test")}
+	deps := testDeps(runstore.NewMemory(), contracts, claims)
+	deps.Cloner = cloner
+	deps.Issues = issues
+	return connectDeps(t, deps)
 }
 
 func callPlan(t *testing.T, cs *sdk.ClientSession, args map[string]any) *sdk.CallToolResult {

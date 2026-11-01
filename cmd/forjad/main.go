@@ -31,17 +31,23 @@ func run(args []string, stderr io.Writer) int {
 	return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
 }
 
-// serve runs the server until the transport closes or ctx is cancelled. A
-// cancelled context is the operator stopping the server, not a failure.
+// serve recovers the claims a previous process left, then runs the server
+// until the transport closes or ctx is cancelled. A cancelled context is
+// the operator stopping the server, not a failure; a recovery that cannot
+// finish is one.
 func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, getenv func(string) string) int {
-	deps, err := buildDeps(getenv)
+	deps, store, err := wire(getenv, stderr)
 	if err != nil {
 		// The exit code is the only channel left when stderr itself fails.
 		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 		return 1
 	}
-	server := mcp.New(deps, version)
-	err = server.Run(ctx, transport)
+	if err := recoverClaims(ctx, store, stderr); err != nil {
+		// The exit code is the only channel left when stderr itself fails.
+		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
+		return 1
+	}
+	err = mcp.New(deps).Run(ctx, transport)
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}

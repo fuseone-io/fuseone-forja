@@ -98,6 +98,23 @@ func TestCloner_noBranch_defaultBranchResolved(t *testing.T) {
 	}
 }
 
+// The clone reads the base branch and nothing else: its token asks to read
+// contents, never to write them and never for the issues.
+func TestCloner_mintsContentsReadOnly(t *testing.T) {
+	t.Parallel()
+	repo := newBareRepo(t, "main")
+	repo.commit(pilotFiles, "pilot")
+	tokens := &countingTokens{value: cloneToken}
+	cloner := &github.Cloner{Tokens: tokens, Dir: t.TempDir(), Remote: repo.remote()}
+
+	co, err := cloner.Clone(context.Background(), fakeRepo, "main")
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	t.Cleanup(func() { _ = co.Close() })
+	assertEveryMint(t, tokens, github.ReadContents)
+}
+
 func TestCloner_close_removesDirectory(t *testing.T) {
 	t.Parallel()
 	repo := newBareRepo(t, "main")

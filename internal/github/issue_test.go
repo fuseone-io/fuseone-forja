@@ -44,6 +44,7 @@ func TestIssueReader_issue_titleAndBodyDecodedTokenMintedForRepository(t *testin
 	if mints := tokens.mints(); !reflect.DeepEqual(mints, []string{fakeRepo}) {
 		t.Errorf("mints = %q, want one for %q", mints, fakeRepo)
 	}
+	assertEveryMint(t, tokens, github.ReadIssues)
 }
 
 // The API represents an issue created without a body as null, never as "".

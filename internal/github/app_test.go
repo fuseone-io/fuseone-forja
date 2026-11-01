@@ -134,26 +134,62 @@ func (f *fakeApp) verifyJWT(token string) jwtClaims {
 	return claims
 }
 
-func TestAppTokenSource_mintsContentsReadAndIssuesReadForTheRepository(t *testing.T) {
+// The installation token carries exactly the permissions the call asked
+// for: the contract reader and the cloner ask to read contents, the issue
+// reader asks to read issues, the ref writer asks to write contents, and
+// none gets another's scope or level.
+func TestAppTokenSource_postsScopedInstallationTokenRequest(t *testing.T) {
 	t.Parallel()
-	key := testKey(t)
-	fake, server := newFakeApp(t, &key.PublicKey, http.StatusCreated, accessTokensResponse())
-	source := &github.AppTokenSource{AppID: "12345", InstallationID: "777", Key: key, BaseURL: server.URL, Now: fixedNow}
+	tests := []struct {
+		name  string
+		perms github.Permissions
+		want  map[string]string
+	}{
+		{name: "read contents", perms: github.ReadContents, want: map[string]string{"contents": "read"}},
+		{name: "read issues", perms: github.ReadIssues, want: map[string]string{"issues": "read"}},
+		{name: "write contents", perms: github.WriteContents, want: map[string]string{"contents": "write"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			key := testKey(t)
+			fake, server := newFakeApp(t, &key.PublicKey, http.StatusCreated, accessTokensResponse())
+			source := &github.AppTokenSource{AppID: "12345", InstallationID: "777", Key: key, BaseURL: server.URL, Now: fixedNow}
 
-	tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja")
-	if err != nil {
-		t.Fatalf("Token: %v", err)
+			tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", tt.perms)
+			if err != nil {
+				t.Fatalf("Token: %v", err)
+			}
+			if tok.Value != mintedToken {
+				t.Errorf("Token.Value = %q, want the minted token", tok.Value)
+			}
+			if want := time.Date(2026, 11, 1, 13, 0, 0, 0, time.UTC); !tok.ExpiresAt.Equal(want) {
+				t.Errorf("Token.ExpiresAt = %v, want %v", tok.ExpiresAt, want)
+			}
+			fake.mu.Lock()
+			defer fake.mu.Unlock()
+			assertClaims(t, fake.claims, "12345")
+			assertMintRequest(t, fake.req, tt.want)
+		})
 	}
-	if tok.Value != mintedToken {
-		t.Errorf("Token.Value = %q, want the minted token", tok.Value)
+}
+
+// A mint with no permissions would hand out whatever the installation
+// allows: it is refused before the API is reached.
+func TestAppTokenSource_noPermissions_failsBeforeTheAPI(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("a mint with no permissions reached the API")
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	source := &github.AppTokenSource{AppID: "12345", InstallationID: "777", Key: testKey(t), BaseURL: server.URL, Now: fixedNow}
+
+	for name, perms := range map[string]github.Permissions{"nil": nil, "empty": {}} {
+		if _, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", perms); err == nil {
+			t.Errorf("%s permissions: Token succeeded", name)
+		}
 	}
-	if want := time.Date(2026, 11, 1, 13, 0, 0, 0, time.UTC); !tok.ExpiresAt.Equal(want) {
-		t.Errorf("Token.ExpiresAt = %v, want %v", tok.ExpiresAt, want)
-	}
-	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	assertClaims(t, fake.claims, "12345")
-	assertMintRequest(t, fake.req)
 }
 
 // assertClaims checks iss and that the JWT window is at most ten minutes
@@ -170,14 +206,11 @@ func assertClaims(t *testing.T, claims jwtClaims, appID string) {
 	}
 }
 
-func assertMintRequest(t *testing.T, req mintRequest) {
+func assertMintRequest(t *testing.T, req mintRequest, want map[string]string) {
 	t.Helper()
 	if got := req.Repositories; len(got) != 1 || got[0] != "fuseone-forja" {
 		t.Errorf("repositories = %q, want [fuseone-forja] (name only)", got)
 	}
-	// Both read-only: the clone and the issue the agent will see. Nothing
-	// that writes is minted here.
-	want := map[string]string{"contents": "read", "issues": "read"}
 	if !reflect.DeepEqual(req.Permissions, want) {
 		t.Errorf("permissions = %v, want exactly %v", req.Permissions, want)
 	}
@@ -203,7 +236,7 @@ func TestAppTokenSource_tokenNeverLogged(t *testing.T) {
 	key := testKey(t)
 	fake, server := newFakeApp(t, &key.PublicKey, http.StatusInternalServerError, "")
 	source := &github.AppTokenSource{AppID: "12345", InstallationID: "777", Key: key, BaseURL: server.URL, Now: fixedNow}
-	_, err := source.Token(context.Background(), "fuseone-io/fuseone-forja")
+	_, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", github.ReadContents)
 	if err == nil {
 		t.Fatal("Token succeeded on a 500")
 	}
@@ -234,7 +267,7 @@ func TestAppTokenSource_zeroNowOrKey_failsLoudly(t *testing.T) {
 		"no key":   {AppID: "12345", InstallationID: "777", BaseURL: server.URL, Now: fixedNow},
 	}
 	for name, source := range sources {
-		if _, err := source.Token(context.Background(), "fuseone-io/fuseone-forja"); err == nil {
+		if _, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", github.ReadContents); err == nil {
 			t.Errorf("%s: Token succeeded", name)
 		}
 	}
@@ -244,11 +277,11 @@ func TestStaticTokenSource_returnsThePATUnchanged(t *testing.T) {
 	t.Parallel()
 	source := &github.StaticTokenSource{Value: "github_pat_dev"}
 
-	tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja")
+	tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", github.WriteContents)
 	if err != nil || tok.Value != "github_pat_dev" || !tok.ExpiresAt.IsZero() {
 		t.Fatalf("Token = %+v, %v; want the PAT with no expiry", tok, err)
 	}
-	if _, err := (&github.StaticTokenSource{}).Token(context.Background(), "fuseone-io/fuseone-forja"); err == nil {
+	if _, err := (&github.StaticTokenSource{}).Token(context.Background(), "fuseone-io/fuseone-forja", github.ReadContents); err == nil {
 		t.Fatal("an empty static source handed out an empty token")
 	}
 }

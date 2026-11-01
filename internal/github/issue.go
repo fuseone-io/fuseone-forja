@@ -52,7 +52,7 @@ func (r *IssueReader) Read(ctx context.Context, repo string, number int) (domain
 	if r.Tokens == nil {
 		return domain.Issue{}, errors.New("github: IssueReader has no token source")
 	}
-	tok, err := r.Tokens.Token(ctx, repo)
+	tok, err := r.Tokens.Token(ctx, repo, ReadIssues)
 	if err != nil {
 		return domain.Issue{}, fmt.Errorf("github: read issue %s#%d: %w", repo, number, err)
 	}

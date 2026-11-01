@@ -51,7 +51,7 @@ func (r *ContractReader) Read(ctx context.Context, repo string) (domain.Contract
 	if r.Tokens == nil {
 		return domain.ContractSource{}, errors.New("github: ContractReader has no token source")
 	}
-	tok, err := r.Tokens.Token(ctx, repo)
+	tok, err := r.Tokens.Token(ctx, repo, ReadContents)
 	if err != nil {
 		return domain.ContractSource{}, fmt.Errorf("github: read contract of %s: %w", repo, err)
 	}

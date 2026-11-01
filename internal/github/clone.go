@@ -48,7 +48,7 @@ func (c *Cloner) Clone(ctx context.Context, repo, branch string) (*Checkout, err
 	if c.Tokens == nil {
 		return nil, errors.New("github: Cloner has no token source")
 	}
-	tok, err := c.Tokens.Token(ctx, repo)
+	tok, err := c.Tokens.Token(ctx, repo, ReadContents)
 	if err != nil {
 		return nil, fmt.Errorf("github: clone %s: %w", repo, err)
 	}
