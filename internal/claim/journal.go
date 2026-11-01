@@ -43,16 +43,21 @@ func (j *Journal) Put(e Entry) error {
 		return fmt.Errorf("claim journal: %w", err)
 	}
 	if err := writeAndClose(tmp, body); err != nil {
+		// A temporary file left behind is never listed as an entry, so a
+		// failed cleanup changes nothing; the write error is the one to report.
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("claim journal: %w", err)
 	}
 	if err := os.Rename(tmp.Name(), j.path(e.Repository, e.Issue)); err != nil {
+		// Same as above: the rename error is the one to report.
 		_ = os.Remove(tmp.Name())
 		return fmt.Errorf("claim journal: %w", err)
 	}
 	return nil
 }
 
+// writeAndClose reports the first failure; a close after a failed write
+// or sync has nothing left to add to it.
 func writeAndClose(f *os.File, body []byte) error {
 	if _, err := f.Write(body); err != nil {
 		_ = f.Close()

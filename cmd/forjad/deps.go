@@ -34,7 +34,7 @@ const (
 // startup failure. The wall clock and the id generator are injected here,
 // at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
-	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: time.Now, Version: version}
+	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
 	lease, err := claimLease(getenv)
 	if err != nil {
 		return mcp.Deps{}, nil, err
@@ -50,7 +50,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Contracts = &github.ContractReader{Tokens: tokens}
-	store := claim.NewStore(&github.Refs{Tokens: tokens}, time.Now, journal(getenv, stderr))
+	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
 }
@@ -98,6 +98,10 @@ func recoverClaims(ctx context.Context, store *claim.Store, stderr io.Writer) er
 	}
 	return nil
 }
+
+// utcNow is the wall clock every run and claim is stamped with: instants
+// are stored in UTC, whatever the host's zone.
+func utcNow() time.Time { return time.Now().UTC() }
 
 // newRunID is 16 random bytes in hex. rand.Read never returns an error:
 // it fills the buffer or stops the process.

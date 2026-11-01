@@ -33,12 +33,12 @@ type treeEntry struct {
 // CommitFile writes the blob, a tree with that one entry and the commit,
 // and returns the commit's sha. Nothing points at it until a ref does.
 func (r *Refs) CommitFile(ctx context.Context, repo string, file FileCommit) (string, error) {
+	if file.Path == "" || strings.Contains(file.Path, "/") {
+		return "", fmt.Errorf("github: commit file of %s: path %q must be a single file name", repo, file.Path)
+	}
 	api, base, err := r.client(ctx, repo)
 	if err != nil {
 		return "", err
-	}
-	if file.Path == "" || strings.Contains(file.Path, "/") {
-		return "", fmt.Errorf("github: commit file of %s: path %q must be a single file name", repo, file.Path)
 	}
 	blob, err := post(ctx, api, base+"/git/blobs", map[string]string{
 		"content": base64.StdEncoding.EncodeToString(file.Body), "encoding": "base64",
