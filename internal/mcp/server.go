@@ -8,14 +8,23 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// New builds the server with every tool registered. forja.status and
-// forja.doctor are backed by behaviour; the others answer ErrNotImplemented.
-func New(runs RunReader, contracts ContractReader, version string) *sdk.Server {
+// Deps is everything the tools reach outside the process.
+type Deps struct {
+	Runs      RunReader
+	Contracts ContractReader
+	Cloner    Cloner
+	Issues    IssueReader
+}
+
+// New builds the server with every tool registered. forja.status,
+// forja.doctor and forja.plan are backed by behaviour; the others answer
+// ErrNotImplemented.
+func New(deps Deps, version string) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: version}, nil)
-	sdk.AddTool(server, doctorTool(), doctorHandler(contracts))
-	sdk.AddTool(server, planTool(), notImplemented[PlanInput, PlanOutput](domain.ToolPlan))
+	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Contracts))
+	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), notImplemented[ImplementInput, ImplementOutput](domain.ToolImplement))
 	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))
-	sdk.AddTool(server, statusTool(), statusHandler(runs))
+	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs))
 	return server
 }
