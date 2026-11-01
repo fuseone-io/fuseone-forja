@@ -31,6 +31,7 @@ func run(args []string, stderr io.Writer) int {
 
 	server := mcp.New(runstore.NewMemory(), version)
 	if err := server.Run(ctx, &sdk.StdioTransport{}); err != nil {
+		// The exit code is the only channel left when stderr itself fails.
 		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 		return 1
 	}
@@ -38,5 +39,6 @@ func run(args []string, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
+	// The exit code is the only channel left when stderr itself fails.
 	_, _ = fmt.Fprint(w, "usage: forjad serve\n\n  serve  run the MCP server over stdio\n")
 }
