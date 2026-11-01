@@ -124,20 +124,27 @@ func TestDocker_exec_streamOverCap_tailKeptAndTruncated(t *testing.T) {
 		if err != nil || res.ExitCode != 0 {
 			t.Fatalf("%s: Exec = %v, exit %d", tt.name, err, res.ExitCode)
 		}
-		big, small := tt.big(res), tt.small(res)
-		if len(big) != workspace.MaxStreamBytes || !strings.HasSuffix(string(big), "TAIL") {
-			t.Errorf("%s: big stream len %d, want %d ending in TAIL", tt.name, len(big), workspace.MaxStreamBytes)
-		}
-		if string(small) != "short\n" {
-			t.Errorf("%s: small stream = %q, want untouched", tt.name, small)
-		}
-		if !res.Truncated {
-			t.Errorf("%s: Truncated = false, want true", tt.name)
-		}
+		assertOverflow(t, tt.name, res, tt.big(res), tt.small(res))
 	}
 	res, err := c.Exec(ctx, "echo fits")
 	if err != nil || res.Truncated || string(res.Stdout) != "fits\n" {
 		t.Fatalf("Exec(echo fits) = {%q truncated=%v} err %v, want the whole stream and no truncation", res.Stdout, res.Truncated, err)
+	}
+}
+
+// assertOverflow checks the stream that overflowed was cut to the cap
+// ending in its last bytes, the other stream was left whole, and the
+// result says it cut.
+func assertOverflow(t *testing.T, name string, res workspace.ExecResult, big, small []byte) {
+	t.Helper()
+	if len(big) != workspace.MaxStreamBytes || !strings.HasSuffix(string(big), "TAIL") {
+		t.Errorf("%s: big stream len %d, want %d ending in TAIL", name, len(big), workspace.MaxStreamBytes)
+	}
+	if string(small) != "short\n" {
+		t.Errorf("%s: small stream = %q, want untouched", name, small)
+	}
+	if !res.Truncated {
+		t.Errorf("%s: Truncated = false, want true", name)
 	}
 }
 
