@@ -101,6 +101,46 @@ func TestDocker_exec_exitCodeIsTheCommands(t *testing.T) {
 	}
 }
 
+// A gate may print without bound; the control plane keeps the last
+// MaxStreamBytes of each stream and says so, whichever stream overflowed.
+func TestDocker_exec_streamOverCap_tailKeptAndTruncated(t *testing.T) {
+	d := newDocker(t)
+	c := launch(t, d, treeWith(t))
+	ctx := context.Background()
+	flood := "head -c 200000 /dev/zero | tr '\\0' x; printf TAIL"
+	tests := []struct {
+		name    string
+		command string
+		big     func(workspace.ExecResult) []byte
+		small   func(workspace.ExecResult) []byte
+	}{
+		{name: "stdout overflows", command: flood + "; echo short >&2",
+			big: func(r workspace.ExecResult) []byte { return r.Stdout }, small: func(r workspace.ExecResult) []byte { return r.Stderr }},
+		{name: "stderr overflows", command: "echo short; { " + flood + "; } >&2",
+			big: func(r workspace.ExecResult) []byte { return r.Stderr }, small: func(r workspace.ExecResult) []byte { return r.Stdout }},
+	}
+	for _, tt := range tests {
+		res, err := c.Exec(ctx, tt.command)
+		if err != nil || res.ExitCode != 0 {
+			t.Fatalf("%s: Exec = %v, exit %d", tt.name, err, res.ExitCode)
+		}
+		big, small := tt.big(res), tt.small(res)
+		if len(big) != workspace.MaxStreamBytes || !strings.HasSuffix(string(big), "TAIL") {
+			t.Errorf("%s: big stream len %d, want %d ending in TAIL", tt.name, len(big), workspace.MaxStreamBytes)
+		}
+		if string(small) != "short\n" {
+			t.Errorf("%s: small stream = %q, want untouched", tt.name, small)
+		}
+		if !res.Truncated {
+			t.Errorf("%s: Truncated = false, want true", tt.name)
+		}
+	}
+	res, err := c.Exec(ctx, "echo fits")
+	if err != nil || res.Truncated || string(res.Stdout) != "fits\n" {
+		t.Fatalf("Exec(echo fits) = {%q truncated=%v} err %v, want the whole stream and no truncation", res.Stdout, res.Truncated, err)
+	}
+}
+
 func TestDocker_env_isTheImagesOnly(t *testing.T) {
 	t.Setenv("FORJA_GITHUB_TOKEN", "secret-github-token-0123")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-anthropic-key-4567")

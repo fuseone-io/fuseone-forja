@@ -1,9 +1,9 @@
 package workspace
 
 import (
-	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -19,11 +19,13 @@ const closeTimeout = 30 * time.Second
 // still reports running after its streams closed.
 const inspectRetry = 10 * time.Millisecond
 
-// ExecResult is what one command left behind, raw.
+// ExecResult is what one command left behind, raw: the last MaxStreamBytes
+// of each stream, and whether either had more.
 type ExecResult struct {
-	ExitCode int
-	Stdout   []byte
-	Stderr   []byte
+	ExitCode  int
+	Stdout    []byte
+	Stderr    []byte
+	Truncated bool
 }
 
 // Container is one running workspace.
@@ -54,9 +56,10 @@ func (c *Container) Exec(ctx context.Context, command string) (ExecResult, error
 	if err != nil {
 		return res, fmt.Errorf("workspace: exec attach: %w", err)
 	}
-	var stdout, stderr bytes.Buffer
-	copyErr := drain(ctx, &stdout, &stderr, &attached.HijackedResponse)
+	stdout, stderr := newTail(MaxStreamBytes), newTail(MaxStreamBytes)
+	copyErr := drain(ctx, stdout, stderr, &attached.HijackedResponse)
 	res.Stdout, res.Stderr = stdout.Bytes(), stderr.Bytes()
+	res.Truncated = stdout.Truncated() || stderr.Truncated()
 	if ctx.Err() != nil {
 		return res, fmt.Errorf("workspace: exec: %w", ctx.Err())
 	}
@@ -73,7 +76,7 @@ func (c *Container) Exec(ctx context.Context, command string) (ExecResult, error
 // drain demultiplexes the exec's streams until they close. When ctx ends
 // first the connection is closed, which unblocks the copy with whatever
 // arrived; the process inside the container is left to Close.
-func drain(ctx context.Context, stdout, stderr *bytes.Buffer, hijacked *client.HijackedResponse) error {
+func drain(ctx context.Context, stdout, stderr io.Writer, hijacked *client.HijackedResponse) error {
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
