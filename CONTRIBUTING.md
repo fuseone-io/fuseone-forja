@@ -23,7 +23,7 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 - **Never mock what you do not own.** A real Postgres container for the run store, a real Docker container for the workspace, and a fake for GitHub that enforces the API's invariants (a ref that exists cannot be created). No mock of a driver or an SDK.
 - **No secrets.** No `.env`, no tokens, no App private key in the tree. Environment variables and the vault.
 - **Docs are Markdown.** The PRD arrived as a PDF; every new document in `docs/` is Markdown, and ADRs live in `docs/adr/`.
-- **Language.** Code, comments, logs, errors and commits are English. Documents and issues may be pt-BR; one document, one language.
+- **Language.** Everything in the repository is English, documents in `docs/` included. Only GitHub issues may be pt-BR; one document, one language.
 
 ## Commits and pull requests
 

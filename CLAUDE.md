@@ -10,9 +10,10 @@ issues #1–#24, each a vertical slice with its blockers listed inline.
 
 **Scope of this file: the Go core** — `cmd/`, `internal/`, `deploy/`.
 
-**Language policy:** code, identifiers, comments and commit messages are in
-English, in line with the rest of FuseOne. Documents in `docs/` and issues may
-be in pt-BR — the PRD is — but one document, one language.
+**Language policy:** everything in the repository is in English — code,
+identifiers, comments, commit messages, and every document in `docs/` (ADRs,
+runbooks, contracts). The only exception is the PRD, which arrived as a pt-BR
+PDF. Issues on GitHub may be in pt-BR; one document, one language.
 
 Documents in `docs/` are Markdown, not HTML or PDF: GitHub renders them, they
 diff line by line in review, and nobody has to open a viewer to read one. The

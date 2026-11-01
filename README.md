@@ -260,6 +260,6 @@ docs/               PRD, ADRs, technical notes
 | [CLAUDE.md](CLAUDE.md) | The engineering rules: the non-negotiables, size limits, Go conventions, tests, definition of done |
 | [.claude/agent-rules.md](.claude/agent-rules.md) | The operating rules for the agents that write to this repository |
 
-Code, comments and commits are in English, in line with the rest of FuseOne.
-The PRD and the issues are in pt-BR, the language of the areas that will
-onboard first.
+Everything in the repository is in English, documents included, in line with
+the rest of FuseOne. The PRD and the issues are in pt-BR, the language of the
+areas that will onboard first.

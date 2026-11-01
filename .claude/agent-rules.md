@@ -90,8 +90,9 @@ the operating rules. Read both before the first command.
 
 ## Delivery
 
-- Code, comments, logs, errors and commit messages are English. Documents in `docs/` and issues
-  may be pt-BR; one document, one language.
+- Everything in the repository is English: code, comments, logs, errors, commit messages, PR
+  bodies and every document in `docs/` (ADRs, runbooks, contracts). Only GitHub issues and their
+  comments may be pt-BR; one document, one language.
 - Commit message: `type(scope): description`, imperative, body saying WHY, not what the diff
   already shows. It ends with the `Co-Authored-By` line the session provides.
 - The PR body declares a `Documentation:` line (`none`, `contract`, `runbook`, `new ADR` or
