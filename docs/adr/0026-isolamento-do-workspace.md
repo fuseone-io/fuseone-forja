@@ -1,4 +1,4 @@
-# ADR 9999: isolamento do workspace e onde a Forja roda
+# ADR 0026: isolamento do workspace e onde a Forja roda
 
 - **Status:** proposto (padrão tomado pelo time; aguarda ratificação humana)
 - **Issue:** #3

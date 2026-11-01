@@ -6,4 +6,4 @@ número do PR que o introduz, logo após o PR ser aberto. Status possíveis:
 
 | ADR | Título | Status |
 |---|---|---|
-| [9999](9999-isolamento-do-workspace.md) | Isolamento do workspace e onde a Forja roda | proposto |
+| [0026](0026-isolamento-do-workspace.md) | Isolamento do workspace e onde a Forja roda | proposto |
