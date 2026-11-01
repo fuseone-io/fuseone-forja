@@ -1,0 +1,19 @@
+# Build output
+bin/
+coverage.out
+/forjad
+
+# Never. Credentials come from the environment and the vault.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local tool state, not the project's
+.serena/
+.claude/settings.local.json
+
+# Tooling scratch
+*.log
+.DS_Store
