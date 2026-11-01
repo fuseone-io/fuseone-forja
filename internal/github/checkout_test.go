@@ -73,6 +73,33 @@ func TestCheckout_pathMissing_errPathMissing(t *testing.T) {
 	}
 }
 
+// A symbolic link holds a path, not content: a directory listing skips it
+// and reading it by name is an error, never the target path as bytes.
+func TestCheckout_symlink_excludedFromListFilesAndNotReadable(t *testing.T) {
+	t.Parallel()
+	repo := newBareRepo(t, "main")
+	repo.commit(pilotFiles, "pilot")
+	repo.symlink("docs/link.md", "a.md")
+	repo.commit(nil, "link")
+	co := cloneOf(t, repo, "main")
+	ctx := context.Background()
+
+	got, err := co.ListFiles(ctx, "docs")
+	if err != nil {
+		t.Fatalf("ListFiles(docs): %v", err)
+	}
+	want := []string{"docs/a.md", "docs/b.md", "docs/sub/c.md", "docs/z.md"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ListFiles(docs) = %q, want the regular files only %q", got, want)
+	}
+	if content, err := co.ReadFile(ctx, "docs/link.md"); err == nil || errors.Is(err, github.ErrPathMissing) {
+		t.Errorf("ReadFile(docs/link.md) = %q, %v; want an error that is not ErrPathMissing", content, err)
+	}
+	if _, err := co.BlobSHA(ctx, "docs/link.md"); err == nil {
+		t.Errorf("BlobSHA(docs/link.md) succeeded on a symbolic link")
+	}
+}
+
 func TestCheckout_directory_errIsDirectoryOnReadFileAndListFilesInTreeOrder(t *testing.T) {
 	t.Parallel()
 	_, co := pilotCheckout(t)

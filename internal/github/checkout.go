@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// modeSymlink is git's tree mode for a symbolic link.
+const modeSymlink = "120000"
+
 // Sentinels for a path asked of a Checkout.
 var (
 	ErrPathMissing = errors.New("path missing")
@@ -84,7 +87,7 @@ func (c *Checkout) ListFiles(ctx context.Context, dir string) ([]string, error) 
 	}
 	files := []string{}
 	for _, e := range parseLsTree(out) {
-		if e.typ == "blob" && (e.mode == "100644" || e.mode == "100755") {
+		if e.typ == "blob" && e.mode != modeSymlink {
 			files = append(files, e.path)
 		}
 	}
@@ -112,9 +115,14 @@ type treeEntry struct {
 	path string
 }
 
+// mustBeBlob accepts a regular file. A symbolic link is a blob too, but
+// its bytes are a path, not content.
 func (e treeEntry) mustBeBlob() error {
 	switch e.typ {
 	case "blob":
+		if e.mode == modeSymlink {
+			return fmt.Errorf("%s: is a symbolic link, not a file", e.path)
+		}
 		return nil
 	case "tree":
 		return fmt.Errorf("%s: %w", e.path, ErrIsDirectory)

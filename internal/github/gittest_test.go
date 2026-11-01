@@ -81,6 +81,15 @@ func (r *bareRepo) commit(files map[string]string, msg string) string {
 	return runGit(r.t, r.work, "rev-parse", "HEAD")
 }
 
+// symlink adds a symbolic link to the work tree; the next commit records
+// it with mode 120000.
+func (r *bareRepo) symlink(name, target string) {
+	r.t.Helper()
+	if err := os.Symlink(target, filepath.Join(r.work, filepath.FromSlash(name))); err != nil {
+		r.t.Fatalf("symlink %s: %v", name, err)
+	}
+}
+
 // branch starts a new branch at the current commit of the work tree.
 func (r *bareRepo) branch(name string) {
 	r.t.Helper()
