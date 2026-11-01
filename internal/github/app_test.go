@@ -189,6 +189,10 @@ func TestAppTokenSource_tokenNeverLogged(t *testing.T) {
 	if strings.Contains(printed, mintedToken) || strings.Contains(printed, "ghs_") {
 		t.Fatalf("a printed token shows its value: %s", printed)
 	}
+	encoded, encErr := json.Marshal(struct{ Tok github.Token }{tok})
+	if encErr != nil || strings.Contains(string(encoded), mintedToken) || strings.Contains(string(encoded), "ghs_") {
+		t.Fatalf("a serialised token shows its value: %s (%v)", encoded, encErr)
+	}
 
 	key := testKey(t)
 	fake, server := newFakeApp(t, &key.PublicKey, http.StatusInternalServerError, "")

@@ -4,6 +4,7 @@ package github
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -21,6 +22,10 @@ func (Token) String() string { return "github token (redacted)" }
 
 // GoString redacts the %#v form as well.
 func (t Token) GoString() string { return t.String() }
+
+// MarshalJSON redacts the JSON form, so a token caught in a serialised
+// struct shows no value either.
+func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 
 // TokenSource yields a GitHub token scoped to one repository for one run.
 // The App implementation mints an installation token; the development
