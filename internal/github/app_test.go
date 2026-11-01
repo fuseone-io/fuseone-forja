@@ -182,18 +182,23 @@ func assertMintRequest(t *testing.T, req mintRequest) {
 	}
 }
 
-func TestAppTokenSource_tokenNeverLogged(t *testing.T) {
+func TestToken_textAndJSONForms_redacted(t *testing.T) {
 	t.Parallel()
 	tok := github.Token{Value: mintedToken, ExpiresAt: fixedNow()}
 	printed := fmt.Sprintf("%v %+v %s %#v %q", tok, tok, tok.String(), tok, tok.String())
 	if strings.Contains(printed, mintedToken) || strings.Contains(printed, "ghs_") {
 		t.Fatalf("a printed token shows its value: %s", printed)
 	}
-	encoded, encErr := json.Marshal(struct{ Tok github.Token }{tok})
-	if encErr != nil || strings.Contains(string(encoded), mintedToken) || strings.Contains(string(encoded), "ghs_") {
-		t.Fatalf("a serialised token shows its value: %s (%v)", encoded, encErr)
+	encoded, err := json.Marshal(struct{ Tok github.Token }{tok})
+	if err != nil || strings.Contains(string(encoded), mintedToken) || strings.Contains(string(encoded), "ghs_") {
+		t.Fatalf("a serialised token shows its value: %s (%v)", encoded, err)
 	}
+}
 
+// A failing mint must not surface the JWT it sent, even when the server
+// echoes the request back.
+func TestAppTokenSource_tokenNeverLogged(t *testing.T) {
+	t.Parallel()
 	key := testKey(t)
 	fake, server := newFakeApp(t, &key.PublicKey, http.StatusInternalServerError, "")
 	source := &github.AppTokenSource{AppID: "12345", InstallationID: "777", Key: key, BaseURL: server.URL, Now: fixedNow}
