@@ -278,6 +278,38 @@ func TestStatus_missingRunID_rejectedByInputSchema(t *testing.T) {
 	if !res.IsError {
 		t.Fatalf("IsError = false for a call without run_id; content: %s", textOf(res))
 	}
+	text := textOf(res)
+	if !strings.Contains(text, "run_id") {
+		t.Errorf("error text %q does not name run_id", text)
+	}
+	if strings.Contains(text, "not found") {
+		t.Errorf("error text %q comes from the store, not from the input schema", text)
+	}
+}
+
+func TestStatus_wireKeys_snakeCase(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	mustPut(t, store, terminalRun("run-keys"))
+	cs := connect(t, store)
+
+	res := callStatus(t, cs, map[string]any{"run_id": "run-keys"})
+	if res.IsError {
+		t.Fatalf("IsError = true, content: %s", textOf(res))
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
+		t.Fatalf("decode wire object: %v", err)
+	}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at"}
+	for _, key := range want {
+		if _, ok := wire[key]; !ok {
+			t.Errorf("key %q absent on the wire", key)
+		}
+	}
+	if len(wire) != len(want) {
+		t.Errorf("wire object has %d keys, want %d: %s", len(wire), len(want), structuredJSON(t, res))
+	}
 }
 
 func TestTools_notImplemented_toolErrorNotProtocolError(t *testing.T) {
