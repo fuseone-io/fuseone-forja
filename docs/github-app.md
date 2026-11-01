@@ -35,6 +35,7 @@ PRD; nenhuma a mais.
 | `contents` | read & write | clone do repositório, push na branch própria do run, criar e remover `refs/forja/claims/<n>` |
 | `pull_requests` | write | abrir e atualizar o PR do run |
 | `statuses` | write | publicar `forja/gates` e `forja/qa` como commit statuses |
+| `issues` | read | ler título e corpo da issue que `forja.plan` e `forja.implement` entregam ao agente |
 | `metadata` | read | obrigatória em todo App; lista o repositório e seus metadados |
 
 O que o App **não** tem, de propósito:
@@ -42,9 +43,9 @@ O que o App **não** tem, de propósito:
 - **Bypass de proteção de branch.** O App não entra em `bypass_actors` de
   nenhuma ruleset. A `main` continua protegida para ele exatamente como para
   qualquer colaborador sem bypass.
-- `administration`, `workflows`, `checks`, `issues`, `members`, `secrets`,
-  `actions`. Nada disso é necessário para o caso de uso "mantenedor liga a
-  fábrica no seu repo". Em particular, sem `workflows` o App não consegue
+- `administration`, `workflows`, `checks`, `members`, `secrets`, `actions`,
+  nem escrita em `issues`. Nada disso é necessário para o caso de uso
+  "mantenedor liga a fábrica no seu repo". Em particular, sem `workflows` o App não consegue
   alterar `.github/workflows/**` — coerente com `human_merge_paths:
   [.github/**]` no contrato.
 - Webhooks. A Forja é chamada pelo FuseOne via MCP, não por eventos do GitHub;
@@ -67,6 +68,7 @@ formulário equivalente de "Register a GitHub App from a manifest"). O campo
     "contents": "write",
     "pull_requests": "write",
     "statuses": "write",
+    "issues": "read",
     "metadata": "read"
   },
   "default_events": [],
@@ -116,7 +118,7 @@ acontecem no plano de controle com o token do App.
 | `FORJA_GITHUB_APP_ID` | App ID numérico | sim |
 | `FORJA_GITHUB_INSTALLATION_ID` | Installation ID numérico da instalação no piloto | sim |
 | `FORJA_GITHUB_PRIVATE_KEY_FILE` | **caminho** de um arquivo PEM montado pelo cofre (secret do Kubernetes, volume do Vault, etc.), legível só pelo processo `forjad` | sim |
-| `FORJA_GITHUB_TOKEN` | fine-grained PAT **restrito ao piloto**, com as mesmas quatro permissões acima | **nunca em produção**; só desenvolvimento e testes |
+| `FORJA_GITHUB_TOKEN` | fine-grained PAT **restrito ao piloto**, com as mesmas cinco permissões acima | **nunca em produção**; só desenvolvimento e testes |
 
 Regras:
 
@@ -240,7 +242,7 @@ não o faz, com qualquer ferramenta que assine o JWT RS256 e chame
    ```sh
    gh api orgs/fuseone-io/installations \
      --jq '.installations[] | select(.app_slug=="forja-fuseone-io") | {id, repository_selection, permissions}'
-   # esperado: repository_selection == "selected"; permissions == {contents:write, pull_requests:write, statuses:write, metadata:read}
+   # esperado: repository_selection == "selected"; permissions == {contents:write, pull_requests:write, statuses:write, issues:read, metadata:read}
 
    curl -sS -H "Authorization: Bearer $TOKEN" \
      https://api.github.com/installation/repositories \
