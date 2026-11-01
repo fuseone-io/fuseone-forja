@@ -208,6 +208,8 @@ App's permissions and the private key's handling, is
 | `FORJA_GITHUB_INSTALLATION_ID` | numeric Installation ID on the pilot | production |
 | `FORJA_GITHUB_PRIVATE_KEY_FILE` | **path** to the PEM file mounted by the vault; the key never goes in a variable | production |
 | `FORJA_GITHUB_TOKEN` | fine-grained PAT restricted to the pilot | development only; ignored when `FORJA_GITHUB_APP_ID` is set |
+| `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it | recommended; unset, a claim left by a crash is freed only by its lease |
+| `FORJA_CLAIM_LEASE` | Go duration the run holds `refs/forja/claims/<n>` for; must exceed the contract's `limits.wall_clock` | optional; default `wall_clock + 15m`, or `60m` without limits |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
@@ -223,8 +225,11 @@ npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
 Either client lists the five tools with their input and output schemas and
 the read/write annotation FuseOne's Gate reads. `forja.status` and
 `forja.doctor` answer today (the doctor validates the contract and returns the
-commit SHA it read it from; running the gates is a later slice); the other
-three return "not implemented" until their slices land.
+commit SHA it read it from; running the gates is a later slice).
+`forja.implement` reserves the issue under `refs/forja/claims/<n>`, records
+the run and releases the reservation; the work between the two steps is a
+later slice. `forja.plan` and `forja.verify` return "not implemented" until
+their slices land.
 
 ## Layout
 

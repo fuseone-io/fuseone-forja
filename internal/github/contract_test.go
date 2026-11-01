@@ -100,6 +100,20 @@ func TestContractReader_tokenMintedPerCallAndScopedToRepository(t *testing.T) {
 	}
 }
 
+// Reading the contract needs nothing beyond reading contents: a token that
+// could write would be a wider credential than the call deserves.
+func TestContractReader_mintsContentsRead(t *testing.T) {
+	t.Parallel()
+	fake := newFakeGitHub(t, "ghs_test_token", pilotContract)
+	tokens := &countingTokens{value: "ghs_test_token"}
+	reader := &github.ContractReader{Tokens: tokens, BaseURL: fake.URL()}
+
+	if _, err := reader.Read(context.Background(), fakeRepo); err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	assertEveryMint(t, tokens, github.Permissions{"contents": "read"})
+}
+
 func TestContractReader_wrongToken_statusErrorWithoutTheToken(t *testing.T) {
 	t.Parallel()
 	fake := newFakeGitHub(t, "ghs_the_real_one", pilotContract)

@@ -67,39 +67,48 @@ func newAPIClient(client *http.Client, base, token string) *apiClient {
 	return &apiClient{http: client, base: strings.TrimRight(base, "/"), token: token}
 }
 
-// apiCall is one request: a GET when body is nil, otherwise a JSON POST.
+// apiCall is one request. With no method it is a GET when body is nil and a
+// JSON POST otherwise; PATCH and DELETE name their method.
 type apiCall struct {
-	path string
-	body []byte
+	method string
+	path   string
+	body   []byte
 	// want is the status that carries the expected response.
 	want int
 }
 
-func (a apiCall) method() string {
-	if a.body == nil {
+func (a apiCall) verb() string {
+	switch {
+	case a.method != "":
+		return a.method
+	case a.body == nil:
 		return http.MethodGet
 	}
 	return http.MethodPost
 }
 
 // do sends the call with the API headers and decodes the JSON body on the
-// expected status. out is any because it is handed to json.Decoder.Decode,
-// which takes any. A different status comes back as *StatusError.
+// expected status; a nil out means the response carries no body to read.
+// out is any because it is handed to json.Decoder.Decode, which takes any.
+// A different status comes back as *StatusError.
 func (c *apiClient) do(ctx context.Context, call apiCall, out any) error {
 	req, err := c.request(ctx, call)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", call.method(), call.path, err)
+		return fmt.Errorf("%s %s: %w", call.verb(), call.path, err)
 	}
 	res, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("%s %s: %w", call.method(), call.path, err)
+		return fmt.Errorf("%s %s: %w", call.verb(), call.path, err)
 	}
 	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != call.want {
-		return fmt.Errorf("%s %s: %w", call.method(), call.path, c.statusError(res))
+		return fmt.Errorf("%s %s: %w", call.verb(), call.path, c.statusError(res))
+	}
+	if out == nil {
+		return nil
 	}
 	if err := json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(out); err != nil {
-		return fmt.Errorf("%s %s: decode response: %w", call.method(), call.path, err)
+		return fmt.Errorf("%s %s: decode response: %w", call.verb(), call.path, err)
 	}
 	return nil
 }
@@ -109,7 +118,7 @@ func (c *apiClient) request(ctx context.Context, call apiCall) (*http.Request, e
 	if call.body != nil {
 		body = bytes.NewReader(call.body)
 	}
-	req, err := http.NewRequestWithContext(ctx, call.method(), c.base+call.path, body)
+	req, err := http.NewRequestWithContext(ctx, call.verb(), c.base+call.path, body)
 	if err != nil {
 		return nil, err
 	}

@@ -15,8 +15,9 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
 
-// connect wires New to a client over in-memory transports, with GitHub
-// readers no test here calls, and closes both ends when the test ends.
+// connect wires a server over in-memory transports with a contract reader,
+// a claimer and GitHub readers no test here calls, and closes both ends
+// when the test ends.
 func connect(t *testing.T, store *runstore.Memory) *sdk.ClientSession {
 	t.Helper()
 	return connectWith(t, store, &fakeContracts{err: errors.New("no contract reader in this test")})
@@ -24,18 +25,26 @@ func connect(t *testing.T, store *runstore.Memory) *sdk.ClientSession {
 
 func connectWith(t *testing.T, store *runstore.Memory, contracts forja.ContractReader) *sdk.ClientSession {
 	t.Helper()
-	return connectDeps(t, forja.Deps{
-		Runs:      store,
-		Contracts: contracts,
-		Cloner:    &fakeCloner{err: errors.New("no cloner in this test")},
-		Issues:    &fakeIssues{err: errors.New("no issue reader in this test")},
-	})
+	claims := &fakeClaims{calls: &callLog{}, claimErr: errors.New("no claimer in this test")}
+	return connectDeps(t, testDeps(store, contracts, claims))
+}
+
+// testDeps is the wiring every test starts from: a fixed clock, sequential
+// run ids, and GitHub readers that refuse every call.
+func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja.Claimer) forja.Deps {
+	ids := &sequence{}
+	return forja.Deps{
+		Runs: store, Contracts: contracts, Claims: claims,
+		Cloner: &fakeCloner{err: errors.New("no cloner in this test")},
+		Issues: &fakeIssues{err: errors.New("no issue reader in this test")},
+		NewID:  ids.next, Now: startedAt, Version: "test",
+	}
 }
 
 func connectDeps(t *testing.T, deps forja.Deps) *sdk.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := forja.New(deps, "test")
+	server := forja.New(deps)
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
@@ -335,9 +344,6 @@ func TestTools_notImplemented_toolErrorNotProtocolError(t *testing.T) {
 		tool domain.Tool
 		args map[string]any
 	}{
-		{tool: domain.ToolImplement, args: map[string]any{
-			"repository": "fuseone-io/fuseone-forja", "issue": 5, "base_branch": "main",
-		}},
 		{tool: domain.ToolVerify, args: map[string]any{"repository": "fuseone-io/fuseone-forja", "pull_request": 9}},
 	}
 	for _, tt := range tests {
