@@ -6,7 +6,6 @@ import (
 	"io"
 	"time"
 
-	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/client"
 )
@@ -28,10 +27,14 @@ type ExecResult struct {
 	Truncated bool
 }
 
-// Container is one running workspace.
+// Container is one running workspace, with the gateway and the network
+// of its run.
 type Container struct {
-	cli *client.Client
-	id  string
+	cli     *client.Client
+	runID   string
+	id      string
+	gateway string
+	network string
 }
 
 // ID is the daemon's identifier of the container.
@@ -109,12 +112,9 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 	}
 }
 
-// Close kills and removes the container. A container the daemon no longer
-// knows is already closed.
+// Close kills and removes the workspace, then its gateway, then the run's
+// network. What the daemon no longer knows is already closed, so Close is
+// idempotent.
 func (c *Container) Close(ctx context.Context) error {
-	_, err := c.cli.ContainerRemove(ctx, c.id, client.ContainerRemoveOptions{Force: true})
-	if err != nil && !cerrdefs.IsNotFound(err) {
-		return fmt.Errorf("workspace: remove container: %w", err)
-	}
-	return nil
+	return c.teardown(ctx)
 }

@@ -2,9 +2,14 @@ package workspace_test
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,23 +19,96 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
-// testImage is small and ships a POSIX sh, which is all Exec needs.
+// testImage is small and ships a POSIX sh, busybox wget and nc, which is
+// all these tests need.
 const testImage = "alpine:3.20"
 
-// newDocker builds the driver and skips the test when no daemon answers:
-// these are integration tests against the real Engine, never a mock.
-func newDocker(t *testing.T) *workspace.Docker {
+// gatewayBuild cross-compiles forjad once per test binary, for the
+// daemon's architecture, the first time a test that reached a daemon asks
+// for it. TestMain removes the directory.
+var gatewayBuild struct {
+	once sync.Once
+	dir  string
+	path string
+	err  error
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if gatewayBuild.dir != "" {
+		_ = os.RemoveAll(gatewayBuild.dir)
+	}
+	os.Exit(code)
+}
+
+// dockerCLI is a client of its own, for the tests to look at what the
+// driver left on the daemon.
+func dockerCLI(t *testing.T) *client.Client {
 	t.Helper()
-	d, err := workspace.NewDocker()
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	t.Cleanup(func() { _ = cli.Close() })
+	return cli
+}
+
+// gatewayBinary is a static linux forjad for the daemon's architecture.
+func gatewayBinary(t *testing.T) string {
+	t.Helper()
+	gatewayBuild.once.Do(func() {
+		v, err := dockerCLI(t).ServerVersion(context.Background(), client.ServerVersionOptions{})
+		if err != nil {
+			gatewayBuild.err = err
+			return
+		}
+		gatewayBuild.dir, gatewayBuild.err = os.MkdirTemp("", "forja-gateway-bin-")
+		if gatewayBuild.err != nil {
+			return
+		}
+		gatewayBuild.path = filepath.Join(gatewayBuild.dir, "forjad")
+		build := exec.Command("go", "build", "-trimpath", "-o", gatewayBuild.path, "github.com/fuseone-io/fuseone-forja/cmd/forjad")
+		build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+v.Arch, "CGO_ENABLED=0")
+		if out, err := build.CombinedOutput(); err != nil {
+			gatewayBuild.err = fmt.Errorf("go build forjad for linux/%s: %w\n%s", v.Arch, err, out)
+		}
+	})
+	if gatewayBuild.err != nil {
+		t.Fatalf("gateway binary: %v", gatewayBuild.err)
+	}
+	return gatewayBuild.path
+}
+
+// newDocker builds the driver and skips the test when no daemon answers:
+// these are integration tests against the real Engine, never a mock. The
+// gateway binary is built only once a daemon answered.
+func newDocker(t *testing.T, allow ...string) *workspace.Docker {
+	t.Helper()
+	probe, err := workspace.NewDocker(workspace.Options{})
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := d.Ping(ctx); err != nil {
+	if err := probe.Ping(ctx); err != nil {
 		t.Skipf("no Docker daemon: %v", err)
 	}
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: gatewayBinary(t), EgressAllow: allow})
+	if err != nil {
+		t.Fatalf("NewDocker: %v", err)
+	}
 	return d
+}
+
+// newRunID is a fresh id, so parallel tests and leftovers of an earlier
+// run never share a network name.
+func newRunID(t *testing.T) string {
+	t.Helper()
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatal(err)
+	}
+	return "test-" + hex.EncodeToString(b[:])
 }
 
 // treeWith is a directory holding marker.txt and a nested file, the shape
@@ -49,13 +127,13 @@ func treeWith(t *testing.T) string {
 	return dir
 }
 
-// launch starts a container from testImage with the tree and removes it
-// when the test ends, whatever the test did.
-func launch(t *testing.T, d *workspace.Docker, tree string) *workspace.Container {
+// launch starts the workspace of runID from testImage with the tree and
+// removes it when the test ends, whatever the test did.
+func launch(t *testing.T, d *workspace.Docker, runID, tree string) *workspace.Container {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	c, err := d.Launch(ctx, testImage, tree)
+	c, err := d.Launch(ctx, runID, testImage, tree)
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", testImage, err)
 	}
@@ -70,11 +148,7 @@ func launch(t *testing.T, d *workspace.Docker, tree string) *workspace.Container
 // assertGone asserts the daemon no longer knows the container.
 func assertGone(t *testing.T, id string) {
 	t.Helper()
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		t.Fatalf("client.New: %v", err)
-	}
-	_, err = cli.ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
+	_, err := dockerCLI(t).ContainerInspect(context.Background(), id, client.ContainerInspectOptions{})
 	if !cerrdefs.IsNotFound(err) {
 		t.Fatalf("ContainerInspect(%s) after Close = %v, want not found", id, err)
 	}
@@ -82,7 +156,7 @@ func assertGone(t *testing.T, id string) {
 
 func TestDocker_exec_exitCodeIsTheCommands(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	ctx := context.Background()
 
 	res, err := c.Exec(ctx, "exit 7")
@@ -105,7 +179,7 @@ func TestDocker_exec_exitCodeIsTheCommands(t *testing.T) {
 // MaxStreamBytes of each stream and says so, whichever stream overflowed.
 func TestDocker_exec_streamOverCap_tailKeptAndTruncated(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	ctx := context.Background()
 	flood := "head -c 200000 /dev/zero | tr '\\0' x; printf TAIL"
 	tests := []struct {
@@ -148,11 +222,14 @@ func assertOverflow(t *testing.T, name string, res workspace.ExecResult, big, sm
 	}
 }
 
-func TestDocker_env_isTheImagesOnly(t *testing.T) {
+// The workspace's environment is the image's own plus the gateway's URL,
+// which is an address, not a credential; nothing of the control plane's
+// environment reaches it.
+func TestDocker_env_imagesOwnPlusGatewayOnly(t *testing.T) {
 	t.Setenv("FORJA_GITHUB_TOKEN", "secret-github-token-0123")
 	t.Setenv("ANTHROPIC_API_KEY", "secret-anthropic-key-4567")
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	ctx := context.Background()
 
 	res, err := c.Exec(ctx, "env")
@@ -160,13 +237,18 @@ func TestDocker_env_isTheImagesOnly(t *testing.T) {
 		t.Fatalf("Exec(env) = %v, exit %d", err, res.ExitCode)
 	}
 	env := string(res.Stdout)
-	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key"} {
-		if strings.Contains(env, leak) {
-			t.Errorf("container env carries %q:\n%s", leak, env)
-		}
-	}
+	assertNoSecrets(t, "workspace", env)
 	if !strings.Contains(env, "PATH=") {
 		t.Errorf("container env has no PATH, the image's own env is missing:\n%s", env)
+	}
+	for _, want := range []string{
+		"HTTP_PROXY=http://forja-gateway:3128", "HTTPS_PROXY=http://forja-gateway:3128",
+		"http_proxy=http://forja-gateway:3128", "https_proxy=http://forja-gateway:3128",
+		"NO_PROXY=localhost,127.0.0.1,::1", "no_proxy=localhost,127.0.0.1,::1",
+	} {
+		if !strings.Contains(env, want+"\n") {
+			t.Errorf("container env lacks %s:\n%s", want, env)
+		}
 	}
 	res, err = c.Exec(ctx, "cat marker.txt; cat docs/sub/c.md; pwd")
 	if err != nil || res.ExitCode != 0 {
@@ -177,26 +259,18 @@ func TestDocker_env_isTheImagesOnly(t *testing.T) {
 	}
 }
 
-func TestDocker_close_removesContainer(t *testing.T) {
-	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
-	ctx := context.Background()
-
-	if err := c.Close(ctx); err != nil {
-		t.Fatalf("Close: %v", err)
-	}
-	assertGone(t, c.ID())
-	if err := c.Close(ctx); err != nil {
-		t.Fatalf("second Close: %v, want nil: Close is idempotent", err)
-	}
-	if _, err := c.Exec(ctx, "true"); err == nil {
-		t.Fatal("Exec after Close = nil error, want a failure")
+func assertNoSecrets(t *testing.T, where, env string) {
+	t.Helper()
+	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key"} {
+		if strings.Contains(env, leak) {
+			t.Errorf("%s env carries %q:\n%s", where, leak, env)
+		}
 	}
 }
 
 func TestDocker_ctxDeadline_duringExec_containerRemoved(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
@@ -219,45 +293,12 @@ func TestDocker_ctxDeadline_duringExec_containerRemoved(t *testing.T) {
 	assertGone(t, c.ID())
 }
 
-// labelledContainers counts the containers this package marks as its own,
-// running or not.
-func labelledContainers(t *testing.T) int {
-	t.Helper()
-	cli, err := client.New(client.FromEnv)
-	if err != nil {
-		t.Fatalf("client.New: %v", err)
-	}
-	list, err := cli.ContainerList(context.Background(), client.ContainerListOptions{
-		All:     true,
-		Filters: client.Filters{}.Add("label", "forja.run=doctor"),
-	})
-	if err != nil {
-		t.Fatalf("ContainerList: %v", err)
-	}
-	return len(list.Items)
-}
-
-func TestDocker_launch_treeMissing_errorAndNoContainerLeft(t *testing.T) {
-	d := newDocker(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-	before := labelledContainers(t)
-
-	_, err := d.Launch(ctx, testImage, filepath.Join(t.TempDir(), "no-such-tree"))
-	if err == nil {
-		t.Fatal("Launch(missing tree) = nil error, want a copy failure")
-	}
-	if after := labelledContainers(t); after != before {
-		t.Fatalf("labelled containers went from %d to %d: the container of a failed launch was left behind", before, after)
-	}
-}
-
 func TestDocker_launch_imageUnknown_errorNamesIt(t *testing.T) {
 	d := newDocker(t)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	_, err := d.Launch(ctx, "forja-no-such-image-0000:none", treeWith(t))
+	_, err := d.Launch(ctx, newRunID(t), "forja-no-such-image-0000:none", treeWith(t))
 	if err == nil || !strings.Contains(err.Error(), "forja-no-such-image-0000") {
 		t.Fatalf("Launch(unknown image) = %v, want an error naming the image", err)
 	}

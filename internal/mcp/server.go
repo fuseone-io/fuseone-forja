@@ -34,7 +34,7 @@ type Deps struct {
 // forja.verify answers ErrNotImplemented.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
-	sdk.AddTool(server, doctorTool(), doctorHandler(deps.Cloner, deps.Gates))
+	sdk.AddTool(server, doctorTool(), doctorHandler(deps))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
 	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))

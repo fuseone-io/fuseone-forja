@@ -5,37 +5,61 @@
 // `docker exec` exits 1 both for a gate that failed and for a daemon that
 // went away. The API gives the exec's ExitCode from ExecInspect, apart from
 // any transport error, which is the distinction a gate's verdict rests on.
+//
+// Each run gets its own internal network. The workspace is attached to it
+// alone; the run's egress gateway is the only container there that may
+// also be attached to a network with a route out.
 package workspace
 
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/network"
 	"github.com/moby/moby/client"
 )
 
 // workDir is where the tree is copied and every command runs.
 const workDir = "/workspace"
 
-// labelRun marks every container this package creates, so a stray one can
-// be told from the operator's own.
+// labelRun marks every container and network this package creates with
+// the id of its run, so a stray one can be told from the operator's own
+// and traced to its run.
 const labelRun = "forja.run"
+
+// noProxy keeps the workspace's own loopback off the gateway.
+const noProxy = "localhost,127.0.0.1,::1"
+
+// Options configures the driver.
+type Options struct {
+	// GatewayBinary is a static linux forjad for the daemon's architecture,
+	// copied into every run's gateway. Empty means this process's own
+	// executable on linux; elsewhere a launch is refused.
+	GatewayBinary string
+	// EgressAllow is the host:port list a gateway tunnels to, already
+	// validated. Empty, the gateway is not attached to any network with a
+	// route out and nothing leaves.
+	EgressAllow []string
+}
 
 // Docker launches containers on the daemon the environment points at.
 type Docker struct {
-	cli *client.Client
+	cli  *client.Client
+	opts Options
 }
 
 // NewDocker builds the client from the environment (DOCKER_HOST and the
 // variables next to it). Nothing is contacted until the first call.
-func NewDocker() (*Docker, error) {
+func NewDocker(opts Options) (*Docker, error) {
 	cli, err := client.New(client.FromEnv)
 	if err != nil {
 		return nil, fmt.Errorf("workspace: docker client: %w", err)
 	}
-	return &Docker{cli: cli}, nil
+	return &Docker{cli: cli, opts: opts}, nil
 }
 
 // Ping checks the daemon answers.
@@ -46,38 +70,87 @@ func (d *Docker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Launch pulls image when the daemon lacks it, starts a container that
-// idles at workDir with the image's own environment and nothing of the
-// control plane's, and copies tree into workDir. The tree is copied, not
-// mounted: the daemon may run in a VM that does not share this filesystem.
-// A failure after the container exists removes it.
-func (d *Docker) Launch(ctx context.Context, image, tree string) (*Container, error) {
-	if err := d.ensureImage(ctx, image); err != nil {
-		return nil, fmt.Errorf("workspace: image %s: %w", image, err)
+// Launch creates run runID's internal network and its gateway, then starts
+// a container from image that idles at workDir on that network alone, with
+// the image's own environment plus the gateway's address as its proxy and
+// nothing of the control plane's, and copies tree into workDir. The tree is
+// copied, not mounted: the daemon may run in a VM that does not share this
+// filesystem. Launch returns once the gateway said it is ready; any failure
+// removes whatever it had created.
+func (d *Docker) Launch(ctx context.Context, runID, image, tree string) (*Container, error) {
+	if err := validRunID(runID); err != nil {
+		return nil, err
 	}
-	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:      image,
-			Cmd:        []string{"sleep", "infinity"},
-			WorkingDir: workDir,
-			Env:        nil,
-			Labels:     map[string]string{labelRun: "doctor"},
-		},
-		HostConfig: &container.HostConfig{},
-	})
+	binary, err := resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
 	if err != nil {
-		return nil, fmt.Errorf("workspace: create container from %s: %w", image, err)
+		return nil, err
 	}
-	c := &Container{cli: d.cli, id: created.ID}
-	if err := c.startWithTree(ctx, tree); err != nil {
+	for _, img := range []string{image, gatewayImage} {
+		if err := d.ensureImage(ctx, img); err != nil {
+			return nil, fmt.Errorf("workspace: image %s: %w", img, err)
+		}
+	}
+	c := &Container{cli: d.cli, runID: runID}
+	if err := d.assemble(ctx, c, binary, image, tree); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
-		// The launch failure is the error; a container that could not be
-		// removed on top of it adds nothing the caller can act on.
+		// The launch failure is the error; what could not be removed on top
+		// of it adds nothing the caller can act on.
 		_ = c.Close(closeCtx)
 		return nil, err
 	}
 	return c, nil
+}
+
+// assemble builds the run's pieces in order, recording each in c as soon
+// as it exists so that Close removes it whatever fails next.
+func (d *Docker) assemble(ctx context.Context, c *Container, binary, image, tree string) error {
+	var err error
+	if c.network, err = createNetwork(ctx, d.cli, c.runID); err != nil {
+		return err
+	}
+	if c.gateway, err = createGateway(ctx, d.cli, c.runID, d.opts.EgressAllow); err != nil {
+		return err
+	}
+	if err := startGateway(ctx, d.cli, gatewaySpec{id: c.gateway, runID: c.runID, binary: binary, allow: d.opts.EgressAllow}); err != nil {
+		return err
+	}
+	if c.id, err = d.createWorkspace(ctx, c.runID, image); err != nil {
+		return err
+	}
+	return c.startWithTree(ctx, tree)
+}
+
+// createWorkspace creates the workspace container on the run's network
+// alone, never on the default bridge.
+func (d *Docker) createWorkspace(ctx context.Context, runID, image string) (string, error) {
+	netName := networkName(runID)
+	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name: netName + "-workspace",
+		Config: &container.Config{
+			Image:      image,
+			Cmd:        []string{"sleep", "infinity"},
+			WorkingDir: workDir,
+			Env:        proxyEnv(),
+			Labels:     map[string]string{labelRun: runID},
+		},
+		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}},
+	})
+	if err != nil {
+		return "", fmt.Errorf("workspace: create container from %s: %w", image, err)
+	}
+	return created.ID, nil
+}
+
+// proxyEnv points both spellings tools read at the gateway. A URL is an
+// address, not a credential.
+func proxyEnv() []string {
+	return []string{
+		"HTTP_PROXY=" + gatewayURL, "HTTPS_PROXY=" + gatewayURL,
+		"http_proxy=" + gatewayURL, "https_proxy=" + gatewayURL,
+		"NO_PROXY=" + noProxy, "no_proxy=" + noProxy,
+	}
 }
 
 // ensureImage pulls image only when the daemon does not already hold it.

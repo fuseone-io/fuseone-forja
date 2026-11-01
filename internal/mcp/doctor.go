@@ -12,10 +12,11 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 )
 
-// GateRunner is what forja.doctor needs to run a contract: setup and gates
-// against a tree, with every exit code and raw log in the report.
+// GateRunner is what forja.doctor needs to run a contract as run runID:
+// setup and gates against a tree, with every exit code, raw log and denied
+// egress in the report.
 type GateRunner interface {
-	Run(ctx context.Context, c domain.Contract, tree string) (domain.GateReport, error)
+	Run(ctx context.Context, runID string, c domain.Contract, tree string) (domain.GateReport, error)
 }
 
 // DoctorInput is the argument of forja.doctor.
@@ -65,9 +66,9 @@ func doctorTool() *sdk.Tool {
 // commit and runs it on that tree. A clone, read or runner failure is a
 // tool error; a contract with defects or a red gate is a result the
 // maintainer iterates on.
-func doctorHandler(cloner Cloner, runner GateRunner) sdk.ToolHandlerFor[DoctorInput, DoctorOutput] {
+func doctorHandler(deps Deps) sdk.ToolHandlerFor[DoctorInput, DoctorOutput] {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in DoctorInput) (*sdk.CallToolResult, DoctorOutput, error) {
-		out, err := doctor(ctx, cloner, runner, in.Repository)
+		out, err := doctor(ctx, deps, in.Repository)
 		if err != nil {
 			return nil, DoctorOutput{}, fmt.Errorf("%s: %w", domain.ToolDoctor, err)
 		}
@@ -75,8 +76,8 @@ func doctorHandler(cloner Cloner, runner GateRunner) sdk.ToolHandlerFor[DoctorIn
 	}
 }
 
-func doctor(ctx context.Context, cloner Cloner, runner GateRunner, repo string) (DoctorOutput, error) {
-	co, err := cloner.Clone(ctx, repo, "")
+func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
+	co, err := deps.Cloner.Clone(ctx, repo, "")
 	if err != nil {
 		return DoctorOutput{}, err
 	}
@@ -93,7 +94,7 @@ func doctor(ctx context.Context, cloner Cloner, runner GateRunner, repo string) 
 	case err != nil:
 		return DoctorOutput{}, err
 	}
-	report, err := runGates(ctx, runner, parsed, co.Dir())
+	report, err := runGates(ctx, deps.Gates, deps.NewID(), parsed, co.Dir())
 	if err != nil {
 		return DoctorOutput{}, err
 	}
@@ -104,14 +105,14 @@ func doctor(ctx context.Context, cloner Cloner, runner GateRunner, repo string) 
 
 // runGates runs the contract under its own wall clock, or the default
 // when the contract sets none.
-func runGates(ctx context.Context, runner GateRunner, c domain.Contract, tree string) (domain.GateReport, error) {
+func runGates(ctx context.Context, runner GateRunner, runID string, c domain.Contract, tree string) (domain.GateReport, error) {
 	wallClock := c.Limits.WallClock
 	if wallClock == 0 {
 		wallClock = gates.DefaultWallClock
 	}
 	runCtx, cancel := context.WithTimeout(ctx, wallClock)
 	defer cancel()
-	return runner.Run(runCtx, c, tree)
+	return runner.Run(runCtx, runID, c, tree)
 }
 
 func emptyDoctorOutput(repo, sha, contractSHA string) DoctorOutput {

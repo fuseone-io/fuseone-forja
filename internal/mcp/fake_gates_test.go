@@ -8,20 +8,21 @@ import (
 )
 
 // fakeGates answers Run with a scripted report, or an error, and records
-// the contract, the tree and the deadline it was given.
+// the run id, the contract, the tree and the deadline it was given.
 type fakeGates struct {
 	report   domain.GateReport
 	err      error
 	calls    int
+	runID    string
 	contract domain.Contract
 	tree     string
 	deadline time.Time
 	hasDL    bool
 }
 
-func (f *fakeGates) Run(ctx context.Context, c domain.Contract, tree string) (domain.GateReport, error) {
+func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tree string) (domain.GateReport, error) {
 	f.calls++
-	f.contract, f.tree = c, tree
+	f.runID, f.contract, f.tree = runID, c, tree
 	f.deadline, f.hasDL = ctx.Deadline()
 	if f.err != nil {
 		return domain.GateReport{}, f.err

@@ -146,6 +146,9 @@ func assertRunnerGiven(t *testing.T, gates *fakeGates, image, tree string) {
 	if gates.contract.Image != image || gates.tree != tree {
 		t.Errorf("runner given image %q on tree %q, want %q on %q", gates.contract.Image, gates.tree, image, tree)
 	}
+	if gates.runID != "run-1" {
+		t.Errorf("runner given run id %q, want the id the server generated, run-1", gates.runID)
+	}
 }
 
 func TestDoctor_gateRed_okFalseWithFailedStep(t *testing.T) {

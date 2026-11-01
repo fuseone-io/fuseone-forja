@@ -12,7 +12,10 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 )
 
-const pilotImage = "golang:1.25"
+const (
+	pilotImage = "golang:1.25"
+	testRunID  = "run-gates-1"
+)
 
 // pilotContract is two setup steps and three gates, like the pilot's.
 func pilotContract() domain.Contract {
@@ -75,7 +78,7 @@ func TestRunner_setupThenGates_runInDeclaredOrder(t *testing.T) {
 	ws := &fakeWorkspace{script: allGreen()}
 	runner, launcher := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), pilotContract(), "/tmp/forja-plan-1")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tmp/forja-plan-1")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -83,8 +86,8 @@ func TestRunner_setupThenGates_runInDeclaredOrder(t *testing.T) {
 	if got := ws.ran(); !reflect.DeepEqual(got, wantCommands) {
 		t.Fatalf("commands ran = %q, want %q", got, wantCommands)
 	}
-	if launcher.image != pilotImage || launcher.tree != "/tmp/forja-plan-1" {
-		t.Fatalf("launched %q on %q, want %q on /tmp/forja-plan-1", launcher.image, launcher.tree, pilotImage)
+	if launcher.runID != testRunID || launcher.image != pilotImage || launcher.tree != "/tmp/forja-plan-1" {
+		t.Fatalf("launched run %q from %q on %q, want %q from %q on /tmp/forja-plan-1", launcher.runID, launcher.image, launcher.tree, testRunID, pilotImage)
 	}
 	assertGreenReport(t, report)
 	assertResult(t, report.Setup[0], "go mod download", domain.StepPassed, 0, "downloaded\n", "")
@@ -131,7 +134,7 @@ func TestRunner_streamCutByWorkspace_truncatedCarriedIntoResult(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), pilotContract(), "/tmp/forja-plan-1")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tmp/forja-plan-1")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -156,7 +159,7 @@ func TestRunner_firstGateRed_laterGatesSkipped(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -184,7 +187,7 @@ func TestRunner_setupRed_noGateRuns(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -217,7 +220,7 @@ func TestRunner_gateWithNeeds_skippedWithoutStoppingTheRun(t *testing.T) {
 	ws := &fakeWorkspace{script: allGreen()}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), c, "/tree")
+	report, err := runner.Run(context.Background(), testRunID, c, "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -269,7 +272,7 @@ func TestRunner_closeCalled_onSuccessFailureAndTimeout(t *testing.T) {
 				defer cancel()
 			}
 
-			report, err := runner.Run(ctx, pilotContract(), "/tree")
+			report, err := runner.Run(ctx, testRunID, pilotContract(), "/tree")
 			if err != nil {
 				t.Fatalf("Run: %v, want nil: the run's own deadline is a result", err)
 			}
@@ -317,7 +320,7 @@ func TestRunner_ctxCancelled_isAnErrorNotAReport(t *testing.T) {
 		cancel()
 	}()
 
-	_, err := runner.Run(ctx, pilotContract(), "/tree")
+	_, err := runner.Run(ctx, testRunID, pilotContract(), "/tree")
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("Run after cancellation = %v, want context.Canceled", err)
 	}
@@ -331,7 +334,7 @@ func TestRunner_launchFails_errorNamesImageAndNothingRan(t *testing.T) {
 	launcher := &fakeLauncher{err: errors.New("pull access denied")}
 	runner := &gates.Runner{Launcher: launcher, Now: ticking()}
 
-	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
 	if err == nil {
 		t.Fatal("Run with a failed launch = nil error")
 	}
@@ -349,7 +352,7 @@ func TestRunner_execFailsToRun_errorNotAFailedGate(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
 	if err == nil || !strings.Contains(err.Error(), "connection reset") || !strings.Contains(err.Error(), "build") {
 		t.Fatalf("Run = %v, want an error naming the gate and the daemon failure", err)
 	}
@@ -363,7 +366,7 @@ func TestRunner_closeFails_reportedAsError(t *testing.T) {
 	ws := &fakeWorkspace{script: allGreen(), closeErr: errors.New("daemon: remove failed")}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
 	if err == nil || !strings.Contains(err.Error(), "remove failed") {
 		t.Fatalf("Run = %v, want the Close failure: a container left behind is not a clean run", err)
 	}
@@ -376,8 +379,111 @@ func TestRunner_noNow_fails(t *testing.T) {
 	t.Parallel()
 	runner := &gates.Runner{Launcher: &fakeLauncher{ws: &fakeWorkspace{script: allGreen()}}}
 
-	_, err := runner.Run(context.Background(), pilotContract(), "/tree")
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err == nil {
 		t.Fatal("Run without a clock = nil error, want a configuration error")
+	}
+}
+
+// twoDenials is a gateway report with more attempts counted than listed,
+// so a runner that rebuilt the report from the list would be caught.
+func twoDenials() domain.EgressReport {
+	at := time.Date(2026, 11, 1, 9, 0, 3, 0, time.UTC)
+	return domain.EgressReport{
+		Denied: []domain.EgressDenial{
+			{At: at, Kind: domain.EgressHTTP, Destination: "example.com:80"},
+			{At: at, Kind: domain.EgressConnect, Destination: "example.com:443"},
+		},
+		Count: 7,
+	}
+}
+
+func TestRunner_deniedEgress_reportCarriesWorkspaceEgress(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		script func() map[string]scripted
+	}{
+		{name: "green run", script: allGreen},
+		{name: "red gate", script: func() map[string]scripted {
+			s := allGreen()
+			s["make build"] = scripted{exit: 1, stderr: "wget: server returned error: HTTP/1.1 403 Forbidden\n"}
+			return s
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ws := &fakeWorkspace{script: tt.script(), egress: twoDenials()}
+			runner, _ := newRunner(ws)
+
+			report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if !reflect.DeepEqual(report.Egress, twoDenials()) {
+				t.Fatalf("report.Egress = %+v, want the workspace's %+v", report.Egress, twoDenials())
+			}
+			if ws.reads() != 1 {
+				t.Fatalf("egress read %d times, want once", ws.reads())
+			}
+		})
+	}
+}
+
+// A gate that outlives the deadline is exactly the one that may have been
+// trying to get out: its denials are read on a context of their own,
+// before the gateway is removed.
+func TestRunner_stepTimedOut_egressStillCollectedBeforeClose(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make build"] = scripted{block: true}
+	ws := &fakeWorkspace{script: script, egress: twoDenials()}
+	runner, _ := newRunner(ws)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	report, err := runner.Run(ctx, testRunID, pilotContract(), "/tree")
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if report.FailedStep != "build" || !reflect.DeepEqual(report.Egress, twoDenials()) {
+		t.Fatalf("report = {failed %q, egress %+v}, want {build, %+v}", report.FailedStep, report.Egress, twoDenials())
+	}
+	if ws.closes() != 1 {
+		t.Fatalf("Close called %d times, want once, after the egress was read", ws.closes())
+	}
+}
+
+// A report whose denials could not be read is not evidence of a clean
+// run: the runner says so, and still removes the workspace.
+func TestRunner_egressUnreadable_errorAndWorkspaceClosed(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: allGreen(), egressErr: errors.New("gateway log: no such container")}
+	runner, _ := newRunner(ws)
+
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
+	if err == nil || !strings.Contains(err.Error(), "no such container") {
+		t.Fatalf("Run = %v, want the egress failure", err)
+	}
+	if ws.closes() != 1 {
+		t.Fatalf("Close called %d times, want exactly once", ws.closes())
+	}
+}
+
+// A run that ended in an error has no report to carry the denials in; the
+// runner does not read them, and still removes the workspace.
+func TestRunner_execFailsToRun_egressNotRead(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make build"] = scripted{err: errors.New("daemon: connection reset")}
+	ws := &fakeWorkspace{script: script, egress: twoDenials()}
+	runner, _ := newRunner(ws)
+
+	if _, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree"); err == nil {
+		t.Fatal("Run = nil error, want the exec failure")
+	}
+	if ws.reads() != 0 || ws.closes() != 1 {
+		t.Fatalf("egress read %d times, Close %d times; want 0 and 1", ws.reads(), ws.closes())
 	}
 }

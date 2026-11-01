@@ -15,6 +15,7 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
+	"github.com/fuseone-io/fuseone-forja/internal/proxy/egress"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -27,15 +28,24 @@ const (
 	// EnvClaimLease overrides the lease a run holds its issue for, as a Go
 	// duration. It must outlive the contract's wall clock.
 	EnvClaimLease = "FORJA_CLAIM_LEASE"
+	// EnvGatewayBinary is a static linux forjad for the Docker daemon's
+	// architecture, copied into every run's egress gateway. Unset, the
+	// server's own executable is used on linux and a launch is refused
+	// elsewhere.
+	EnvGatewayBinary = "FORJA_GATEWAY_BINARY"
+	// EnvEgressAllow is the comma-separated host:port a workspace may
+	// tunnel to through its gateway, matched exactly. Unset, nothing
+	// leaves.
+	EnvEgressAllow = "FORJA_EGRESS_ALLOW"
 )
 
 // wire assembles the tools' dependencies from the environment. With no
 // credentials at all the server still serves the tools that need none,
 // and every GitHub-backed tool answers with the error naming the variables
 // to set; the claim store is then nil. A half-configured App, a malformed
-// lease, or a Docker client that cannot be built from DOCKER_HOST and its
-// siblings is a startup failure. The wall clock and the id generator are
-// injected here, at the edge.
+// lease or egress allowlist, or a Docker client that cannot be built from
+// DOCKER_HOST and its siblings is a startup failure. The wall clock and
+// the id generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
 	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
 	lease, err := claimLease(getenv)
@@ -43,7 +53,11 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Lease = lease
-	docker, err := workspace.NewDocker()
+	allow, err := egress.ParseAllow(getenv(EnvEgressAllow))
+	if err != nil {
+		return mcp.Deps{}, nil, fmt.Errorf("%s: %w", EnvEgressAllow, err)
+	}
+	docker, err := workspace.NewDocker(workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow})
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
@@ -144,8 +158,8 @@ type launcher struct {
 	*workspace.Docker
 }
 
-func (l launcher) Launch(ctx context.Context, image, tree string) (gates.Workspace, error) {
-	c, err := l.Docker.Launch(ctx, image, tree)
+func (l launcher) Launch(ctx context.Context, runID, image, tree string) (gates.Workspace, error) {
+	c, err := l.Docker.Launch(ctx, runID, image, tree)
 	if err != nil {
 		return nil, err
 	}

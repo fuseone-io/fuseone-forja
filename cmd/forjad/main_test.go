@@ -336,6 +336,46 @@ func TestWire_claimLease_configuredReachesTheTools(t *testing.T) {
 	}
 }
 
+// A malformed egress allowlist would either let out what the operator did
+// not mean or nothing at all; it stops the server before it serves.
+func TestWire_malformedEgressAllow_startupError(t *testing.T) {
+	t.Parallel()
+	for _, value := range []string{"proxy.golang.org", "https://proxy.golang.org:443", "proxy.golang.org:443,,sum.golang.org:443"} {
+		env := map[string]string{"FORJA_EGRESS_ALLOW": value}
+		_, _, err := wire(func(k string) string { return env[k] }, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "FORJA_EGRESS_ALLOW") {
+			t.Errorf("wire with FORJA_EGRESS_ALLOW=%q = %v, want a startup error naming the variable", value, err)
+		}
+	}
+}
+
+func TestServe_malformedEgressAllow_exitsOne(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_EGRESS_ALLOW": "*.golang.org:443"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+		t.Fatalf("serve with a malformed allowlist = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "FORJA_EGRESS_ALLOW") {
+		t.Fatalf("stderr %q does not name the variable", stderr.String())
+	}
+}
+
+func TestWire_wellFormedEgressAllow_starts(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{
+		"FORJA_EGRESS_ALLOW":   "proxy.golang.org:443,sum.golang.org:443,storage.googleapis.com:443",
+		"FORJA_GATEWAY_BINARY": "/opt/forja/forjad-linux",
+	}
+	if _, _, err := wire(func(k string) string { return env[k] }, io.Discard); err != nil {
+		t.Fatalf("wire with a well-formed allowlist = %v", err)
+	}
+}
+
 // Without credentials forja.implement fails before reserving anything,
 // naming the variables to set.
 func TestServe_noCredentials_implementFailsExplicitly(t *testing.T) {

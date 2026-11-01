@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 )
 
@@ -24,7 +25,8 @@ type scripted struct {
 }
 
 // fakeWorkspace enforces what a container enforces: nothing runs before
-// Launch or after Close, and Close is idempotent.
+// Launch or after Close, the gateway's log is gone once Close removed it,
+// and Close is idempotent.
 type fakeWorkspace struct {
 	mu       sync.Mutex
 	launched bool
@@ -33,6 +35,34 @@ type fakeWorkspace struct {
 	commands []string
 	// closeErr is what Close returns the first time.
 	closeErr error
+	// egress is what the gateway refused; egressErr fails reading it.
+	egress      domain.EgressReport
+	egressErr   error
+	egressReads int
+}
+
+// Egress fails on a context that already ended, as a daemon call does, and
+// after Close, when the gateway and its log no longer exist.
+func (w *fakeWorkspace) Egress(ctx context.Context) (domain.EgressReport, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.EgressReport{}, fmt.Errorf("fake: egress: %w", err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.launched || w.closed > 0 {
+		return domain.EgressReport{}, errors.New("fake: egress read without a gateway")
+	}
+	w.egressReads++
+	if w.egressErr != nil {
+		return domain.EgressReport{}, w.egressErr
+	}
+	return w.egress, nil
+}
+
+func (w *fakeWorkspace) reads() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.egressReads
 }
 
 func (w *fakeWorkspace) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
@@ -92,14 +122,15 @@ func (w *fakeWorkspace) closes() int {
 type fakeLauncher struct {
 	ws    *fakeWorkspace
 	err   error
+	runID string
 	image string
 	tree  string
 	calls int
 }
 
-func (l *fakeLauncher) Launch(_ context.Context, image, tree string) (gates.Workspace, error) {
+func (l *fakeLauncher) Launch(_ context.Context, runID, image, tree string) (gates.Workspace, error) {
 	l.calls++
-	l.image, l.tree = image, tree
+	l.runID, l.image, l.tree = runID, image, tree
 	if l.err != nil {
 		return nil, l.err
 	}

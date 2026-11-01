@@ -37,14 +37,17 @@ type Workspace interface {
 	// result, not an error. On error the result may still carry the bytes
 	// read before it.
 	Exec(ctx context.Context, command string) (ExecResult, error)
+	// Egress is what the workspace's gateway refused so far, read from the
+	// gateway's own log. It fails once the workspace is closed.
+	Egress(ctx context.Context) (domain.EgressReport, error)
 	// Close destroys the workspace. It is idempotent.
 	Close(ctx context.Context) error
 }
 
-// Launcher creates a workspace from an image with a copy of tree, a
-// directory on the control plane, at its root.
+// Launcher creates the workspace of run runID from an image with a copy of
+// tree, a directory on the control plane, at its root.
 type Launcher interface {
-	Launch(ctx context.Context, image, tree string) (Workspace, error)
+	Launch(ctx context.Context, runID, image, tree string) (Workspace, error)
 }
 
 // Runner runs a contract's steps in order and stops at the first one that
@@ -63,36 +66,39 @@ type step struct {
 	needs   []string
 }
 
-// Run launches c.Image, runs c.Setup then c.Gates and returns a report
-// listing every declared step. A failed or timed out step stops the run
-// and the rest is skipped; a gate with needs is skipped without stopping
-// it. The run's own deadline is a result; a cancellation is an error.
-// Close is always called.
-func (r *Runner) Run(ctx context.Context, c domain.Contract, tree string) (report domain.GateReport, err error) {
+// Run launches c.Image as the workspace of runID, runs c.Setup then
+// c.Gates and returns a report listing every declared step and what the
+// workspace's gateway refused meanwhile. A failed or timed out step stops
+// the run and the rest is skipped; a gate with needs is skipped without
+// stopping it. The run's own deadline is a result; a cancellation is an
+// error. Close is always called, after the egress was read.
+func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree string) (report domain.GateReport, err error) {
 	if r.Now == nil {
 		return domain.GateReport{}, errors.New("gates: Runner needs a clock")
 	}
-	ws, err := r.Launcher.Launch(ctx, c.Image, tree)
+	ws, err := r.Launcher.Launch(ctx, runID, c.Image, tree)
 	if err != nil {
 		return domain.GateReport{}, fmt.Errorf("gates: launch %s: %w", c.Image, err)
 	}
+	// The run's context may be past its deadline by now; reading the log
+	// and removing the workspace each get a context of their own.
+	detached := context.WithoutCancel(ctx)
 	defer func() {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
+		closeCtx, cancel := context.WithTimeout(detached, closeTimeout)
 		defer cancel()
 		if closeErr := ws.Close(closeCtx); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("gates: close workspace: %w", closeErr))
 		}
 	}()
-	run := &execution{ws: ws, now: r.Now}
-	report.Setup, err = run.steps(ctx, setupSteps(c))
+	report, err = (&execution{ws: ws, now: r.Now}).run(ctx, c)
 	if err != nil {
 		return domain.GateReport{}, err
 	}
-	report.Gates, err = run.steps(ctx, gateSteps(c))
-	if err != nil {
-		return domain.GateReport{}, err
+	egressCtx, cancel := context.WithTimeout(detached, closeTimeout)
+	defer cancel()
+	if report.Egress, err = ws.Egress(egressCtx); err != nil {
+		return domain.GateReport{}, fmt.Errorf("gates: read egress: %w", err)
 	}
-	report.FailedStep = run.failed
 	return report, nil
 }
 
@@ -118,6 +124,20 @@ type execution struct {
 	ws     Workspace
 	now    func() time.Time
 	failed string
+}
+
+// run runs the setup steps, then the gates.
+func (e *execution) run(ctx context.Context, c domain.Contract) (domain.GateReport, error) {
+	var report domain.GateReport
+	var err error
+	if report.Setup, err = e.steps(ctx, setupSteps(c)); err != nil {
+		return domain.GateReport{}, err
+	}
+	if report.Gates, err = e.steps(ctx, gateSteps(c)); err != nil {
+		return domain.GateReport{}, err
+	}
+	report.FailedStep = e.failed
+	return report, nil
 }
 
 // steps runs each step in order; the result list is never nil.
