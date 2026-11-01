@@ -134,8 +134,32 @@ func TestDocker_service_notReadyWithinReadiness_resultWithReasonNoError(t *testi
 	if want := "service postgres not healthy within 8s"; res.Reason != want {
 		t.Errorf("Reason = %q, want %q", res.Reason, want)
 	}
+	// The server logs to stderr; initdb's banner goes to stdout.
+	for _, want := range []string{"port 5433", "The files belonging to this database system"} {
+		if !strings.Contains(string(res.Log), want) {
+			t.Errorf("Log = %q, want the sidecar's own output on both streams, %q included", res.Log, want)
+		}
+	}
+}
+
+// initdb --debug writes far more than the log keeps, and the server then
+// listens off its exposed port, so the sidecar is never ready.
+func TestDocker_service_logOverTheCap_tailKeptAndTruncated(t *testing.T) {
+	d := newDocker(t)
+	c := launch(t, d, treeWith(t))
+	verbose := domain.Service{Image: postgresImage, Env: map[string]string{
+		"POSTGRES_HOST_AUTH_METHOD": "trust", "PGPORT": "5433", "POSTGRES_INITDB_ARGS": "--debug",
+	}}
+
+	res := startService(t, c, "postgres", verbose, 8*time.Second)
+	if res.Ready {
+		t.Fatal("Ready = true for a service that never listens on its exposed port")
+	}
+	if len(res.Log) != workspace.MaxStreamBytes || !res.Truncated {
+		t.Fatalf("Log len %d, truncated %v; want %d and true", len(res.Log), res.Truncated, workspace.MaxStreamBytes)
+	}
 	if !strings.Contains(string(res.Log), "port 5433") {
-		t.Errorf("Log = %q, want the sidecar's own output saying where it listens", res.Log)
+		t.Errorf("Log tail does not carry the server's last lines: %q", res.Log[len(res.Log)-512:])
 	}
 }
 
@@ -177,6 +201,12 @@ func TestDocker_close_removesSidecarsAndNetwork(t *testing.T) {
 	})
 	if err != nil || len(list.Items) != 3 {
 		t.Fatalf("containers on the run network = %d (%v), want the workspace and two sidecars", len(list.Items), err)
+	}
+	// The label is how a container a crashed run left behind is found.
+	for _, item := range list.Items {
+		if _, ok := item.Labels["forja.run"]; !ok {
+			t.Errorf("container %s on the run network has no forja.run label: labels %v", item.ID, item.Labels)
+		}
 	}
 
 	if err := c.Close(context.Background()); err != nil {
@@ -241,6 +271,33 @@ func probeFrom(t *testing.T, networkMode, host, port string) int64 {
 		t.Fatalf("probe did not finish: %v", ctx.Err())
 	}
 	return -1
+}
+
+// A port published on the host is reachable from outside the run network
+// whatever the bridges isolate, so no container on it may have one.
+func TestDocker_service_noPortPublishedOnTheHost(t *testing.T) {
+	d := newDocker(t)
+	c := launch(t, d, treeWith(t))
+	startReady(t, c, "cache", cache)
+
+	cli := rawClient(t)
+	list, err := cli.ContainerList(context.Background(), client.ContainerListOptions{
+		Filters: client.Filters{}.Add("network", c.NetworkID()),
+	})
+	if err != nil || len(list.Items) != 2 {
+		t.Fatalf("containers on the run network = %d (%v), want the workspace and the sidecar", len(list.Items), err)
+	}
+	for _, item := range list.Items {
+		inspect, err := cli.ContainerInspect(context.Background(), item.ID, client.ContainerInspectOptions{})
+		if err != nil {
+			t.Fatalf("ContainerInspect: %v", err)
+		}
+		for port, bindings := range inspect.Container.NetworkSettings.Ports {
+			if len(bindings) != 0 {
+				t.Errorf("container %s publishes %s on the host as %v", item.ID, port, bindings)
+			}
+		}
+	}
 }
 
 func TestDocker_service_unreachableFromDefaultBridge(t *testing.T) {
