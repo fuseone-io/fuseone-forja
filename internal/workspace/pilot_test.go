@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/contract"
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -33,6 +34,11 @@ type pilotWorkspace struct {
 func (w pilotWorkspace) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
 	res, err := w.Container.Exec(ctx, command)
 	return gates.ExecResult(res), err
+}
+
+func (w pilotWorkspace) StartService(ctx context.Context, name string, svc domain.Service, readiness time.Duration) (gates.ServiceResult, error) {
+	res, err := w.Container.StartService(ctx, name, svc, readiness)
+	return gates.ServiceResult(res), err
 }
 
 // TestPilot_doctorContractOnThisRepository runs this repository's own

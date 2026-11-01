@@ -206,36 +206,6 @@ func TestRunner_setupRed_noGateRuns(t *testing.T) {
 	}
 }
 
-func TestRunner_gateWithNeeds_skippedWithoutStoppingTheRun(t *testing.T) {
-	t.Parallel()
-	c := pilotContract()
-	c.Gates = []domain.Gate{
-		{Name: "build", Run: "make build"},
-		{Name: "integration", Run: "make integration-test", Needs: []string{"postgres"}},
-		{Name: "test", Run: "make test"},
-	}
-	ws := &fakeWorkspace{script: allGreen()}
-	runner, _ := newRunner(ws)
-
-	report, err := runner.Run(context.Background(), c, "/tree")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	want := []domain.StepStatus{domain.StepPassed, domain.StepSkipped, domain.StepPassed}
-	if got := statuses(report.Gates); !reflect.DeepEqual(got, want) {
-		t.Fatalf("gate statuses = %v, want %v", got, want)
-	}
-	assertResult(t, report.Gates[1], "make integration-test", domain.StepSkipped, domain.NoExitCode, "", "")
-	if !report.OK() || report.FailedStep != "" {
-		t.Errorf("FailedStep = %q, want empty: a gate waiting for its services is not a failure", report.FailedStep)
-	}
-	for _, cmd := range ws.ran() {
-		if cmd == "make integration-test" {
-			t.Errorf("the gate with needs was sent to the workspace")
-		}
-	}
-}
-
 func TestRunner_closeCalled_onSuccessFailureAndTimeout(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
