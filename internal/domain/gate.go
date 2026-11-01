@@ -42,6 +42,9 @@ type GateReport struct {
 	// FailedStep names the first step that did not pass, "setup[i]" or the
 	// gate name; empty when every step that had to run passed.
 	FailedStep string
+	// Egress is what the run's gateway refused while the steps ran, as the
+	// control plane read it from the gateway's own log.
+	Egress EgressReport
 }
 
 // OK reports whether the run may be trusted: no step failed or timed out.

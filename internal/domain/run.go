@@ -50,6 +50,9 @@ type Run struct {
 	// Supersedes is the id of the run whose expired claim this run took
 	// over; empty when the issue was free.
 	Supersedes string
+	// Egress is what the run's workspace tried to reach and was refused;
+	// empty for a run that launched no workspace.
+	Egress EgressReport
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
