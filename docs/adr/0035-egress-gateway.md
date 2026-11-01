@@ -1,4 +1,4 @@
-# ADR 9999: per-run egress gateway
+# ADR 0035: per-run egress gateway
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #10
