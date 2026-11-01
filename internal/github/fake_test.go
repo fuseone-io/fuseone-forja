@@ -148,17 +148,20 @@ func writeJSON(w http.ResponseWriter, status int, body string) {
 	_, _ = w.Write([]byte(body))
 }
 
-// countingTokens is a TokenSource that records every mint.
+// countingTokens is a TokenSource that records every mint: the repository
+// and the permissions asked for.
 type countingTokens struct {
 	mu    sync.Mutex
 	value string
 	repos []string
+	perms []github.Permissions
 }
 
-func (c *countingTokens) Token(_ context.Context, repo string) (github.Token, error) {
+func (c *countingTokens) Token(_ context.Context, repo string, perms github.Permissions) (github.Token, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.repos = append(c.repos, repo)
+	c.perms = append(c.perms, perms)
 	return github.Token{Value: c.value}, nil
 }
 
@@ -166,4 +169,30 @@ func (c *countingTokens) mints() []string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]string(nil), c.repos...)
+}
+
+func (c *countingTokens) permissions() []github.Permissions {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]github.Permissions(nil), c.perms...)
+}
+
+// assertEveryMint checks that every token was minted with exactly the
+// permissions given and nothing else.
+func assertEveryMint(t *testing.T, tokens *countingTokens, want github.Permissions) {
+	t.Helper()
+	perms := tokens.permissions()
+	if len(perms) == 0 {
+		t.Fatal("no token was minted")
+	}
+	for i, got := range perms {
+		if len(got) != len(want) {
+			t.Fatalf("mint %d asked for %v, want exactly %v", i, got, want)
+		}
+		for scope, level := range want {
+			if got[scope] != level {
+				t.Fatalf("mint %d asked for %v, want %v", i, got, want)
+			}
+		}
+	}
 }

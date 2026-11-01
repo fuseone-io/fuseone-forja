@@ -12,8 +12,8 @@ import (
 )
 
 // AppTokenSource mints an installation token per call, restricted to the
-// repository asked for and to reading its contents. Nothing is cached: a
-// token lives as long as the call that needed it.
+// repository and to the permissions asked for. Nothing is cached: a token
+// lives as long as the call that needed it.
 type AppTokenSource struct {
 	AppID          string
 	InstallationID string
@@ -29,8 +29,8 @@ type AppTokenSource struct {
 }
 
 type mintRequest struct {
-	Repositories []string          `json:"repositories"`
-	Permissions  map[string]string `json:"permissions"`
+	Repositories []string    `json:"repositories"`
+	Permissions  Permissions `json:"permissions"`
 }
 
 type mintResponse struct {
@@ -39,10 +39,15 @@ type mintResponse struct {
 }
 
 // Token signs an App JWT and exchanges it for an installation token scoped
-// to repo. The JWT and the token appear in no error this method returns.
-func (s *AppTokenSource) Token(ctx context.Context, repo string) (Token, error) {
+// to repo and to perms. An empty perms would mint whatever the installation
+// allows, so it is refused. The JWT and the token appear in no error this
+// method returns.
+func (s *AppTokenSource) Token(ctx context.Context, repo string, perms Permissions) (Token, error) {
 	if s.Now == nil || s.Key == nil {
 		return Token{}, errors.New("github: AppTokenSource needs Key and Now")
+	}
+	if len(perms) == 0 {
+		return Token{}, fmt.Errorf("github: mint installation token for %s: no permissions asked for", repo)
 	}
 	_, name, err := splitRepo(repo)
 	if err != nil {
@@ -52,10 +57,7 @@ func (s *AppTokenSource) Token(ctx context.Context, repo string) (Token, error) 
 	if err != nil {
 		return Token{}, fmt.Errorf("github: mint installation token for %s: %w", repo, err)
 	}
-	body, err := json.Marshal(mintRequest{
-		Repositories: []string{name},
-		Permissions:  map[string]string{"contents": "read"},
-	})
+	body, err := json.Marshal(mintRequest{Repositories: []string{name}, Permissions: perms})
 	if err != nil {
 		return Token{}, fmt.Errorf("github: mint installation token for %s: %w", repo, err)
 	}

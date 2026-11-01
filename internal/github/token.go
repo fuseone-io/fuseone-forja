@@ -27,21 +27,34 @@ func (t Token) GoString() string { return t.String() }
 // struct shows no value either.
 func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 
-// TokenSource yields a GitHub token scoped to one repository for one run.
-// The App implementation mints an installation token; the development
-// implementation returns the configured PAT unchanged.
+// Permissions is the set of installation permissions a token is minted
+// with, keyed by scope name with the access level as value.
+type Permissions map[string]string
+
+// The two permission sets the control plane asks for: reading the contract
+// and writing the refs that reserve an issue.
+var (
+	ReadContents  = Permissions{"contents": "read"}
+	WriteContents = Permissions{"contents": "write"}
+)
+
+// TokenSource yields a GitHub token scoped to one repository and to the
+// permissions of one call. The App implementation mints an installation
+// token; the development implementation returns the configured PAT
+// unchanged.
 type TokenSource interface {
-	Token(ctx context.Context, repo string) (Token, error)
+	Token(ctx context.Context, repo string, perms Permissions) (Token, error)
 }
 
 // StaticTokenSource hands out a fixed personal access token. Development
-// only: it is restricted to nothing beyond what the PAT itself is.
+// only: it is restricted to nothing beyond what the PAT itself is, so the
+// permissions asked for are ignored.
 type StaticTokenSource struct {
 	Value string
 }
 
-// Token returns the PAT for any repository.
-func (s *StaticTokenSource) Token(context.Context, string) (Token, error) {
+// Token returns the PAT for any repository and any permissions.
+func (s *StaticTokenSource) Token(context.Context, string, Permissions) (Token, error) {
 	if s.Value == "" {
 		return Token{}, errors.New("github: static token is empty")
 	}

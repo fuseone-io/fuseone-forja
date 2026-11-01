@@ -166,7 +166,7 @@ func TestTokenSourceFromEnv_onlyToken_handsItOutUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TokenSourceFromEnv: %v", err)
 	}
-	tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja")
+	tok, err := source.Token(context.Background(), "fuseone-io/fuseone-forja", github.ReadContents)
 	if err != nil || tok.Value != "github_pat_dev" {
 		t.Fatalf("Token = %+v, %v; want the PAT", tok, err)
 	}
