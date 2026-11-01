@@ -176,6 +176,45 @@ func TestMemory_getReturnsCopy_callerMutationNotVisibleOnNextGet(t *testing.T) {
 	}
 }
 
+func TestMemory_putStoresCopy_callerMutationAfterPutNotVisible(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+
+	want := time.Date(2026, 10, 31, 12, 5, 0, 0, time.UTC)
+	finished := want
+	original := sampleRun("run-1")
+	original.State = domain.StateSucceeded
+	original.FinishedAt = &finished
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	*original.FinishedAt = want.Add(time.Hour)
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if got.FinishedAt == nil || !got.FinishedAt.Equal(want) {
+		t.Fatalf("caller mutation of *FinishedAt after Put leaked into the store: %v", got.FinishedAt)
+	}
+}
+
+func TestMemory_zeroValue_putThenGet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var store runstore.Memory
+
+	if err := store.Put(ctx, sampleRun("run-1")); err != nil {
+		t.Fatalf("Put on the zero value: %v", err)
+	}
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get on the zero value: %v", err)
+	}
+	assertSameRun(t, got, sampleRun("run-1"))
+}
+
 func TestMemory_concurrentPutAndGet_noRace(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
