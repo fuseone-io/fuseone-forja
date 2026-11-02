@@ -120,6 +120,24 @@ func TestWire_modelKey_decidesTheAgent(t *testing.T) {
 	}
 }
 
+// forja.verify's QA agent is the implement agent's runner, the same
+// launcher and model proxy, and there is none without a key.
+func TestWire_modelKey_qaAgentIsTheAgentRunner(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	runner, ok := deps.QA.(*agent.Runner)
+	if !ok || runner != deps.Agent.(*agent.Runner) {
+		t.Fatalf("QA = %T %p, want the agent's own *agent.Runner", deps.QA, deps.QA)
+	}
+	deps, _, err = wire(agentEnv(t, map[string]string{"FORJA_MODEL_API_KEY": "", "FORJA_MODEL_TOKEN_CAP": "", "FORJA_AGENT_BINARY": ""}), io.Discard)
+	if err != nil || deps.QA != nil {
+		t.Fatalf("wire without a key = QA %v, %v; want none and no error", deps.QA, err)
+	}
+}
+
 // The agent runner refuses to run without a clock, so the one served must
 // carry one, and a monotonic one: its compute is a difference of readings.
 func TestWire_agentRunner_measuresWithTheMonotonicClock(t *testing.T) {

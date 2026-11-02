@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
-	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 	modelproxy "github.com/fuseone-io/fuseone-forja/internal/proxy/model"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -60,9 +59,9 @@ func agentConfig(getenv func(string) string) (opts workspace.Options, on bool, e
 	}, true, nil
 }
 
-// agentRunner is the agent forja.implement runs, or nil when none is
-// configured. It never returns a typed nil inside the interface.
-func agentRunner(docker *workspace.Docker, on bool) mcp.AgentRunner {
+// agentRunner is the agent forja.implement runs and forja.verify's QA
+// agent, or nil when none is configured.
+func agentRunner(docker *workspace.Docker, on bool) *agent.Runner {
 	if !on {
 		return nil
 	}
@@ -108,4 +107,8 @@ type unavailableAgent struct {
 
 func (u unavailableAgent) Run(context.Context, agent.Task) (agent.Result, error) {
 	return agent.Result{}, u.err
+}
+
+func (u unavailableAgent) RunQA(context.Context, agent.QATask) (agent.QAResult, error) {
+	return agent.QAResult{}, u.err
 }

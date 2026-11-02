@@ -52,7 +52,9 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Gates = &gates.Runner{Launcher: launcher{docker}, Now: time.Now}
-	deps.Agent = agentRunner(docker, agentOn)
+	if runner := agentRunner(docker, agentOn); runner != nil {
+		deps.Agent, deps.QA = runner, runner
+	}
 	tokens, err := github.TokenSourceFromEnv(getenv)
 	if errors.Is(err, github.ErrNoCredentials) {
 		deps.Contracts = unavailableContracts{err: err}
@@ -62,7 +64,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		deps.Issues = unavailablePlan{err: err}
 		withoutDelivery(&deps, err)
 		if deps.Agent == nil {
-			deps.Agent = unavailableAgent{err: err}
+			deps.Agent, deps.QA = unavailableAgent{err: err}, unavailableAgent{err: err}
 		}
 		return deps, nil, nil
 	}
