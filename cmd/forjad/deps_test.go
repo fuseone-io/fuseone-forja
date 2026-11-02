@@ -132,7 +132,9 @@ func TestWire_agentRunner_measuresWithTheMonotonicClock(t *testing.T) {
 	if !ok || runner.Now == nil {
 		t.Fatalf("Agent = %T, want an *agent.Runner with a clock", deps.Agent)
 	}
-	if reading := runner.Now(); reading.Round(0) == reading {
+	// time.Time.String ends in m=±<seconds> only when the reading has a
+	// monotonic clock reading.
+	if reading := runner.Now(); !strings.Contains(reading.String(), " m=") {
 		t.Fatalf("clock reading %v carries no monotonic reading", reading)
 	}
 }

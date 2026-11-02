@@ -108,8 +108,15 @@ func TestAgent_realClaudeAgainstFake_commitsAndTokensMetered(t *testing.T) {
 	if served := fakeServed(t, fakeID); res.Tokens != served || served.Total() == 0 {
 		t.Fatalf("metered %+v, want what the fake served %+v", res.Tokens, served)
 	}
-	if res.Compute <= 0 {
-		t.Fatalf("compute = %v, want the time the real workspace was up", res.Compute)
-	}
+	assertComputed(t, res.Compute)
 	t.Logf("tokens %+v, egress denied %d %+v", res.Tokens, res.Egress.Count, res.Egress.Denied)
+}
+
+// assertComputed checks the runner measured the time a real workspace was
+// up.
+func assertComputed(t *testing.T, compute time.Duration) {
+	t.Helper()
+	if compute <= 0 {
+		t.Fatalf("compute = %v, want the time the real workspace was up", compute)
+	}
 }
