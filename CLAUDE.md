@@ -5,19 +5,21 @@ Execution runtime for the FuseOne software factory: an MCP server that takes
 Orchestration, governance and cost stay in FuseOne; Forja only does what FuseOne
 does not — checkout, build, tests and support services in an ephemeral,
 isolated workspace.
-Functional reference: [docs/PRD.pdf](docs/PRD.pdf). Work is tracked as GitHub
+Functional reference: [docs/PRD.md](docs/PRD.md) (original: [docs/PRD.pdf](docs/PRD.pdf)). Work is tracked as GitHub
 issues #1–#24, each a vertical slice with its blockers listed inline.
 
 **Scope of this file: the Go core** — `cmd/`, `internal/`, `deploy/`.
 
 **Language policy:** everything in the repository is in English — code,
 identifiers, comments, commit messages, and every document in `docs/` (ADRs,
-runbooks, contracts). The only exception is the PRD, which arrived as a pt-BR
-PDF. Issues on GitHub may be in pt-BR; one document, one language.
+runbooks, contracts, the PRD). The only exception is the original PRD PDF,
+which arrived in pt-BR and stays as it arrived. Issues on GitHub may be in
+pt-BR; one document, one language.
 
 Documents in `docs/` are Markdown, not HTML or PDF: GitHub renders them, they
 diff line by line in review, and nobody has to open a viewer to read one. The
-PRD arrived as a PDF; every new document is Markdown.
+PRD arrived as a PDF and lives on as `docs/PRD.md`; every new document is
+Markdown.
 
 ## Layout
 

@@ -4,7 +4,7 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 
 ## Pick something to work on
 
-- The backlog is [issues #1–#24](https://github.com/fuseone-io/fuseone-forja/issues): vertical slices derived from the [PRD](docs/PRD.pdf), each with a "Blocked by" list. Start with one whose blockers are closed.
+- The backlog is [issues #1–#24](https://github.com/fuseone-io/fuseone-forja/issues): vertical slices derived from the [PRD](docs/PRD.md), each with a "Blocked by" list. Start with one whose blockers are closed.
 - `ready-for-agent` means the issue is fully specified and an AFK agent can take it. `ready-for-human` means it needs a decision, external access or a measurement first. Milestones `Fase 0` and `Fase 1` give the order.
 - Comment on the issue before you start, so two people or two agents don't take the same one.
 - Ask in the issue first when the change touches one of the non-negotiables in `CLAUDE.md`, adds a dependency, changes the `.forja.yaml` contract or any MCP tool schema, or contradicts an accepted ADR in `docs/adr/`. The last two need an ADR, not a workaround.
@@ -22,7 +22,7 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 - **The non-negotiables are tests.** A slice that touches the contract has a test proving it is read from the base commit's SHA; one that touches the workspace has a test proving no credential is in its environment; one that touches a status has a test proving the workspace cannot write it; one that touches a gate has a test proving only the exit code decides.
 - **Never mock what you do not own.** A real Postgres container for the run store, a real Docker container for the workspace, and a fake for GitHub that enforces the API's invariants (a ref that exists cannot be created). No mock of a driver or an SDK.
 - **No secrets.** No `.env`, no tokens, no App private key in the tree. Environment variables and the vault.
-- **Docs are Markdown.** The PRD arrived as a PDF; every new document in `docs/` is Markdown, and ADRs live in `docs/adr/`.
+- **Docs are Markdown.** The PRD arrived as a PDF and lives on as `docs/PRD.md`; every new document in `docs/` is Markdown, and ADRs live in `docs/adr/`.
 - **Language.** Everything in the repository is English, documents in `docs/` included. Only GitHub issues may be pt-BR; one document, one language.
 
 ## Commits and pull requests
