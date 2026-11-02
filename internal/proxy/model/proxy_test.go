@@ -428,6 +428,12 @@ func TestProxy_compressedResponse_502(t *testing.T) {
 	if res.StatusCode != http.StatusBadGateway || strings.Contains(body, "not really gzip") {
 		t.Fatalf("compressed upstream answer = %d %q, want 502 without its body", res.StatusCode, body)
 	}
+	// The upstream answered, so it spent: the request is charged its size
+	// and its max_tokens of 1.
+	size := int64(len(`{"max_tokens":1,"model":"claude-opus-5-5","stream":true}`))
+	if got := readUsage(t, p).Tokens; got != (domain.TokenUsage{Input: size, Output: 1}) {
+		t.Fatalf("metered %+v for an answer the proxy could not read, want size %d and max_tokens 1", got, size)
+	}
 }
 
 // Whatever the route and the outcome, neither the key nor the token is

@@ -126,7 +126,7 @@ func (p *Proxy) reverseProxy(fail func(error)) *httputil.ReverseProxy {
 		FlushInterval: -1,
 		ModifyResponse: func(res *http.Response) error {
 			if enc := res.Header.Get("Content-Encoding"); enc != "" && !strings.EqualFold(enc, "identity") {
-				return fmt.Errorf("model: upstream answered %s-encoded; the proxy meters only plain bodies", enc)
+				return fmt.Errorf("%w: upstream answered %s-encoded; the proxy meters only plain bodies", errUnmetered, enc)
 			}
 			status := res.StatusCode
 			req, _ := res.Request.Context().Value(checkedKey{}).(checked)
@@ -141,8 +141,25 @@ func (p *Proxy) reverseProxy(fail func(error)) *httputil.ReverseProxy {
 			}
 			return nil
 		},
-		ErrorHandler: func(w http.ResponseWriter, _ *http.Request, _ error) {
-			refuse(w, http.StatusBadGateway, `{"type":"error","error":{"type":"api_error","message":"forja: upstream unreachable"}}`)
-		},
+		ErrorHandler: p.unanswered(fail),
 	}
 }
+
+// unanswered answers a request the upstream did not answer in a form the
+// proxy could relay, charging it when the upstream may have spent on it.
+func (p *Proxy) unanswered(fail func(error)) func(http.ResponseWriter, *http.Request, error) {
+	return func(w http.ResponseWriter, r *http.Request, err error) {
+		if errors.Is(err, errUnmetered) || r.Context().Err() != nil {
+			req, _ := r.Context().Value(checkedKey{}).(checked)
+			if err := p.record(http.StatusBadGateway, charge(http.StatusOK, metered{}, req)); err != nil {
+				fail(err)
+			}
+		}
+		refuse(w, http.StatusBadGateway, `{"type":"error","error":{"type":"api_error","message":"forja: upstream unreachable"}}`)
+	}
+}
+
+// errUnmetered marks an upstream answer the proxy could not meter. Like a
+// request whose client left before the answer, it may have spent upstream,
+// so it is charged as a success whose usage was never said.
+var errUnmetered = errors.New("model: answer not metered")

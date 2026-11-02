@@ -1,6 +1,7 @@
 package model_test
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"math/rand/v2"
@@ -157,6 +158,49 @@ func TestMeter_usageUnreadable_chargedOnlyOnSuccess(t *testing.T) {
 				t.Fatalf("metered %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// A client that leaves before the upstream answered, as it can with
+// stream:false whose answer comes only once generated, left the upstream
+// generating: it is charged the body's size and max_tokens.
+func TestMeter_clientGoneBeforeAnswer_sizeAndMaxTokensCharged(t *testing.T) {
+	t.Parallel()
+	arrived := make(chan struct{})
+	up := newUpstream(t, func(_ http.ResponseWriter, r *http.Request) {
+		close(arrived)
+		<-r.Context().Done()
+	})
+	p := startProxy(t, up, 1_000_000)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-arrived
+		cancel()
+	}()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader(cutBody))
+	req.Header.Set("x-api-key", runToken)
+	if res, err := http.DefaultClient.Do(req); err == nil {
+		_ = res.Body.Close()
+		t.Fatalf("request answered %d, want it abandoned", res.StatusCode)
+	}
+
+	awaitUsageLines(t, p, 1)
+	want := domain.TokenUsage{Input: int64(len(cutBody)), Output: cutMaxTokens}
+	if got := readUsage(t, p).Tokens; got != want {
+		t.Fatalf("metered %+v, want the body's size and max_tokens %+v", got, want)
+	}
+}
+
+// An upstream the proxy cannot reach was sent nothing and spent nothing.
+func TestMeter_upstreamUnreachable_nothingCharged(t *testing.T) {
+	t.Parallel()
+	gone := newUpstream(t, replySSE(domain.TokenUsage{Input: 1}))
+	gone.srv.Close()
+	p := startProxy(t, gone, 1_000_000)
+
+	sendCut(t, p)
+	if report := readUsage(t, p); report.Tokens != (domain.TokenUsage{}) {
+		t.Fatalf("metered %+v for an unreachable upstream, want nothing", report.Tokens)
 	}
 }
 

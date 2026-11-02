@@ -145,8 +145,11 @@ It counts what it saw, including a stream cut short or a client that left.
 A successful response that never said its output is charged the request's
 `max_tokens`, because a stream closed before `message_delta` was still
 generated upstream. One that never said its input is charged the body's
-size in bytes. A response that is not a success is charged what it said,
-which is nothing.
+size in bytes. A request whose client left before the upstream answered,
+or whose answer came compressed, is charged the same way: the upstream may
+have generated it. A response that is not a success is charged what it
+said, which is nothing, and an upstream that cannot be reached is charged
+nothing.
 
 It writes one JSON line per forwarded response, `{event: usage, run, at,
 status, usage: {input, cache_creation, cache_read, output}}`, and one cap
