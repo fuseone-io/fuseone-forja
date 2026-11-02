@@ -21,8 +21,8 @@ type e2eLauncher struct {
 	log    *string
 }
 
-func (l e2eLauncher) LaunchAgent(ctx context.Context, runID, image, tree string) (agent.Workspace, error) {
-	c, err := l.docker.LaunchAgent(ctx, runID, image, tree)
+func (l e2eLauncher) LaunchAgent(ctx context.Context, in agent.Launch) (agent.Workspace, error) {
+	c, err := l.docker.LaunchAgent(ctx, workspace.AgentLaunch(in))
 	if err != nil {
 		return nil, err
 	}

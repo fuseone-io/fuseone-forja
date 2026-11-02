@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -170,9 +171,15 @@ func launchAgent(t *testing.T, d *workspace.Docker, runID string) *workspace.Con
 // launchAgentOn is launchAgent with the given tree.
 func launchAgentOn(t *testing.T, d *workspace.Docker, runID, tree string) *workspace.Container {
 	t.Helper()
+	return launchAgentSpent(t, d, workspace.AgentLaunch{RunID: runID, Image: agentImage, Tree: tree})
+}
+
+// launchAgentSpent is launchAgent of the given launch.
+func launchAgentSpent(t *testing.T, d *workspace.Docker, l workspace.AgentLaunch) *workspace.Container {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	c, err := d.LaunchAgent(ctx, runID, agentImage, tree)
+	c, err := d.LaunchAgent(ctx, l)
 	if err != nil {
 		t.Fatalf("LaunchAgent: %v", err)
 	}
@@ -358,7 +365,7 @@ func TestDocker_launchAgentFails_nothingLeft(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
 
-			if c, err := d.LaunchAgent(ctx, runID, tt.image, treeWith(t)); err == nil {
+			if c, err := d.LaunchAgent(ctx, workspace.AgentLaunch{RunID: runID, Image: tt.image, Tree: treeWith(t)}); err == nil {
 				_ = c.Close(context.Background())
 				t.Fatal("LaunchAgent = nil error, want a failure")
 			}
@@ -430,6 +437,55 @@ func TestDocker_smallCap_nextRequest429AndAwaitCapReturns(t *testing.T) {
 	}
 	if report, err := c.Model(context.Background()); err != nil || !report.Capped {
 		t.Fatalf("Model = %+v, %v; want capped", report, err)
+	}
+}
+
+// askingFor is the agent's call asking for up to maxTokens of output,
+// which the proxy admits only while the cap's remainder covers it.
+func askingFor(maxTokens int) string {
+	return strings.Replace(postMessages, `"max_tokens":1`, fmt.Sprintf(`"max_tokens":%d`, maxTokens), 1)
+}
+
+// A later attempt's proxy holds only what is left of the cap: with 8 of 10
+// tokens spent, a request asking for 3 is refused with the cap's body at
+// once. Relaunched for the same run with nothing spent, after the first
+// launch closed, the same request is served: the remainder decided it, and
+// a second agent launch of one run does not collide with the first.
+func TestDocker_launchAgent_spentLowersProxyCap(t *testing.T) {
+	upstream, _ := fakeUpstream(t, "")
+	d := agentDocker(t, upstream, 10, agentBinaryFile(t))
+	runID, tree := newRunID(t), treeWith(t)
+
+	spent := launchAgentSpent(t, d, workspace.AgentLaunch{RunID: runID, Image: agentImage, Tree: tree, Spent: 8})
+	if res := mustExec(t, spent, askingFor(3)); !strings.HasPrefix(string(res.Stdout), "429") || !strings.Contains(string(res.Stdout), "forja: run token cap reached") {
+		t.Fatalf("POST asking 3 with 2 left = %s, want the 429 cap refusal", res.Stdout)
+	}
+	if err := spent.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	fresh := launchAgentSpent(t, d, workspace.AgentLaunch{RunID: runID, Image: agentImage, Tree: tree})
+	if res := mustExec(t, fresh, askingFor(3)); !strings.HasPrefix(string(res.Stdout), "200") {
+		t.Fatalf("POST asking 3 with 10 left = %s, want 200", res.Stdout)
+	}
+}
+
+// A launch whose run already spent its cap, or more, is refused before
+// anything of the run exists.
+func TestDocker_launchAgent_capSpent_refusedNothingLabelled(t *testing.T) {
+	upstream, _ := fakeUpstream(t, "")
+	d := agentDocker(t, upstream, 10, agentBinaryFile(t))
+	for _, spent := range []int64{10, 11} {
+		runID := newRunID(t)
+		c, err := d.LaunchAgent(context.Background(), workspace.AgentLaunch{RunID: runID, Image: agentImage, Tree: treeWith(t), Spent: spent})
+		if !errors.Is(err, workspace.ErrCapSpent) {
+			if c != nil {
+				_ = c.Close(context.Background())
+			}
+			t.Fatalf("LaunchAgent with %d of 10 spent = %v, want ErrCapSpent", spent, err)
+		}
+		if n := leftovers(t, runID); n != 0 {
+			t.Fatalf("%d containers or networks of the refused launch exist", n)
+		}
 	}
 }
 

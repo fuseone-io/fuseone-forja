@@ -319,7 +319,48 @@ func TestRunner_launchFails_errorNothingToClose(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "no agent binary") {
 		t.Fatalf("Run = %v, want the launch failure", err)
 	}
-	if l.runID != task.RunID || l.image != task.Contract.Image || l.tree != task.Tree {
-		t.Fatalf("launched %s %s %s, want the task's run, image and tree", l.runID, l.image, l.tree)
+	if l.launch.RunID != task.RunID || l.launch.Image != task.Contract.Image || l.launch.Tree != task.Tree {
+		t.Fatalf("launched %+v, want the task's run, image and tree", l.launch)
+	}
+}
+
+// A later attempt launches with every token the run already used, input
+// and output alike, so its proxy gets only what is left of the cap.
+func TestRunner_spent_launchesWithRemainder(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	l := &fakeLauncher{ws: ws, cap: 10_000}
+	later := task
+	later.Spent = domain.TokenUsage{Input: 1000, CacheCreation: 200, CacheRead: 30, Output: 400}
+
+	if _, err := (&agent.Runner{Launcher: l}).Run(context.Background(), later); err != nil {
+		t.Fatal(err)
+	}
+	if l.launch.Spent != 1630 || l.remainder != 10_000-1630 {
+		t.Fatalf("launched with spent %d, remainder %d; want 1630 spent and 8370 left", l.launch.Spent, l.remainder)
+	}
+	if l.launch.RunID != task.RunID || l.launch.Image != task.Contract.Image || l.launch.Tree != task.Tree {
+		t.Fatalf("launched %+v, want the task's run, image and tree", l.launch)
+	}
+}
+
+// A run that spent its whole cap before this attempt is capped at the
+// launch: no workspace, no prompt, and no error, as a cap reached mid-run
+// is a result too.
+func TestRunner_capSpentAtLaunch_cappedWithoutWorkspace(t *testing.T) {
+	t.Parallel()
+	for _, spent := range []domain.TokenUsage{{Input: 100}, {Input: 60, Output: 50}} {
+		ws := newFakeWorkspace()
+		l := &fakeLauncher{ws: ws, cap: 100}
+		later := task
+		later.Spent = spent
+
+		res, err := (&agent.Runner{Launcher: l}).Run(context.Background(), later)
+		if err != nil || !res.Capped || res.ExitCode != domain.NoExitCode || res.Exported || res.Tokens != (domain.TokenUsage{}) {
+			t.Fatalf("spent %+v: Run = %+v, %v; want capped, no exit code, nothing metered, no error", spent, res, err)
+		}
+		if l.launches != 0 || len(ws.callList()) != 0 {
+			t.Fatalf("spent %+v: %d workspaces launched, calls %q; want none", spent, l.launches, ws.callList())
+		}
 	}
 }
