@@ -224,6 +224,8 @@ App's permissions and the private key's handling, is
 | `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it | recommended; unset, a claim left by a crash is freed only by its lease |
 | `FORJA_CLAIM_LEASE` | Go duration the run holds `refs/forja/claims/<n>` for; must exceed the contract's `limits.wall_clock` | optional; default `wall_clock + 15m`, or `60m` without limits |
 | `FORJA_REGISTRY_CREDENTIALS` | **path** to a JSON file mounted by the vault, `{"<entry>": {"username": "...", "password": "..."}}`, one read credential per area | needed by any contract that declares `registries`; unset, such a run is refused at launch |
+| `FORJA_PRICE_INPUT`, `FORJA_PRICE_CACHE_WRITE`, `FORJA_PRICE_CACHE_READ`, `FORJA_PRICE_OUTPUT` | non-negative integer, USD micros per million tokens of that class | optional, all five price variables or none; unset, `forja.implement` and `forja.status` report no `estimated_cost_usd_micros` |
+| `FORJA_PRICE_COMPUTE_MINUTE` | non-negative integer, USD micros per container-minute | with the four token prices |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
