@@ -1,4 +1,4 @@
-# ADR 9999: the proof apparatus and the human-merge label
+# ADR 0044: the proof apparatus and the human-merge label
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #18

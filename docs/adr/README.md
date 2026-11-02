@@ -14,4 +14,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |
 | [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
-| [9999](9999-proof-apparatus.md) | The proof apparatus and the human-merge label | proposed |
+| [0044](0044-proof-apparatus.md) | The proof apparatus and the human-merge label | proposed |
