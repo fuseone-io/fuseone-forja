@@ -40,26 +40,41 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 2
 }
 
-// serve recovers the claims a previous process left, then runs the server
-// until the transport closes or ctx is cancelled. A cancelled context is
-// the operator stopping the server, not a failure; a recovery that cannot
-// finish is one.
+// serve is the MCP server with the process's environment and network.
 func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, getenv func(string) string) int {
-	deps, store, err := wire(getenv, stderr)
+	return host{getenv: getenv, listen: listenTCP}.serve(ctx, transport, stderr)
+}
+
+// serve recovers the claims a previous process left, opens the metrics
+// listener when one is configured, then runs the server until the
+// transport closes or ctx is cancelled, and closes the listener with it. A
+// cancelled context is the operator stopping the server, not a failure; a
+// recovery that cannot finish or a listener that cannot open is one.
+func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writer) int {
+	addr, err := metricsAddr(h.getenv)
 	if err != nil {
-		// The exit code is the only channel left when stderr itself fails.
-		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
-		return 1
+		return fail(stderr, err)
+	}
+	deps, store, err := wire(h.getenv, stderr)
+	if err != nil {
+		return fail(stderr, err)
 	}
 	if err := recoverClaims(ctx, store, stderr); err != nil {
-		// The exit code is the only channel left when stderr itself fails.
-		_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
-		return 1
+		return fail(stderr, err)
+	}
+	stop, err := h.startMetrics(ctx, stderr, addr, deps)
+	if err != nil {
+		return fail(stderr, err)
 	}
 	err = mcp.New(deps).Run(ctx, transport)
+	stop()
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
 	}
+	return fail(stderr, err)
+}
+
+func fail(stderr io.Writer, err error) int {
 	// The exit code is the only channel left when stderr itself fails.
 	_, _ = fmt.Fprintf(stderr, "forjad: serve: %v\n", err)
 	return 1
