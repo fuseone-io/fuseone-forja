@@ -13,7 +13,8 @@ import (
 // The fake answers in the API's shapes:
 //   - GET /pulls/{n} answers number, html_url, state, head {ref, sha, repo},
 //     base {ref} and changed_files; head.repo is null, not an object without
-//     full_name, once the head's repository is gone.
+//     full_name, once the head's repository is gone. body is null, never
+//     "", for a pull request with no description.
 //   - GET /pulls/{n}/files answers an array of diff entries with additions,
 //     blob_url, changes, contents_url, deletions, filename, patch, raw_url,
 //     sha and status; a rename adds previous_filename.
@@ -110,8 +111,12 @@ func (f *fakePulls) pull(w http.ResponseWriter, _ *http.Request) {
 	if f.headRepo != nil {
 		repo = map[string]any{"full_name": *f.headRepo, "private": false}
 	}
+	var body any
+	if f.body != "" {
+		body = f.body
+	}
 	f.writeBody(w, map[string]any{
-		"number": f.number, "html_url": f.html(), "state": "open", "title": f.title, "body": f.body,
+		"number": f.number, "html_url": f.html(), "state": "open", "title": f.title, "body": body,
 		"head":          map[string]any{"ref": f.headRef, "sha": f.headSHA, "repo": repo},
 		"base":          map[string]any{"ref": f.baseRef, "sha": fakeSHA},
 		"changed_files": f.changedFiles, "merged": false, "draft": false,

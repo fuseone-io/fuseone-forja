@@ -32,7 +32,7 @@ func TestPullRequests_read_headBaseAndFilesDecodedMintsPullRequestsRead(t *testi
 	}
 	want := domain.PullRequestDiff{
 		Number: 57, URL: "https://github.com/" + fakeRepo + "/pull/57", HeadRepository: fakeRepo,
-		HeadRef: "forja/12", HeadSHA: deliveryHead, BaseRef: "main",
+		HeadRef: "forja/12", HeadSHA: deliveryHead, BaseRef: "main", Body: "## What to build\n\nprivate-looking body",
 		Files: []domain.ChangedFile{{Path: "README.md"}, {Path: "docs/x.md"}},
 	}
 	if !reflect.DeepEqual(got, want) {
@@ -160,6 +160,21 @@ func TestPullRequests_read_headRepoNull_emptyHeadRepository(t *testing.T) {
 	}
 	if got.HeadRepository != "" || got.HeadRef != "forja/12" || got.HeadSHA != deliveryHead {
 		t.Fatalf("Read = %+v, want no head repository with the ref and sha kept", got)
+	}
+}
+
+// A pull request with no description answers body null, as measured on
+// golang/tools (5 of 100 closed pull requests, and pulls 581, 591 and 605
+// one by one): the diff carries an empty body, never an error.
+func TestPullRequests_read_bodyNull_emptyBody(t *testing.T) {
+	t.Parallel()
+	fake := newFakePulls(t, pullsToken)
+	fake.body = ""
+	reader, _ := pullReader(fake)
+
+	got, err := reader.Read(context.Background(), fakeRepo, 57)
+	if err != nil || got.Body != "" || got.HeadSHA != deliveryHead {
+		t.Fatalf("Read = %+v, %v; want the diff with an empty body", got, err)
 	}
 }
 
