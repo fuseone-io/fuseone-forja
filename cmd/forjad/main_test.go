@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -119,6 +120,94 @@ func readyAddr(t *testing.T, lines *bufio.Scanner) string {
 		t.Fatalf("first line = %q (%v), want the readiness of run-7 with its address", lines.Text(), err)
 	}
 	return ready.Addr
+}
+
+// registryCredentials writes a credentials file for the named entries.
+func registryCredentials(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "registries.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRun_registryMisconfigured_exit2NothingOnStdout(t *testing.T) {
+	t.Parallel()
+	good := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "canary-cmd-secret"}}`)
+	bad := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": canary-cmd-secret}}`)
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "unknown flag", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", good, "-nope"}},
+		{name: "no run id", args: []string{"registry", "-registries", "ghcr.io/my-org", "-credentials", good}},
+		{name: "no registry", args: []string{"registry", "-run", "r1", "-credentials", good}},
+		{name: "malformed registry", args: []string{"registry", "-run", "r1", "-registries", "https://ghcr.io", "-credentials", good}},
+		{name: "no credentials file", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org"}},
+		{name: "credentials file malformed", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", bad}},
+		{name: "declared registry without credential", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org,npm.pkg.github.com", "-credentials", good}},
+		{name: "extra argument", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", good, "extra"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			if code := run(tt.args, &stdout, &stderr); code != 2 {
+				t.Fatalf("run(%q) = %d, want 2; stderr %q", tt.args, code, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want nothing: a proxy that did not start is never ready", stdout.String())
+			}
+			if stderr.Len() == 0 || strings.Contains(stderr.String(), "canary-cmd-secret") {
+				t.Errorf("stderr = %q, want the problem named and no credential", stderr.String())
+			}
+		})
+	}
+}
+
+// The subcommand is the registry proxy the control plane starts: ready on
+// stdout, one access line per request, exit 0 when stopped.
+func TestRegistryCommand_readyThenAccessLineThenCleanStop(t *testing.T) {
+	t.Parallel()
+	creds := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "canary-cmd-secret"}}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdoutR, stdoutW := io.Pipe()
+	var stderr bytes.Buffer
+	exited := make(chan int, 1)
+	go func() {
+		exited <- registryProxy(ctx, []string{"-run", "run-7", "-listen", "127.0.0.1:0", "-registries", "ghcr.io/my-org", "-credentials", creds}, stdoutW, &stderr)
+		_ = stdoutW.Close()
+	}()
+	lines := bufio.NewScanner(stdoutR)
+
+	addr := readyAddr(t, lines)
+	// The proxy writes the line before it answers, so the pipe is read
+	// while the request is in flight.
+	next := make(chan string, 1)
+	go func() {
+		if lines.Scan() {
+			next <- lines.Text()
+		}
+		close(next)
+		_, _ = io.Copy(io.Discard, stdoutR)
+	}()
+	res, err := http.Get("http://" + addr + "/example.com/x?q=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET of an undeclared registry = %d, want 403", res.StatusCode)
+	}
+	if text := <-next; !strings.Contains(text, `"registry":"example.com"`) || !strings.Contains(text, `"outcome":"denied"`) {
+		t.Fatalf("line after the request = %q, want the denied access of example.com", text)
+	}
+	cancel()
+	if code := <-exited; code != 0 {
+		t.Fatalf("registry after cancel = %d, want 0; stderr %q", code, stderr.String())
+	}
 }
 
 func emptyEnv(string) string { return "" }
