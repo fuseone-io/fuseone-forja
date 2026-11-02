@@ -295,6 +295,24 @@ func TestImplement_diffUnmeasurable_toolErrorRunFailed(t *testing.T) {
 	}
 }
 
+// A run that failed before it read its contract worked under no limits:
+// forja.status leaves them out rather than show the defaults.
+func TestImplement_cloneFails_limitsAbsentFromStatus(t *testing.T) {
+	t.Parallel()
+	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx.cloner.err = errors.New("clone refused")
+
+	if res := callImplement(t, fx.cs, implementIssue); !res.IsError {
+		t.Fatalf("IsError false, want the clone's failure as a tool error")
+	}
+	wire := statusOf(t, fx)
+	for _, field := range []string{"wall_clock_seconds", "max_diff_lines", "diff_lines"} {
+		if raw, present := wire[field]; present {
+			t.Errorf("status %s = %s for a run that never read its contract", field, raw)
+		}
+	}
+}
+
 // A run that never counted its diff says so by leaving diff_lines out,
 // never with a zero.
 func TestImplement_noCommits_diffLinesAbsent(t *testing.T) {
