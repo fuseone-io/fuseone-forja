@@ -164,9 +164,15 @@ func agentDocker(t *testing.T, upstream string, tokenCap int64, agent string) *w
 
 func launchAgent(t *testing.T, d *workspace.Docker, runID string) *workspace.Container {
 	t.Helper()
+	return launchAgentOn(t, d, runID, treeWith(t))
+}
+
+// launchAgentOn is launchAgent with the given tree.
+func launchAgentOn(t *testing.T, d *workspace.Docker, runID, tree string) *workspace.Container {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	c, err := d.LaunchAgent(ctx, runID, agentImage, treeWith(t))
+	c, err := d.LaunchAgent(ctx, runID, agentImage, tree)
 	if err != nil {
 		t.Fatalf("LaunchAgent: %v", err)
 	}
