@@ -264,6 +264,33 @@ func TestStatus_pagination_defaultLimitFiftyMaximumTwoHundred(t *testing.T) {
 	}
 }
 
+// A cursor no matching run comes after ends the walk: a run that left the
+// filter between two pages, or the last run itself, never restarts it.
+func TestStatus_pagination_cursorPastEveryMatch_emptyPageNoCursor(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "cursor on the oldest run", args: map[string]any{"cursor": "run-old"}},
+		{name: "cursor older than every match, outside the filter", args: map[string]any{"state": "running", "cursor": "run-old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cs := connect(t, storeWith(t,
+				listedRun("run-old", "acme/api", domain.ToolImplement, domain.StateSucceeded, 0),
+				listedRun("run-mid", "acme/api", domain.ToolImplement, domain.StateRunning, time.Hour),
+				listedRun("run-new", "acme/api", domain.ToolImplement, domain.StateRunning, 2*time.Hour),
+			))
+			got := callList(t, cs, tt.args)
+			if len(got.Runs) != 0 || got.NextCursor != "" {
+				t.Fatalf("page after the last match = %v, next_cursor %q; want none and none", summaryIDs(got), got.NextCursor)
+			}
+		})
+	}
+}
+
 func TestStatus_listInvalidInput_toolErrorNamingTheArgument(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -280,7 +307,11 @@ func TestStatus_listInvalidInput_toolErrorNamingTheArgument(t *testing.T) {
 		{name: "limit over the maximum", args: map[string]any{"limit": 201}, want: []string{"limit", "201"}},
 		{name: "negative limit", args: map[string]any{"limit": -1}, want: []string{"limit", "-1"}},
 		{name: "unknown cursor", args: map[string]any{"cursor": "run-ghost"}, want: []string{"cursor", "run-ghost"}},
-		{name: "run_id with a filter", args: map[string]any{"run_id": "run-present", "repository": "acme/api"}, want: []string{"run_id", "repository"}},
+		{name: "run_id with a repository", args: map[string]any{"run_id": "run-present", "repository": "acme/api"}, want: []string{"run_id", "repository"}},
+		{name: "run_id with a tool", args: map[string]any{"run_id": "run-present", "tool": "forja.implement"}, want: []string{"run_id", "tool"}},
+		{name: "run_id with a state", args: map[string]any{"run_id": "run-present", "state": "running"}, want: []string{"run_id", "state"}},
+		{name: "run_id with a since", args: map[string]any{"run_id": "run-present", "since": rfc3339(0)}, want: []string{"run_id", "since"}},
+		{name: "run_id with an until", args: map[string]any{"run_id": "run-present", "until": rfc3339(time.Hour)}, want: []string{"run_id", "until"}},
 		{name: "run_id with a cursor", args: map[string]any{"run_id": "run-present", "cursor": "run-present"}, want: []string{"run_id", "cursor"}},
 		{name: "run_id with a limit", args: map[string]any{"run_id": "run-present", "limit": 5}, want: []string{"run_id", "limit"}},
 	}
