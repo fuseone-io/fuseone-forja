@@ -163,9 +163,8 @@ func TestPullRequests_read_headRepoNull_emptyHeadRepository(t *testing.T) {
 	}
 }
 
-// A pull request with no description answers body null, as measured on
-// golang/tools (5 of 100 closed pull requests, and pulls 581, 591 and 605
-// one by one): the diff carries an empty body, never an error.
+// A pull request with no description answers body null: the diff carries
+// an empty body, never an error.
 func TestPullRequests_read_bodyNull_emptyBody(t *testing.T) {
 	t.Parallel()
 	fake := newFakePulls(t, pullsToken)
