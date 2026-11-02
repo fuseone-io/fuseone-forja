@@ -28,22 +28,31 @@ the operating rules. Read both before the first command.
 - To add a commit to a branch another agent pushed, `cherry-pick`, never `rebase`: rebasing
   rewrites someone else's commit and needs force, which is forbidden.
 
-## Gates — one variable per command
+## Gates — one call, real exit codes
 
-- `make test | tail` returns the exit code of TAIL, not of the test. The template is always:
-  `make test > /tmp/t.log 2>&1; T=$?` and report `$T`. Same for every gate, each with its own
-  variable.
-- Never `&&` chaining gates, never `2>/dev/null`, never `grep FAIL` as proof: Forja itself only
-  trusts exit codes, and so do you.
+- Run Makefile gates with `scripts/gates.sh [gate...]` in ONE Bash call (default: build vet lint
+  test race docker-test). It runs every gate even after a red one, keeps each raw log, prints
+  `gate exit time log` per gate plus the sha, and exits non-zero if any gate did. That table is
+  what the PR reports. Set `GATES_LOG_DIR` to your scratchpad; `GOLANGCI_LINT=<path>` when
+  golangci-lint is not on PATH.
+- Outside the script, `make test | tail` returns the exit code of TAIL, not of the test. The
+  template is `make test > <log> 2>&1; T=$?` and report `$T`. Never `&&` chaining gates, never
+  `2>/dev/null`, never `grep FAIL` as proof: Forja itself only trusts exit codes, and so do you.
+- `make test` and `make race` skip the tests that drive the Docker Engine. `make docker-test`
+  runs them once, under race, with `FORJA_DOCKER_TEST=1`, and fails if no daemon answers. While
+  iterating on `internal/workspace/` or `cmd/forjad/`, run one of them filtered:
+  `FORJA_DOCKER_TEST=1 go test ./internal/workspace/ -run '^TestDocker_foo'`.
 - Pick the gates by what the diff touches:
   · always: `make build`, `make vet`, `make lint`, `make test`
+  · `internal/workspace/` or `cmd/forjad/`: `make docker-test`
   · anything under `internal/` that touches a store, the run state or SQL:
     `make integration-test` (real Postgres container; NEVER hand-build a database URL)
   · iteration and mutation run the FILTERED suite: `go test ./<pkg> -run '^TestFoo'` or
     `make integration-test PKG=./internal/<pkg> RUN='^TestFoo'`. The full suite runs ONCE, at the end.
   · `internal/`: `semgrep --config p/security-audit --config p/secrets internal/`
   · `deploy/`: `helm lint deploy/helm/forja` when the chart exists
-  · `make check` is the whole battery: build, vet, lint, test, race. It is the one the PR reports.
+  · `scripts/gates.sh` with no argument is the whole battery (= `make check`): build, vet, lint,
+    test, race, docker-test. It is the one the PR reports.
 - A gate result belongs to the tree it ran on, not to the moment. Run the full battery on a
   commit and keep its sha: `V=$(git rev-parse HEAD)`. Commit the next fix and rerun only if
   `git diff --quiet $V HEAD -- '*.go' '*.sql' go.mod go.sum` exits non-zero. Markdown and ADRs
@@ -51,7 +60,7 @@ the operating rules. Read both before the first command.
 
 ## Order: review converges, then the full battery
 
-- Iterate with what is filtered. The full battery (`make check`, integration suite, semgrep) is
+- Iterate with what is filtered. The full battery (`scripts/gates.sh`, integration suite, semgrep) is
   expensive: run it ONCE, on the sha the review already approved, never before each review round.
 - Sequence: commit → `code-review:pre-review` → fix critical findings and repeat → full battery
   on that sha → `gh pr create`. If the battery fails, the fix goes back to pre-review and the

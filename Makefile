@@ -1,4 +1,4 @@
-.PHONY: build vet lint test race docker-test integration check serve
+.PHONY: build vet lint test race docker-test integration check gates serve
 
 GOLANGCI_LINT ?= golangci-lint
 
@@ -31,6 +31,10 @@ integration:
 	go test -tags integration -count=1 -run '^TestPostgresSidecar' ./internal/workspace/
 
 check: build vet lint test race docker-test
+
+# Every gate in one call, a table of exit codes, logs on disk.
+gates:
+	scripts/gates.sh
 
 serve:
 	go run ./cmd/forjad serve
