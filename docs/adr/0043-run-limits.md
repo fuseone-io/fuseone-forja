@@ -68,16 +68,19 @@ end, already carries the measured lines and the limit.
 `Checkout.DiffLines` runs, on the control plane's own clone:
 
 ```
-GIT_ATTR_SOURCE=<base sha> git diff --numstat -z --no-renames --no-ext-diff --no-textconv <base sha> <head>
+git --attr-source=<base sha> diff --numstat -z --no-renames --no-ext-diff --no-textconv <base sha> <head>
 ```
 
 and sums the added and the deleted lines.
 
 - `--no-renames`: a rename is a delete and an add, whatever `diff.renames`
   says, so moving a file cannot shrink the count.
-- `GIT_ATTR_SOURCE=<base sha>`: what is binary comes from the base commit's
+- `--attr-source=<base sha>`: what is binary comes from the base commit's
   attributes, never from a `.gitattributes` the agent committed. Without it an
-  agent could mark its own files `binary` and count zero lines.
+  agent could mark its own files `binary` and count zero lines. It is the
+  command-line option rather than the `GIT_ATTR_SOURCE` variable because a git
+  that predates it refuses an unknown option, and the count then fails as a
+  tool error, while it ignores an unknown variable without a word.
 - `--no-ext-diff --no-textconv`: no diff driver named by an attribute runs on
   the control plane. git 2.54 runs neither for `--numstat`; the flags keep it
   so whatever git does next.
@@ -117,13 +120,14 @@ Local git 2.54.0 (Apple Git-157).
 | `git diff --numstat` with `diff.<driver>.textconv` and `.command` configured and `*.txt diff=<driver>` | the driver does not run; raw counts, with or without `--textconv` |
 | `git diff` (patch) under the same configuration | the external driver runs |
 | `TestCheckout_diffLines_renameCountsBothSides` with `--no-renames` removed | the count is refused: a rename record no longer has one path |
-| `TestCheckout_diffLines_agentGitattributesBinary_linesStillCount` with `GIT_ATTR_SOURCE` removed | 0 lines instead of 4 |
+| `TestCheckout_diffLines_agentGitattributesBinary_linesStillCount` with the attribute source removed | 0 lines instead of 4 |
+| `TestCheckout_diffLines_gitWithoutAttrSource_refused`, a stand-in git that drops `GIT_ATTR_SOURCE` and rejects `--attr-source`, against the variable | 0 lines and no error; against the option, the count is refused |
 
 ## Consequences
 
-- `GIT_ATTR_SOURCE` needs git 2.40 or later on the control plane. An older
-  git ignores the variable without an error, and the agent's own
-  `.gitattributes` then decides what counts as binary.
+- `--attr-source` needs git 2.42 or later on the control plane. On an older
+  git every count fails, and with it every run that reaches it, rather than
+  letting the agent's own `.gitattributes` decide what counts as binary.
 - A run that hits its wall clock while the pull request or the status call is
   in flight may leave a pushed branch or an open pull request without
   `forja/gates` (as ADR 0042 already notes for a failed call).

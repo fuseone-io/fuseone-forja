@@ -90,6 +90,39 @@ func TestCheckout_diffLines_agentGitattributesBinary_linesStillCount(t *testing.
 	}
 }
 
+// A git that does not know the attribute source would read the agent's
+// .gitattributes without a word: the count is refused, never taken under
+// the agent's attributes.
+func TestCheckout_diffLines_gitWithoutAttrSource_refused(t *testing.T) {
+	t.Parallel()
+	repo := newBareRepo(t, "main")
+	repo.commit(pilotFiles, "pilot")
+	bin := filepath.Join(t.TempDir(), "git")
+	script := "#!/bin/sh\nunset GIT_ATTR_SOURCE\ncase \"$1\" in --attr-source*) echo \"unknown option: $1\" >&2; exit 129;; esac\nexec git \"$@\"\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatalf("write stand-in: %v", err)
+	}
+	cloner := &github.Cloner{Tokens: &countingTokens{value: cloneToken}, Dir: t.TempDir(), Remote: repo.remote(), Git: bin}
+	co, err := cloner.Clone(context.Background(), fakeRepo, "main")
+	if err != nil {
+		t.Fatalf("Clone: %v", err)
+	}
+	t.Cleanup(func() { _ = co.Close() })
+	if err := co.StartBranch(context.Background(), agentBranch); err != nil {
+		t.Fatal(err)
+	}
+	ws := workspaceCopy(t, co)
+	agentCommit(t, ws, map[string]string{".gitattributes": "* binary\n", "big.txt": "1\n2\n3\n"}, "hide the lines")
+	head, err := co.Adopt(context.Background(), exportBundle(t, ws, co.SHA(), agentBranch), agentBranch)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if n, err := co.DiffLines(context.Background(), head); err == nil {
+		t.Fatalf("DiffLines = %d, nil under a git that ignores the attribute source; want a refusal", n)
+	}
+}
+
 // No diff driver runs on the control plane, whether the attribute naming
 // it is the agent's or the base's: the count is of the raw lines.
 func TestCheckout_diffLines_gitattributesDiffDriverNotRun(t *testing.T) {

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 	"strconv"
 )
 
@@ -12,14 +11,14 @@ import (
 // commit. A rename is a delete and an add, and a binary file counts no
 // line. Whether a file is text comes from the pinned commit's attributes,
 // never from what head committed, and no diff driver or text conversion
-// runs.
+// runs. The attribute source is a command-line option: a git that does
+// not know it refuses the count rather than ignore it.
 func (c *Checkout) DiffLines(ctx context.Context, head string) (int, error) {
 	if !commitSHA.MatchString(head) {
 		return 0, fmt.Errorf("github: diff of %q refused: not a commit name", head)
 	}
-	env := append(slices.Clone(c.env), "GIT_ATTR_SOURCE="+c.sha)
-	out, err := c.git.run(ctx, c.dir, env,
-		"diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", c.sha, head)
+	out, err := c.git.run(ctx, c.dir, c.env,
+		"--attr-source="+c.sha, "diff", "--numstat", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", c.sha, head)
 	if err != nil {
 		return 0, fmt.Errorf("github: diff %s..%s: %w", c.sha, head, err)
 	}
