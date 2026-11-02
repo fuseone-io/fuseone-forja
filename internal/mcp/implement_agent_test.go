@@ -17,19 +17,25 @@ import (
 )
 
 // fakeAgent records the task it was given and the deadline it ran under,
-// and answers with result, or fails with err.
+// and answers with result, or fails with err. With results set, the n-th
+// call answers results[n], the last one once they run out; with failOn set,
+// err is returned on that call alone.
 type fakeAgent struct {
-	calls  *callLog
-	result agent.Result
-	err    error
+	calls   *callLog
+	result  agent.Result
+	results []agent.Result
+	err     error
+	failOn  int
 
-	mu       sync.Mutex
-	tasks    []agent.Task
-	deadline time.Time
+	mu        sync.Mutex
+	tasks     []agent.Task
+	deadline  time.Time
+	deadlines []time.Time
 }
 
 // Run exports, as the real runner does, only into the bundle path the task
-// names, which the control plane must have made ready.
+// names, which the control plane must have made ready and which, as for
+// the workspace's export, must not exist yet.
 func (f *fakeAgent) Run(ctx context.Context, t agent.Task) (agent.Result, error) {
 	if f.calls != nil {
 		f.calls.add("agent")
@@ -38,12 +44,35 @@ func (f *fakeAgent) Run(ctx context.Context, t agent.Task) (agent.Result, error)
 	defer f.mu.Unlock()
 	f.tasks = append(f.tasks, t)
 	f.deadline, _ = ctx.Deadline()
-	if f.result.Exported {
-		if err := os.WriteFile(t.Bundle, []byte("# v2 git bundle\n"), 0o600); err != nil {
+	f.deadlines = append(f.deadlines, f.deadline)
+	res := f.result
+	if len(f.results) > 0 {
+		res = f.results[min(len(f.tasks), len(f.results))-1]
+	}
+	if res.Exported {
+		if err := writeBundle(t.Bundle); err != nil {
 			return agent.Result{ExitCode: domain.NoExitCode}, err
 		}
 	}
-	return f.result, f.err
+	if f.failOn != 0 && f.failOn != len(f.tasks) {
+		return res, nil
+	}
+	return res, f.err
+}
+
+func writeBundle(path string) error {
+	b, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = b.WriteString("# v2 git bundle\n")
+	return errors.Join(err, b.Close())
+}
+
+func (f *fakeAgent) taskList() []agent.Task {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]agent.Task(nil), f.tasks...)
 }
 
 // exported is the result of an agent that exited 0 and committed.

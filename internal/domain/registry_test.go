@@ -21,6 +21,53 @@ func access(i int) domain.RegistryAccess {
 	}
 }
 
+// The gates workspaces of every attempt of a run merge into the report one
+// registry proxy would have kept had it served them all in turn: both
+// counts, and the first hundred accesses in order.
+func TestRegistryReport_merge_countsBothListsFirstHundred(t *testing.T) {
+	t.Parallel()
+	property := func(n1, n2 uint16) bool {
+		a, b := int(n1%(2*domain.MaxRegistryAccesses)), int(n2%(2*domain.MaxRegistryAccesses))
+		var first, second, both domain.RegistryReport
+		for i := range a {
+			first.Record(access(i))
+			both.Record(access(i))
+		}
+		for i := range b {
+			second.Record(access(a + i))
+			both.Record(access(a + i))
+		}
+		merged := first.Merge(second)
+		if merged.Count != both.Count || len(merged.Accesses) != len(both.Accesses) {
+			t.Logf("a=%d b=%d: merged count %d kept %d, want %d %d", a, b, merged.Count, len(merged.Accesses), both.Count, len(both.Accesses))
+			return false
+		}
+		for i := range merged.Accesses {
+			if merged.Accesses[i] != both.Accesses[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Merging leaves both reports as they were: the first's list is copied,
+// never appended to in place.
+func TestRegistryReport_merge_leavesFirstUntouched(t *testing.T) {
+	t.Parallel()
+	first := domain.RegistryReport{Accesses: make([]domain.RegistryAccess, 1, 10), Count: 1}
+	first.Accesses[0] = access(0)
+	second := domain.RegistryReport{Accesses: []domain.RegistryAccess{access(1)}, Count: 1}
+
+	_ = first.Merge(second)
+	if extended := first.Accesses[:2]; extended[1] == access(1) {
+		t.Fatal("Merge wrote into the first report's backing array")
+	}
+}
+
 func TestRegistryReport_overHundred_countExactListCapped(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

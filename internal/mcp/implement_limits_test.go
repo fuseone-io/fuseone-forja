@@ -261,7 +261,7 @@ func TestImplement_diffAtLimit_delivered(t *testing.T) {
 // gate, and the count still shows.
 func TestImplement_gateRedAndDiffOver_reasonGateFailed(t *testing.T) {
 	t.Parallel()
-	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx := limitsFixture(t, checkoutWithMaxDiff("100")+"  max_attempts: 1\n", nil)
 	fx.cloner.co.diffLines = 101
 	fx.gates.report = redReport()
 

@@ -40,7 +40,7 @@ type ModelOptions struct {
 	Key string
 	// Upstream is the model API, already validated; empty is the default.
 	Upstream string
-	// Cap is the run's total tokens.
+	// Cap is the run's total tokens, across every agent launch of the run.
 	Cap int64
 }
 
@@ -48,7 +48,19 @@ type ModelOptions struct {
 var (
 	ErrNoAgentBinary = errors.New("workspace: no agent binary: set Options.AgentBinary to a linux agent")
 	ErrNoModelKey    = errors.New("workspace: no model key: set Options.Model.Key")
+	// ErrCapSpent is a launch whose run already used its whole cap.
+	ErrCapSpent = errors.New("workspace: the run's token cap is spent")
 )
+
+// AgentLaunch is one agent workspace of run RunID from Image with a copy
+// of Tree. Spent is the tokens the run's earlier launches used, which
+// this launch's proxy subtracts from the cap.
+type AgentLaunch struct {
+	RunID string
+	Image string
+	Tree  string
+	Spent int64
+}
 
 // agentSpec is what one agent launch adds to a plain one.
 type agentSpec struct {
@@ -68,8 +80,9 @@ func (a *agentSpec) env(withRegistry bool) []string {
 // container on the run network that holds the real key and a run token it
 // generates for this launch, and the agent installed in the workspace,
 // which is given the token and the proxy's address and nothing else. Only
-// this launch creates a model proxy.
-func (d *Docker) LaunchAgent(ctx context.Context, runID, image, tree string) (*Container, error) {
+// this launch creates a model proxy, capped at what the run has left; a
+// run with nothing left is refused with ErrCapSpent before anything exists.
+func (d *Docker) LaunchAgent(ctx context.Context, l AgentLaunch) (*Container, error) {
 	if d.opts.Model.Key == "" {
 		return nil, ErrNoModelKey
 	}
@@ -79,12 +92,29 @@ func (d *Docker) LaunchAgent(ctx context.Context, runID, image, tree string) (*C
 	if _, err := os.Stat(d.opts.AgentBinary); err != nil {
 		return nil, fmt.Errorf("workspace: agent binary %s: %w", d.opts.AgentBinary, err)
 	}
+	model, err := remainder(d.opts.Model, l)
+	if err != nil {
+		return nil, err
+	}
 	token, err := newRunToken()
 	if err != nil {
 		return nil, err
 	}
-	agent := &agentSpec{binary: d.opts.AgentBinary, token: token, model: d.opts.Model}
-	return d.launch(ctx, LaunchSpec{RunID: runID, Image: image, Tree: tree}, agent)
+	agent := &agentSpec{binary: d.opts.AgentBinary, token: token, model: model}
+	return d.launch(ctx, LaunchSpec{RunID: l.RunID, Image: l.Image, Tree: l.Tree}, agent)
+}
+
+// remainder is opts with the cap lowered by what the launch's run already
+// spent.
+func remainder(opts ModelOptions, l AgentLaunch) (ModelOptions, error) {
+	if l.Spent < 0 {
+		return ModelOptions{}, fmt.Errorf("workspace: run %s spent %d tokens: not a count", l.RunID, l.Spent)
+	}
+	if l.Spent >= opts.Cap {
+		return ModelOptions{}, fmt.Errorf("workspace: run %s spent %d of %d tokens: %w", l.RunID, l.Spent, opts.Cap, ErrCapSpent)
+	}
+	opts.Cap -= l.Spent
+	return opts, nil
 }
 
 // newRunToken is tokenBytes from the system's random source, in hex.

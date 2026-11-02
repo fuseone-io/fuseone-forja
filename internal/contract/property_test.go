@@ -48,6 +48,7 @@ type yamlVerify struct {
 type yamlLimits struct {
 	WallClock    string `yaml:"wall_clock"`
 	MaxDiffLines int    `yaml:"max_diff_lines"`
+	MaxAttempts  int    `yaml:"max_attempts"`
 }
 
 func render(t *testing.T, c domain.Contract) []byte {
@@ -62,7 +63,7 @@ func render(t *testing.T, c domain.Contract) []byte {
 		Verify:          yamlVerify{Exclude: c.Verify.Exclude},
 		ProofPaths:      c.ProofPaths,
 		HumanMergePaths: c.HumanMergePaths,
-		Limits:          yamlLimits{WallClock: c.Limits.WallClock.String(), MaxDiffLines: c.Limits.MaxDiffLines},
+		Limits:          yamlLimits{WallClock: c.Limits.WallClock.String(), MaxDiffLines: c.Limits.MaxDiffLines, MaxAttempts: c.Limits.MaxAttempts},
 		AgentContext:    c.AgentContext,
 	}
 	for name, s := range c.Services {
@@ -155,7 +156,7 @@ func (validContract) Generate(r *rand.Rand, _ int) reflect.Value {
 		Verify:          domain.Verify{Exclude: pickList(r, globs)},
 		ProofPaths:      pickList(r, globs),
 		HumanMergePaths: pickList(r, globs),
-		Limits:          domain.Limits{WallClock: time.Duration(1+r.Intn(120)) * time.Minute, MaxDiffLines: 1 + r.Intn(2000)},
+		Limits:          domain.Limits{WallClock: time.Duration(1+r.Intn(120)) * time.Minute, MaxDiffLines: 1 + r.Intn(2000), MaxAttempts: 1 + r.Intn(10)},
 		AgentContext:    pickList(r, []string{"CLAUDE.md", "docs/", "CONTRIBUTING.md"}),
 	}
 	return reflect.ValueOf(c)

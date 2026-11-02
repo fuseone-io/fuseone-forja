@@ -255,6 +255,7 @@ func TestImplement_agentTimedOut_reportsCost(t *testing.T) {
 func TestImplement_redGate_reportsCost(t *testing.T) {
 	t.Parallel()
 	fx := pricedFixture(t, charged(exported()))
+	fx.cloner.co.files[".forja.yaml"] = checkoutWithMaxAttempts(1)
 	fx.gates.report = redReport()
 	fx.gates.report.Compute = gatesCompute
 

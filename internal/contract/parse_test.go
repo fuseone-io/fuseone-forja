@@ -189,6 +189,9 @@ func TestParse_invalid_errorNamesPathAndLine(t *testing.T) {
 		{name: "wall_clock zero", path: "limits.wall_clock", line: 7, src: minimal + "limits:\n  wall_clock: 0s\n"},
 		{name: "max_diff_lines not an integer", path: "limits.max_diff_lines", line: 7, src: minimal + "limits:\n  max_diff_lines: many\n"},
 		{name: "max_diff_lines zero", path: "limits.max_diff_lines", line: 7, src: minimal + "limits:\n  max_diff_lines: 0\n"},
+		{name: "max_attempts zero", path: "limits.max_attempts", line: 7, src: minimal + "limits:\n  max_attempts: 0\n"},
+		{name: "max_attempts negative", path: "limits.max_attempts", line: 7, src: minimal + "limits:\n  max_attempts: -1\n"},
+		{name: "max_attempts not an integer", path: "limits.max_attempts", line: 8, src: minimal + "limits:\n  wall_clock: 30m\n  max_attempts: \"x\"\n"},
 		{name: "unknown top-level key", path: "foo", line: 3, src: "version: 1\nimage: golang:1.25\nfoo: bar\ngates:\n  - name: build\n    run: make build\n"},
 		{name: "unknown key in gate", path: "gates[0].foo", line: 6, src: minimal + "    foo: bar\n"},
 		{name: "unknown key in limits", path: "limits.foo", line: 7, src: minimal + "limits:\n  foo: 1\n"},
@@ -256,6 +259,29 @@ func TestParse_registryEntryMalformed_errorWithPath(t *testing.T) {
 			errs := fieldErrors(t, err)
 			if len(errs) != 1 || errs[0].Path != "registries[1]" || errs[0].Line != 8 || errs[0].Message == "" {
 				t.Fatalf("errors = %v, want one at registries[1] on line 8", errs)
+			}
+		})
+	}
+}
+
+// max_attempts is read as written next to the other limits; omitted, it
+// stays zero and the default is the domain's to apply.
+func TestParse_maxAttempts_parsedOrZeroWhenOmitted(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		src  string
+		want domain.Limits
+	}{
+		{name: "set", src: minimal + "limits:\n  max_attempts: 2\n", want: domain.Limits{MaxAttempts: 2}},
+		{name: "next to wall_clock", src: minimal + "limits:\n  wall_clock: 30m\n  max_attempts: 5\n", want: domain.Limits{WallClock: 30 * time.Minute, MaxAttempts: 5}},
+		{name: "omitted", src: minimal + "limits:\n  wall_clock: 30m\n", want: domain.Limits{WallClock: 30 * time.Minute}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := mustParse(t, tt.src).Limits; got != tt.want {
+				t.Fatalf("Limits = %+v, want %+v", got, tt.want)
 			}
 		})
 	}

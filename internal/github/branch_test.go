@@ -182,6 +182,57 @@ func TestCheckout_adoptBundleChangingContract_readsStillAnswerForBase(t *testing
 	}
 }
 
+// adoptFirstAttempt is attempt 1: the agent commits in a copy of the clone
+// and the control plane adopts it. It returns that head.
+func adoptFirstAttempt(t *testing.T, co *github.Checkout) string {
+	t.Helper()
+	ws := workspaceCopy(t, co)
+	head := agentCommit(t, ws, map[string]string{"proof.txt": "one\n"}, "one")
+	if got, err := co.Adopt(context.Background(), exportBundle(t, ws, co.SHA(), agentBranch), agentBranch); err != nil || got != head {
+		t.Fatalf("first Adopt = %s, %v; want %s", got, err, head)
+	}
+	return head
+}
+
+// Attempt 2 starts from the clone at attempt 1's head. An agent that
+// amended that commit hands back a head that does not descend from the one
+// adopted before; it still descends from the base and is adopted.
+func TestAdopt_secondBundleRewritesFirstCommit_adopted(t *testing.T) {
+	t.Parallel()
+	_, co := startedCheckout(t)
+	first := adoptFirstAttempt(t, co)
+	ws := workspaceCopy(t, co)
+	if err := os.WriteFile(filepath.Join(ws, "proof.txt"), []byte("fixed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(t, ws, "add", "-A")
+	runGit(t, ws, "-c", "user.name=Forja agent", "-c", "user.email=agent@forja.invalid", "commit", "-q", "--amend", "-m", "one, fixed")
+	rewritten := runGit(t, ws, "rev-parse", "HEAD")
+
+	got, err := co.Adopt(context.Background(), exportBundle(t, ws, co.SHA(), agentBranch), agentBranch)
+	if err != nil || got != rewritten || got == first {
+		t.Fatalf("second Adopt = %s, %v; want the rewritten head %s", got, err, rewritten)
+	}
+	if b := readFile(t, filepath.Join(co.Dir(), "proof.txt")); b != "fixed\n" {
+		t.Fatalf("proof.txt in Dir() = %q, want the rewritten commit's", b)
+	}
+}
+
+// An agent that added nothing on attempt 2 hands back attempt 1's head:
+// it is adopted again, unchanged, and it is the caller's to tell that no
+// new commit came.
+func TestAdopt_secondBundleSameHead_returnsSameHead(t *testing.T) {
+	t.Parallel()
+	_, co := startedCheckout(t)
+	first := adoptFirstAttempt(t, co)
+	ws := workspaceCopy(t, co)
+
+	got, err := co.Adopt(context.Background(), exportBundle(t, ws, co.SHA(), agentBranch), agentBranch)
+	if err != nil || got != first {
+		t.Fatalf("second Adopt = %s, %v; want attempt 1's head %s", got, err, first)
+	}
+}
+
 // A hook in the control plane's clone never runs on an import: nothing of
 // the agent's tree may execute on the control plane.
 func TestCheckout_adopt_noHookRuns(t *testing.T) {

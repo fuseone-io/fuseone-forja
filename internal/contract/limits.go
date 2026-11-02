@@ -10,6 +10,7 @@ func (p *parser) limits(n *yaml.Node) {
 	p.object(n, "limits", map[string]func(*yaml.Node){
 		"wall_clock":     func(v *yaml.Node) { p.c.Limits.WallClock = p.duration(v, "limits.wall_clock") },
 		"max_diff_lines": func(v *yaml.Node) { p.c.Limits.MaxDiffLines = p.positive(v, "limits.max_diff_lines") },
+		"max_attempts":   func(v *yaml.Node) { p.c.Limits.MaxAttempts = p.positive(v, "limits.max_attempts") },
 	})
 }
 

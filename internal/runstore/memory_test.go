@@ -376,8 +376,9 @@ func TestMemory_get_registryListNotShared(t *testing.T) {
 	}
 }
 
-// stagedRun is a run with a finished stage, a stage in flight and a gate
-// report whose streams, egress and registry lists a caller could reach.
+// stagedRun is a run with a finished stage, a stage in flight, and a gate
+// report and an attempt's report whose streams, egress and registry lists
+// a caller could reach.
 func stagedRun() domain.Run {
 	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
 	finished := at.Add(time.Minute)
@@ -386,7 +387,15 @@ func stagedRun() domain.Run {
 		{Name: domain.StageClone, StartedAt: at, FinishedAt: &finished, Outcome: domain.StageSucceeded},
 		{Name: domain.StageGates, StartedAt: finished, Outcome: domain.StageRunning},
 	}
-	run.Gates = domain.GateReport{
+	run.Gates = stagedReport(at)
+	run.Attempts = []domain.Attempt{{Number: 1, HeadSHA: "7d3f1e2a9b8c4d5e6f7a8b9c0d1e2f3a4b5c6d7e", Gates: stagedReport(at)}}
+	run.PullRequest = domain.PullRequest{Number: 41, URL: "https://github.com/fuseone-io/fuseone-forja/pull/41"}
+	return run
+}
+
+// stagedReport is a gate report of its own lists and streams on each call.
+func stagedReport(at time.Time) domain.GateReport {
+	return domain.GateReport{
 		Setup: []domain.GateResult{{Name: "setup[0]", Stdout: []byte("setup out"), Stderr: []byte("setup err")}},
 		Gates: []domain.GateResult{{Name: "build", Stdout: []byte("build out"), Stderr: []byte("build err")}},
 		Egress: domain.EgressReport{
@@ -396,8 +405,6 @@ func stagedRun() domain.Run {
 			Accesses: []domain.RegistryAccess{{At: at, Registry: "ghcr.io/my-org", Path: "/pkg", Outcome: domain.RegistryAllowed, Status: 200}}, Count: 1,
 		},
 	}
-	run.PullRequest = domain.PullRequest{Number: 41, URL: "https://github.com/fuseone-io/fuseone-forja/pull/41"}
-	return run
 }
 
 // scribble changes, in place, everything of run a shared backing array or
@@ -410,11 +417,16 @@ func scribble(run domain.Run) {
 	run.Gates.Gates[0].ExitCode = 99
 	run.Gates.Egress.Denied[0].Destination = "changed:443"
 	run.Gates.Registry.Accesses[0].Path = "/changed"
+	run.Attempts[0].HeadSHA = "changed"
+	run.Attempts[0].Gates.Setup[0].Stdout[0] = 'X'
+	run.Attempts[0].Gates.Gates[0].Stderr[0] = 'X'
+	run.Attempts[0].Gates.Egress.Denied[0].Destination = "changed:443"
+	run.Attempts[0].Gates.Registry.Accesses[0].Path = "/changed"
 }
 
-// The stages and the gate report are evidence: neither the writer after
-// Put nor a reader after Get can change what the store holds through a
-// shared slice, byte stream or timestamp.
+// The stages, the gate report and every attempt are evidence: neither the
+// writer after Put nor a reader after Get can change what the store holds
+// through a shared slice, byte stream or timestamp.
 func TestMemory_stagesAndGateStreams_notSharedWithCaller(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -443,6 +455,9 @@ func assertStagedRun(t *testing.T, when string, got, want domain.Run) {
 	t.Helper()
 	if !reflect.DeepEqual(got.Stages, want.Stages) || !reflect.DeepEqual(got.Gates, want.Gates) || got.PullRequest != want.PullRequest {
 		t.Fatalf("%s: stages %+v gates %+v pr %+v, want %+v %+v %+v", when, got.Stages, got.Gates, got.PullRequest, want.Stages, want.Gates, want.PullRequest)
+	}
+	if !reflect.DeepEqual(got.Attempts, want.Attempts) {
+		t.Fatalf("%s: attempts %+v, want %+v", when, got.Attempts, want.Attempts)
 	}
 }
 

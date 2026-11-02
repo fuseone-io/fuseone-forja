@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
@@ -31,10 +32,19 @@ type flight struct {
 	// left is how long the run's work may still take: what remains of the
 	// contract's wall clock counted from the claim.
 	left time.Duration
-	// bundle is where the agent's commits land on the control plane.
-	bundle string
+	// bundles is the directory the agent's commits land in on the control
+	// plane, one bundle per attempt; bundle is the current attempt's.
+	bundles string
+	bundle  string
 	// evidence is the report rendered once the gates ran.
 	evidence string
+
+	// attempt is the number of the attempt in flight, zero outside the
+	// attempts; spent is what its agent used of the model; retry is what
+	// its agent is told of the attempt before, nil on the first.
+	attempt int
+	spent   domain.TokenUsage
+	retry   *agent.Retry
 }
 
 // newFlight is the run of t's tool under claim c, from t's base branch,
@@ -68,7 +78,7 @@ func (f *flight) stage(ctx context.Context, name domain.StageName, do func() (bo
 }
 
 func (f *flight) begin(ctx context.Context, name domain.StageName) error {
-	f.run.Stages = append(f.run.Stages, domain.Stage{Name: name, StartedAt: f.now(), Outcome: domain.StageRunning})
+	f.run.Stages = append(f.run.Stages, domain.Stage{Name: name, StartedAt: f.now(), Outcome: domain.StageRunning, Attempt: f.attempt})
 	return f.put(ctx)
 }
 
@@ -117,7 +127,7 @@ func stageReports(stages []domain.Stage) []StageReport {
 	out := make([]StageReport, 0, len(stages))
 	for _, s := range stages {
 		out = append(out, StageReport{
-			Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome),
+			Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome), Attempt: s.Attempt,
 			ComputeMinutes: computeMinutes(s.Compute), TokensIn: s.Tokens.In(), TokensOut: s.Tokens.Output,
 		})
 	}

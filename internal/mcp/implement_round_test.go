@@ -113,7 +113,9 @@ func roundEvidence() string {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: checkoutContractSHA, StartSHA: branchTip, HeadSHA: roundHead,
 		Gates: greenReport(), Tokens: spent,
-		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
+		Attempts:    []domain.Attempt{{Number: 1, HeadSHA: roundHead, Gates: greenReport(), Tokens: spent}},
+		MaxAttempts: domain.DefaultMaxAttempts,
+		Limits:      domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 	})
 }
 
@@ -260,6 +262,7 @@ func TestImplement_correctionRound_branchChangedContract_gatesRunBaseContract(t 
 func TestImplement_correctionRound_gateRed_noPushNoCommentNoStatus(t *testing.T) {
 	t.Parallel()
 	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.branchCloner.co.files[".forja.yaml"] = checkoutWithMaxAttempts(1)
 	fx.gates.report = redReport()
 
 	out := decodeImplement(t, callRound(t, fx.cs, nil))
