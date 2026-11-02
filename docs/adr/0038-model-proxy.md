@@ -275,10 +275,16 @@ The slice's own Docker tests, real Engine:
   runs belong to #14.
 - `agent.Runner` closes the workspace. Whether the gates of #13 reuse it,
   and whether the proxy is revoked before they run, is #13's decision.
-- A run whose base branch is not the default branch takes its lease from the
-  default branch's contract and its wall clock from the base branch's. When
-  the second is longer, the lease can expire mid-run. This predates the
-  slice and is not fixed here.
+- The lease is sized from the contract at the default branch's tip before
+  the claim; the agent runs under the contract of the `base_branch` checkout
+  cloned after it. The two can differ: another base branch, or a commit
+  landing in between. The agent's deadline is that checkout's wall clock
+  counted from the claim, and the run fails before the agent starts when
+  that checkout asks for a longer lease than the claim holds, when its wall
+  clock does not end before the lease, or when it is already spent. A
+  longer wall clock on another branch fails the run instead of outliving the
+  lease; reading the contract once, from the checkout, before the claim
+  would let it run.
 
 ## What only the human can do
 
