@@ -90,6 +90,46 @@ func TestMeter_streamCutAfterStart_inputCounted(t *testing.T) {
 	}
 }
 
+// A stream cut inside message_start, after its data line is whole but
+// before the blank line that ends the event, still spent that input.
+func TestMeter_streamCutInsideStartEvent_inputCounted(t *testing.T) {
+	t.Parallel()
+	sent := domain.TokenUsage{Input: 70, CacheCreation: 6, CacheRead: 5}
+	events := sse(sent)
+	dataEnd := strings.Index(events, "\n\n")
+	cuts := map[string]string{
+		"after the data line":         events[:dataEnd+1],
+		"data line without a newline": events[:dataEnd],
+	}
+	for name, body := range cuts {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			up := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+				_, _ = io.WriteString(w, body)
+				w.(http.Flusher).Flush()
+				if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+					_ = conn.Close()
+				}
+			})
+			p := startProxy(t, up, 1_000_000)
+			req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader("{}"))
+			req.Header.Set("x-api-key", runToken)
+			if res, err := http.DefaultClient.Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, res.Body)
+				_ = res.Body.Close()
+			}
+
+			awaitUsageLines(t, p, 1)
+			want := sent
+			want.Output = 1
+			if got := readUsage(t, p).Tokens; got != want {
+				t.Fatalf("metered %+v, want the input of the cut message_start %+v", got, want)
+			}
+		})
+	}
+}
+
 // A client that goes away mid-stream stops the copy, not the count: what
 // the proxy already relayed is recorded.
 func TestMeter_clientGoneMidStream_inputCounted(t *testing.T) {
