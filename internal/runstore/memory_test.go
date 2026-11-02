@@ -296,6 +296,49 @@ func TestMemory_get_qaExcludedListNotShared(t *testing.T) {
 	}
 }
 
+// The inversions are what a verdict that bites or does not bite was
+// reached on: no reader after Get changes their paths, their gates or
+// their streams in the store.
+func TestMemory_get_inversionsNotShared(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	inversions := func() []domain.Inversion {
+		return []domain.Inversion{{
+			Branch: "forja-qa/1", Paths: []string{"internal/cost.go"}, Admitted: true, Outcome: domain.InversionBit,
+			Gates: domain.GateReport{
+				Setup:      []domain.GateResult{{Name: "setup[0]", Stdout: []byte("setup")}},
+				Gates:      []domain.GateResult{{Name: "test", Status: domain.StepFailed, ExitCode: 2, Stderr: []byte("FAIL")}},
+				FailedStep: "test", Egress: domain.EgressReport{Denied: []domain.EgressDenial{{Destination: "example.com:443"}}},
+			},
+		}}
+	}
+	run := sampleRun("run-1")
+	run.Tool, run.Inversions = domain.ToolVerify, inversions()
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	got.Inversions[0].Paths[0] = "changed.go"
+	got.Inversions[0].Gates.Gates[0].Stderr[0] = 'X'
+	got.Inversions[0].Gates.Setup[0].Stdout[0] = 'X'
+	got.Inversions[0].Gates.Egress.Denied[0].Destination = "evil:443"
+	got.Inversions[0].Gates.Gates[0].Name = "renamed"
+	got.Inversions[0].Outcome = domain.InversionEscaped
+	run.Inversions[0].Paths[0] = "changed-after-put.go"
+
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if want := inversions(); !reflect.DeepEqual(again.Inversions, want) {
+		t.Fatalf("inversions after a reader's change = %+v, want %+v", again.Inversions, want)
+	}
+}
+
 // The tokens and the reason are values: what Get returns is what was put,
 // and a reader's copy is its own.
 func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
