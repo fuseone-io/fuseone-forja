@@ -91,6 +91,63 @@ func header(path, name string, info fs.FileInfo) (*tar.Header, error) {
 	return hdr, nil
 }
 
+// tarFile is one entry the control plane writes into a container: a
+// directory when body is nil, otherwise a regular file of size bytes.
+type tarFile struct {
+	name  string
+	mode  int64
+	owner int
+	size  int64
+	body  io.Reader
+}
+
+// copyFiles streams files, in order, as one archive into dir of the
+// container, each with its own mode and owner.
+func copyFiles(ctx context.Context, cli *client.Client, id, dir string, files ...tarFile) error {
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(writeFiles(pw, files)) }()
+	_, err := cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: dir, Content: pr})
+	// Ends the writer if the copy stopped before the archive did.
+	_ = pr.CloseWithError(err)
+	return err
+}
+
+func writeFiles(w io.Writer, files []tarFile) error {
+	tw := tar.NewWriter(w)
+	for _, f := range files {
+		hdr := &tar.Header{Name: f.name, Mode: f.mode, Uid: f.owner, Gid: f.owner, Size: f.size, Typeflag: tar.TypeReg}
+		if f.body == nil {
+			hdr.Typeflag, hdr.Size = tar.TypeDir, 0
+		}
+		if err := tw.WriteHeader(hdr); err != nil {
+			return err
+		}
+		if f.body == nil {
+			continue
+		}
+		if _, err := io.Copy(tw, f.body); err != nil {
+			return err
+		}
+	}
+	return tw.Close()
+}
+
+// copyBinary streams the file at path into dir of the container as name,
+// root-owned 0755: the container's user runs it and cannot change it.
+func copyBinary(ctx context.Context, cli *client.Client, id, path, dir, name string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	// The file was only read; a failure to close it changes no byte sent.
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	return copyFiles(ctx, cli, id, dir, tarFile{name: name, mode: 0o755, size: info.Size(), body: f})
+}
+
 func writeFile(tw *tar.Writer, path string) error {
 	f, err := os.Open(path)
 	if err != nil {

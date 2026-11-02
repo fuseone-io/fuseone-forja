@@ -31,12 +31,14 @@ type ExecResult struct {
 }
 
 // Container is one running workspace, with the network and the gateway of
-// its run and the sidecars started for it.
+// its run, the model proxy of an agent launch, and the sidecars started
+// for it.
 type Container struct {
 	cli     *client.Client
 	runID   string
 	id      string
 	gateway string
+	model   string
 	network string
 
 	mu       sync.Mutex
@@ -134,17 +136,21 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 }
 
 // Close kills and removes every sidecar, then the workspace, then its
-// gateway, then the run's network, which the daemon removes only once
-// nothing is attached to it. A container or network the daemon no longer
-// knows is already closed, so Close is idempotent. Every removal is
-// attempted whatever the one before it returned.
+// model proxy, which takes the run token with it, then its gateway, then
+// the run's network, which the daemon removes only once nothing is
+// attached to it. A container or network the daemon no longer knows is
+// already closed, so Close is idempotent. Every removal is attempted
+// whatever the one before it returned.
 func (c *Container) Close(ctx context.Context) error {
 	sidecars := c.tracked()
-	errs := make([]error, 0, len(sidecars)+3)
+	errs := make([]error, 0, len(sidecars)+4)
 	for _, id := range sidecars {
 		errs = append(errs, removeContainer(ctx, c.cli, id))
 	}
 	errs = append(errs, removeContainer(ctx, c.cli, c.id))
+	if err := removeContainer(ctx, c.cli, c.model); err != nil {
+		errs = append(errs, fmt.Errorf("model: %w", err))
+	}
 	if err := removeContainer(ctx, c.cli, c.gateway); err != nil {
 		errs = append(errs, fmt.Errorf("gateway: %w", err))
 	}

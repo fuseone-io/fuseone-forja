@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
@@ -88,7 +87,7 @@ func createGateway(ctx context.Context, cli *client.Client, runID string, allow 
 // startGateway copies the binary in, gives the gateway its way out when
 // there is anywhere to go, starts it and waits for its readiness line.
 func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error {
-	if err := copyBinary(ctx, cli, g.id, g.binary); err != nil {
+	if err := copyBinary(ctx, cli, g.id, g.binary, gatewayDir, gatewayBin); err != nil {
 		return fmt.Errorf("workspace: copy gateway binary: %w", err)
 	}
 	if len(g.allow) > 0 {
@@ -99,7 +98,8 @@ func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error 
 	if _, err := cli.ContainerStart(ctx, g.id, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("workspace: start gateway: %w", err)
 	}
-	if err := awaitReady(ctx, cli, g.id, g.runID); err != nil {
+	ready := func(r io.Reader) error { return egress.AwaitReady(r, g.runID) }
+	if err := awaitReady(ctx, cli, g.id, ready); err != nil {
 		return fmt.Errorf("workspace: gateway of run %s: %w", g.runID, err)
 	}
 	return nil
@@ -111,47 +111,17 @@ type gatewaySpec struct {
 	allow             []string
 }
 
-// copyBinary streams the binary into the gateway as root-owned 0755: the
-// gateway's user runs it and cannot change it.
-func copyBinary(ctx context.Context, cli *client.Client, id, binary string) error {
-	f, err := os.Open(binary)
-	if err != nil {
-		return err
-	}
-	// The file was only read; a failure to close it changes no byte sent.
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	pr, pw := io.Pipe()
-	go func() {
-		tw := tar.NewWriter(pw)
-		err := tw.WriteHeader(&tar.Header{Name: gatewayBin, Mode: 0o755, Size: info.Size(), Typeflag: tar.TypeReg})
-		if err == nil {
-			_, err = io.Copy(tw, f)
-		}
-		if err == nil {
-			err = tw.Close()
-		}
-		pw.CloseWithError(err)
-	}()
-	_, err = cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: gatewayDir, Content: pr})
-	// Ends the writer if the copy stopped before the archive did.
-	_ = pr.CloseWithError(err)
-	return err
-}
-
-// awaitReady follows the gateway's stdout until its readiness line, for at
-// most readyTimeout. A gateway that exits first ends the stream.
-func awaitReady(ctx context.Context, cli *client.Client, id, runID string) error {
+// awaitReady follows a proxy's stdout until ready finds its readiness
+// line, for at most readyTimeout. A proxy that exits first ends the
+// stream.
+func awaitReady(ctx context.Context, cli *client.Client, id string, ready func(io.Reader) error) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
 	logs, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, Follow: true})
 	if err != nil {
 		return fmt.Errorf("follow log: %w", err)
 	}
-	err = readStdout(logs, func(r io.Reader) error { return egress.AwaitReady(r, runID) })
+	err = readStdout(logs, ready)
 	if ctx.Err() != nil {
 		return fmt.Errorf("not ready within %v: %w", readyTimeout, ctx.Err())
 	}
