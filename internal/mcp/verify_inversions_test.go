@@ -372,6 +372,13 @@ func TestVerify_noAdmissibleCandidate_failsInversionUnavailableNoStatus(t *testi
 		t.Fatalf("gates ran %d times, want the baseline only", fx.gates.calls)
 	}
 	assertVerifyFailedAt(t, fx, "agent")
+	var raw []map[string]json.RawMessage
+	if err := json.Unmarshal(wire["inversions"], &raw); err != nil || len(raw) != 4 {
+		t.Fatalf("inversions = %s, %v", wire["inversions"], err)
+	}
+	if _, commit := raw[2]["commit"]; string(raw[2]["paths"]) != "[]" || commit {
+		t.Fatalf("empty candidate = %s, want paths [] and no commit", mustJSON(t, raw[2]))
+	}
 }
 
 // A gate result that is neither red at a gate nor all green proves
