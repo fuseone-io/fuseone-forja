@@ -42,4 +42,7 @@ const (
 	ReasonGateFailed FailureReason = "gate_failed"
 	// ReasonNoCommits is a run whose agent exited 0 without committing.
 	ReasonNoCommits FailureReason = "no_commits"
+	// ReasonInversionUnavailable is a verify run whose diff has production
+	// code, which only an inversion can verify.
+	ReasonInversionUnavailable FailureReason = "inversion_unavailable"
 )

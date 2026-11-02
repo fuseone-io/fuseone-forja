@@ -6,8 +6,6 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
-
-	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // Deps is everything the tools need from the edge: the stores, the
@@ -28,6 +26,8 @@ type Deps struct {
 	Pusher       Pusher
 	PullRequests PullRequests
 	Statuses     CommitStatuses
+	// PullRequestReader reads the pull request a forja.verify run verifies.
+	PullRequestReader PullRequestReader
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time
@@ -37,15 +37,14 @@ type Deps struct {
 	Version string
 }
 
-// New builds the server with every tool registered. forja.status,
-// forja.doctor, forja.plan and forja.implement are backed by behaviour;
-// forja.verify answers ErrNotImplemented.
+// New builds the server with the five tools registered, each backed by
+// its handler.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
 	sdk.AddTool(server, doctorTool(), doctorHandler(deps))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
-	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))
+	sdk.AddTool(server, verifyTool(), verifyHandler(deps))
 	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs))
 	return server
 }

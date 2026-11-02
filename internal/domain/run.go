@@ -74,11 +74,15 @@ type Run struct {
 	BaseSHA     string
 	ContractSHA string
 	// HeadSHA is the agent's last commit once the control plane imported
-	// it, and Branch the branch it is pushed to.
+	// it, or the head of the pull request a verify run reads; Branch the
+	// branch an implement run pushes to.
 	HeadSHA string
 	Branch  string
-	// PullRequest is the pull request the run opened; zero when none.
+	// PullRequest is the pull request the run opened, or the one a verify
+	// run verifies; zero when none.
 	PullRequest PullRequest
+	// QA is the verdict of a verify run; zero for any other run.
+	QA QA
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known

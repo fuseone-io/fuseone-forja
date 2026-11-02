@@ -5,16 +5,19 @@ import (
 	"time"
 )
 
-// StageName is one step of a forja.implement run, as forja.status lists
-// it.
+// StageName is one step of a forja.implement or forja.verify run, as
+// forja.status lists it.
 type StageName string
 
-// The stages of a forja.implement run, in the order they happen.
+// The stages of the implement and verify runs. An implement run goes
+// claim, clone, agent, gates, push, pull_request, status, release; a
+// verify run claim, clone, diff, status, release.
 const (
 	StageClaim       StageName = "claim"
 	StageClone       StageName = "clone"
 	StageAgent       StageName = "agent"
 	StageGates       StageName = "gates"
+	StageDiff        StageName = "diff"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
 	StageStatus      StageName = "status"

@@ -62,6 +62,12 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// Verdict and VerdictReason are a verify run's, absent until it reached
+	// one; Excluded the changed paths verify.exclude matched, always on the
+	// wire, empty for any other run.
+	Verdict       string   `json:"verdict,omitempty"`
+	VerdictReason string   `json:"verdict_reason,omitempty"`
+	Excluded      []string `json:"excluded"`
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs.
@@ -136,6 +142,10 @@ func statusOutput(run domain.Run) StatusOutput {
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
+
+		Verdict:       string(run.QA.Verdict),
+		VerdictReason: string(run.QA.Reason),
+		Excluded:      excludedOf(run.QA),
 	}
 }
 
