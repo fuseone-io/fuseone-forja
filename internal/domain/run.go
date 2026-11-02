@@ -59,6 +59,10 @@ type Run struct {
 	// Tokens is what the run's model proxy metered; zero for a run that
 	// called no model.
 	Tokens TokenUsage
+	// Compute is the container time the run's workspaces and their service
+	// sidecars were up, as the control plane's clock measured it; zero for
+	// a run that launched none.
+	Compute time.Duration
 	// Reason is why a failed run failed, when that is more than its
 	// outcome; empty otherwise.
 	Reason FailureReason

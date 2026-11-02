@@ -46,13 +46,17 @@ type ImplementOutput struct {
 	// WallClockSeconds and MaxDiffLines are the limits the run worked
 	// under, absent before it read its contract; DiffLines is what its head
 	// adds and deletes against the base, absent until counted.
-	WallClockSeconds float64      `json:"wall_clock_seconds,omitempty"`
-	MaxDiffLines     int          `json:"max_diff_lines,omitempty"`
-	DiffLines        *int         `json:"diff_lines,omitempty"`
-	TokensIn         int64        `json:"tokens_in"`
-	TokensOut        int64        `json:"tokens_out"`
-	Setup            []StepReport `json:"setup"`
-	Gates            []StepReport `json:"gates"`
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
+	// ComputeMinutes and EstimatedCostUSDMicros are as forja.status reports
+	// them.
+	ComputeMinutes         float64      `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
+	Setup                  []StepReport `json:"setup"`
+	Gates                  []StepReport `json:"gates"`
 }
 
 // PullRequestRef is a pull request a run opened.

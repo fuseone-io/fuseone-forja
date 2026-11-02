@@ -120,7 +120,8 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),
 			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle,
 		})
-		f.run.Tokens, f.run.Egress = res.Tokens, res.Egress
+		f.charge(res.Compute, res.Tokens)
+		f.run.Egress = res.Egress
 		if res.Capped {
 			f.run.Reason = domain.ReasonTokenCap
 		}

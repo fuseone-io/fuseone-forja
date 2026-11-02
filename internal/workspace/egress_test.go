@@ -35,6 +35,7 @@ func runGate(t *testing.T, d *workspace.Docker, runID, command string) domain.Ga
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	assertComputed(t, report.Compute)
 	return report
 }
 
