@@ -5,6 +5,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -370,6 +371,129 @@ func TestRunner_noNow_fails(t *testing.T) {
 	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err == nil {
 		t.Fatal("Run without a clock = nil error, want a configuration error")
+	}
+}
+
+// manualClock reads the same instant until a fake moves it, so the only
+// time that passes is what the fakes say their calls took.
+type manualClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *manualClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *manualClock) advance(d time.Duration) func() {
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.t = c.t.Add(d)
+	}
+}
+
+// What each call takes on a timed run's clock.
+const (
+	launchTakes = 30 * time.Second
+	execTakes   = time.Minute
+	startTakes  = 10 * time.Second
+	closeTakes  = 5 * time.Second
+)
+
+// timedRun runs c on ws with every call taking its known time.
+func timedRun(t *testing.T, ws *fakeWorkspace, c domain.Contract) (domain.GateReport, error) {
+	t.Helper()
+	clock := &manualClock{t: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)}
+	ws.onExec, ws.onStart, ws.onClose = clock.advance(execTakes), clock.advance(startTakes), clock.advance(closeTakes)
+	runner := &gates.Runner{Launcher: &fakeLauncher{ws: ws, onLaunch: clock.advance(launchTakes)}, Now: clock.now}
+	return runner.Run(context.Background(), testRunID, c, "/tree")
+}
+
+// The workspace counts from before its launch until Close returned, the
+// sidecar from before its start until the same Close: 30s, three
+// commands, the start, a command and 5s for the workspace, 1m15s for
+// postgres.
+func TestRunner_serviceStarted_computeCountsWorkspaceAndSidecar(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: servicesScript(), services: ready()}
+
+	report, err := timedRun(t, ws, servicesContract(build, integration))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	workspace := launchTakes + 4*execTakes + startTakes + closeTakes
+	postgres := startTakes + execTakes + closeTakes
+	if report.Compute != workspace+postgres {
+		t.Fatalf("Compute = %v, want %v: the workspace's %v and postgres's %v", report.Compute, workspace+postgres, workspace, postgres)
+	}
+}
+
+// postgres is needed by both gates and started once: it is counted once,
+// from its one start; redis from its own.
+func TestRunner_serviceNeededTwice_countedOnce(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: servicesScript(), services: ready()}
+	e2e := domain.Gate{Name: "e2e", Run: "make e2e", Needs: []string{"postgres", "redis"}}
+
+	report, err := timedRun(t, ws, servicesContract(integration, e2e))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	workspace := launchTakes + 4*execTakes + 2*startTakes + closeTakes
+	postgres := 2*startTakes + 2*execTakes + closeTakes
+	redis := startTakes + execTakes + closeTakes
+	if want := workspace + postgres + redis; report.Compute != want {
+		t.Fatalf("Compute = %v, want %v: workspace %v, postgres %v once, redis %v", report.Compute, want, workspace, postgres, redis)
+	}
+}
+
+// A run that ended in an error has no report but still had its
+// containers up: the compute comes back with the error.
+func TestRunner_execError_reportCarriesCompute(t *testing.T) {
+	t.Parallel()
+	script := servicesScript()
+	script["make integration"] = scripted{err: errors.New("daemon: connection reset")}
+	ws := &fakeWorkspace{script: script, services: ready()}
+
+	report, err := timedRun(t, ws, servicesContract(integration))
+	if err == nil {
+		t.Fatal("Run = nil error, want the exec failure")
+	}
+	workspace := launchTakes + 3*execTakes + startTakes + closeTakes
+	postgres := startTakes + execTakes + closeTakes
+	if report.Compute != workspace+postgres || report.Gates != nil {
+		t.Fatalf("report = compute %v gates %+v, want only the compute %v", report.Compute, report.Gates, workspace+postgres)
+	}
+}
+
+func TestRunner_redGate_computeReported(t *testing.T) {
+	t.Parallel()
+	script := allGreen()
+	script["make vet"] = scripted{exit: 2}
+	ws := &fakeWorkspace{script: script}
+
+	report, err := timedRun(t, ws, pilotContract())
+	if err != nil || report.FailedStep != "vet" {
+		t.Fatalf("Run = failed %q, %v; want vet red", report.FailedStep, err)
+	}
+	if want := launchTakes + 4*execTakes + closeTakes; report.Compute != want {
+		t.Fatalf("Compute = %v, want %v: the skipped gate ran nothing", report.Compute, want)
+	}
+}
+
+// A launch that failed may have created containers before it gave up:
+// the attempt is compute, up to when the launch returned.
+func TestRunner_launchFails_computeOfTheAttempt(t *testing.T) {
+	t.Parallel()
+	clock := &manualClock{}
+	runner := &gates.Runner{Launcher: &fakeLauncher{err: errors.New("pull access denied"), onLaunch: clock.advance(launchTakes)}, Now: clock.now}
+
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
+	if err == nil || report.Compute != launchTakes {
+		t.Fatalf("Run = compute %v, %v; want the launch failure with the %v it took", report.Compute, err, launchTakes)
 	}
 }
 

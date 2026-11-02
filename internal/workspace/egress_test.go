@@ -35,6 +35,9 @@ func runGate(t *testing.T, d *workspace.Docker, runID, command string) domain.Ga
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	if report.Compute <= 0 {
+		t.Fatalf("compute = %v, want the time the real workspace was up", report.Compute)
+	}
 	return report
 }
 

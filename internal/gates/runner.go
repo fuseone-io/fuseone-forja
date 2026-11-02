@@ -100,14 +100,16 @@ type step struct {
 // a service that is not ready, stops the run and the rest is skipped. The
 // run's own deadline is a result; a cancellation is an error. Close is
 // always called, after both logs were read, and takes the services down
-// with the workspace.
+// with the workspace. The report carries the compute on every return, an
+// error's included.
 func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree string) (report domain.GateReport, err error) {
 	if r.Now == nil {
 		return domain.GateReport{}, errors.New("gates: Runner needs a clock")
 	}
+	m := newMeter(r.Now)
 	ws, err := r.Launcher.Launch(ctx, LaunchSpec{RunID: runID, Image: c.Image, Tree: tree, Registries: c.Registries})
 	if err != nil {
-		return domain.GateReport{}, fmt.Errorf("gates: launch %s: %w", c.Image, err)
+		return domain.GateReport{Compute: m.stop()}, fmt.Errorf("gates: launch %s: %w", c.Image, err)
 	}
 	// The run's context may be past its deadline by now; reading the log
 	// and removing the workspace each get a context of their own.
@@ -118,8 +120,9 @@ func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree 
 		if closeErr := ws.Close(closeCtx); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("gates: close workspace: %w", closeErr))
 		}
+		report.Compute = m.stop()
 	}()
-	run := &execution{ws: ws, now: r.Now, services: newServices(ws, c.Services, r.Readiness)}
+	run := &execution{ws: ws, now: r.Now, services: newServices(ws, c.Services, r.Readiness, m)}
 	report, err = run.run(ctx, c)
 	if err != nil {
 		return domain.GateReport{}, err
