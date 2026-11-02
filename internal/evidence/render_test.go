@@ -297,6 +297,36 @@ func TestRender_pathWithBackticksAndPipes_cannotBreakTable(t *testing.T) {
 	}
 }
 
+// A single path longer than the whole body is left out of its table, not
+// written past the bound into the steps.
+func TestRender_onePathLongerThanBody_leftOutBodyUnderMax(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange(strings.Repeat("d/", evidence.MaxBody)+"x_test.go", domain.ChangeModified, 1, 1)}}
+
+	body := evidence.Render(run)
+	if len(body) > evidence.MaxBody {
+		t.Fatalf("body is %d bytes, want at most %d", len(body), evidence.MaxBody)
+	}
+	assertLines(t, sectionOf(t, body, "## Proof apparatus"), "_…and 1 more; full list: `forja.status run_id=run-abc`._")
+	assertLines(t, body, "## Steps")
+}
+
+// Git keeps a path as bytes; one that is not UTF-8 is shown with a
+// replacement character, so the body the byte budget measured is the body
+// the API receives.
+func TestRender_pathNotUTF8_replacedBodyValid(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange("pkg/\xff\xfe_test.go", domain.ChangeModified, 1, 1)}}
+
+	body := evidence.Render(run)
+	if !utf8.ValidString(body) {
+		t.Fatal("body is not valid UTF-8")
+	}
+	assertLines(t, body, "| `pkg/�_test.go` | modified | +1 -1 |")
+}
+
 func TestRender_sameRun_sameBody(t *testing.T) {
 	t.Parallel()
 	if a, b := evidence.Render(greenRun()), evidence.Render(greenRun()); a != b {
