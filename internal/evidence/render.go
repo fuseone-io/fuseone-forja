@@ -38,7 +38,8 @@ type Run struct {
 	// StartSHA is the branch tip a correction round started from; empty for
 	// a first run, which starts at BaseSHA.
 	StartSHA string
-	// HeadSHA is the agent's commit the gates ran on.
+	// HeadSHA is the agent's commit the gates ran on, and Gates their
+	// report, both of the last attempt.
 	HeadSHA string
 	Gates   domain.GateReport
 	Tokens  domain.TokenUsage
@@ -47,6 +48,10 @@ type Run struct {
 	Proof domain.Proof
 	// Elapsed is the run's wall time so far, from the control plane's clock.
 	Elapsed time.Duration
+	// Attempts are every attempt whose gates ran, the last one included;
+	// MaxAttempts is the contract's limit.
+	Attempts    []domain.Attempt
+	MaxAttempts int
 	// Limits are the limits the run worked under; DiffLines the lines the
 	// head adds and deletes against the base, as the control plane counted.
 	Limits    domain.Limits
@@ -55,23 +60,24 @@ type Run struct {
 
 // Render is the pull request body for r. The same Run always renders the
 // same body, and the body never exceeds MaxBody: logs that do not fit are
-// left out with a note, and the footer naming where the full tails are is
-// always kept.
+// left out with a note, the earlier attempts' before the last one's, and
+// the footer naming where the full tails are is always kept.
 func Render(r Run) string {
 	head := header(r)
 	foot := footer(r.RunID)
-	steps := append(append([]domain.GateResult(nil), r.Gates.Setup...), r.Gates.Gates...)
-	var logs strings.Builder
-	room := MaxBody - len(head) - len(foot) - len(truncationNote) - 2
-	for _, s := range steps {
-		block := logBlock(s)
-		if logs.Len()+len(block) > room {
-			logs.WriteString(truncationNote + "\n\n")
-			break
-		}
-		logs.WriteString(block)
-	}
-	return cut(head+logs.String()+foot, foot)
+	prior := earlier(r.Attempts)
+	tables := attemptTables(prior)
+	budget := logBudget{room: MaxBody - len(head) - len(foot) - len(truncationNote) - 2 - totalLen(tables)}
+	var b strings.Builder
+	b.WriteString(head)
+	budget.writeSteps(&b, r.Gates)
+	writeAttempts(&b, prior, tables, &budget)
+	b.WriteString(foot)
+	return cut(b.String(), foot)
+}
+
+func steps(report domain.GateReport) []domain.GateResult {
+	return append(append([]domain.GateResult(nil), report.Setup...), report.Gates...)
 }
 
 // header is the reference, the human-merge marking, the identifiers, the
@@ -82,14 +88,10 @@ func header(r Run) string {
 	b.WriteString(humanMergeLine(r.Proof))
 	b.WriteString("Forja ran the gates of the base commit's contract on the agent's head.\n\n")
 	b.WriteString("| | |\n|---|---|\n")
-	for _, row := range headerRows(r) {
-		fmt.Fprintf(&b, "| %s | %s |\n", row[0], row[1])
-	}
+	writeRows(&b, headerRows(r))
 	proofSections(&b, r.Proof, r.RunID)
-	b.WriteString("\n## Steps\n\n| Step | Command | Status | Exit code | Duration |\n|---|---|---|---|---|\n")
-	for _, s := range append(append([]domain.GateResult(nil), r.Gates.Setup...), r.Gates.Gates...) {
-		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", cell(s.Name), code(s.Command), s.Status, exitCode(s), duration(s))
-	}
+	b.WriteString("\n## Steps\n\n")
+	stepsTable(&b, r.Gates)
 	b.WriteString("\n## Logs\n\n")
 	return b.String()
 }
@@ -108,58 +110,35 @@ func headerRows(r Run) [][2]string {
 	}
 	return append(rows,
 		[2]string{"Head", code(r.HeadSHA)},
-		[2]string{"Tokens in / out", fmt.Sprintf("%d / %d", r.Tokens.In(), r.Tokens.Output)},
+		[2]string{"Tokens in / out", tokens(r.Tokens)},
+		[2]string{"Attempts", fmt.Sprintf("%d of %d", len(r.Attempts), r.MaxAttempts)},
 		[2]string{"Elapsed", r.Elapsed.Round(time.Second).String()},
 		[2]string{"Wall clock limit", r.Limits.WallClock.String()},
 		[2]string{"Diff lines (measured / limit)", fmt.Sprintf("%d / %d", r.DiffLines, r.Limits.MaxDiffLines)},
 	)
 }
 
+func writeRows(b *strings.Builder, rows [][2]string) {
+	for _, row := range rows {
+		fmt.Fprintf(b, "| %s | %s |\n", row[0], row[1])
+	}
+}
+
+// stepsTable is every step of report with its command, status, exit code
+// and duration.
+func stepsTable(b *strings.Builder, report domain.GateReport) {
+	b.WriteString("| Step | Command | Status | Exit code | Duration |\n|---|---|---|---|---|\n")
+	for _, s := range steps(report) {
+		fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n", cell(s.Name), code(s.Command), s.Status, exitCode(s), duration(s))
+	}
+}
+
+func tokens(u domain.TokenUsage) string {
+	return fmt.Sprintf("%d / %d", u.In(), u.Output)
+}
+
 func footer(runID string) string {
 	return "Full tail: `forja.status run_id=" + runID + "`\n"
-}
-
-// logBlock is one step's streams, each by its tail, in a collapsed block.
-func logBlock(s domain.GateResult) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "<details><summary>%s: %s, exit %s</summary>\n\n", cell(s.Name), s.Status, exitCode(s))
-	if s.Reason != "" {
-		fmt.Fprintf(&b, "Reason: %s\n\n", cell(s.Reason))
-	}
-	for _, stream := range []struct {
-		name string
-		data []byte
-	}{{"stdout", s.Stdout}, {"stderr", s.Stderr}} {
-		if len(stream.data) == 0 {
-			continue
-		}
-		fmt.Fprintf(&b, "%s, last %d bytes at most:\n\n", stream.name, TailBytes)
-		fence(&b, tail(stream.data))
-	}
-	b.WriteString("</details>\n\n")
-	return b.String()
-}
-
-// tail is the last TailBytes of data at most, starting on a character.
-func tail(data []byte) string {
-	if len(data) <= TailBytes {
-		return strings.ToValidUTF8(string(data), "�")
-	}
-	start := len(data) - TailBytes
-	for start < len(data) && !utf8.RuneStart(data[start]) {
-		start++
-	}
-	return strings.ToValidUTF8(string(data[start:]), "�")
-}
-
-// fence writes text in a fenced block whose fence is longer than any run
-// of backticks inside it, so the text cannot close it.
-func fence(b *strings.Builder, text string) {
-	marks := strings.Repeat("`", max(3, longestRun(text)+1))
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	fmt.Fprintf(b, "%s\n%s%s\n\n", marks, text, marks)
 }
 
 // code is s as an inline code span that a backtick inside cannot close,

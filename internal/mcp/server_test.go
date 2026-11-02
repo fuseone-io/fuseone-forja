@@ -342,7 +342,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "compute_minutes", "stages", "setup", "gates", "excluded", "human_merge", "proof_apparatus", "human_merge_paths"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "compute_minutes", "stages", "setup", "gates", "attempt", "max_attempts", "attempts", "excluded", "human_merge", "proof_apparatus", "human_merge_paths"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)

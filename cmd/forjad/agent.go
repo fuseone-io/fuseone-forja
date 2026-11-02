@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -74,8 +75,14 @@ type agentLauncher struct {
 	*workspace.Docker
 }
 
-func (l agentLauncher) LaunchAgent(ctx context.Context, runID, image, tree string) (agent.Workspace, error) {
-	c, err := l.Docker.LaunchAgent(ctx, runID, image, tree)
+// LaunchAgent says a spent cap in the runner's own terms, which the agent
+// package declares without knowing this driver.
+func (l agentLauncher) LaunchAgent(ctx context.Context, in agent.Launch) (agent.Workspace, error) {
+	// Field for field the same, like the exec result.
+	c, err := l.Docker.LaunchAgent(ctx, workspace.AgentLaunch(in))
+	if errors.Is(err, workspace.ErrCapSpent) {
+		return nil, fmt.Errorf("%w: %w", agent.ErrCapSpent, err)
+	}
 	if err != nil {
 		return nil, err
 	}

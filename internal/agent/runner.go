@@ -59,35 +59,23 @@ type Workspace interface {
 	Close(ctx context.Context) error
 }
 
-// Launcher creates the agent workspace of run runID from an image with a
-// copy of tree at its root.
+// Launch is one agent workspace of run RunID from Image with a copy of Tree
+// at its root. Spent is the tokens the run already used, input and output,
+// which its model proxy subtracts from the run's cap.
+type Launch struct {
+	RunID string
+	Image string
+	Tree  string
+	Spent int64
+}
+
+// ErrCapSpent is what a Launcher's error wraps when Spent already reaches
+// the run's cap, so no workspace was created.
+var ErrCapSpent = errors.New("agent: the run's token cap is spent")
+
+// Launcher creates the agent workspace of one launch.
 type Launcher interface {
-	LaunchAgent(ctx context.Context, runID, image, tree string) (Workspace, error)
-}
-
-// File is one agent_context file, read from the base commit.
-type File struct {
-	Path    string
-	Content string
-}
-
-// Task is one agent run: the contract and the context come from the base
-// commit, the tree is the checkout the agent commits on, on Branch,
-// started at BaseSHA, which is the branch tip in a correction round.
-// Bundle is the path on the control plane the agent's commits are
-// exported to. Finding is the review finding a correction round answers,
-// empty for a first run; it is untrusted text that reaches only the
-// prompt.
-type Task struct {
-	RunID    string
-	Contract domain.Contract
-	Tree     string
-	Issue    domain.Issue
-	Context  []File
-	Branch   string
-	BaseSHA  string
-	Bundle   string
-	Finding  string
+	LaunchAgent(ctx context.Context, l Launch) (Workspace, error)
 }
 
 // Result is how the agent run ended and what the proxies recorded for it.
@@ -118,11 +106,13 @@ type Runner struct {
 // that exited 0 on its own has its commits exported to the task's Bundle
 // while the workspace still runs. Then it halts the workspace, reads the
 // usage and the egress, and closes it, on every path. The deadline is a
-// result; a cancellation is an error. The compute runs from just before
-// the launch until Close returned, or until a failed launch returned.
+// result; a cancellation is an error. So is the cap: spent before the
+// launch, no workspace exists and nothing more is metered. The compute
+// runs from just before the launch until Close returned, or until a
+// failed launch returned.
 func (r *Runner) Run(ctx context.Context, t Task) (Result, error) {
-	return r.session(ctx, launch{runID: t.RunID, image: t.Contract.Image, tree: t.Tree, prompt: Render(t)},
-		func(ctx context.Context, ws Workspace, res *Result) error { return export(ctx, ws, t, res) })
+	l := launch{Launch: Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree, Spent: t.Spent.Total()}, prompt: Render(t)}
+	return r.session(ctx, l, func(ctx context.Context, ws Workspace, res *Result) error { return export(ctx, ws, t, res) })
 }
 
 // export brings the commits of an agent that exited 0 on its own out to

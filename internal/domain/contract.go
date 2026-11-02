@@ -43,6 +43,9 @@ type Verify struct {
 type Limits struct {
 	WallClock    time.Duration `json:"wall_clock"`
 	MaxDiffLines int           `json:"max_diff_lines"`
+	// MaxAttempts is how many times the agent may try to turn the gates
+	// green; zero when omitted, which Attempts reads as the default.
+	MaxAttempts int `json:"max_attempts"`
 }
 
 // The limits of a run whose contract omits them.
@@ -51,7 +54,8 @@ const (
 	DefaultMaxDiffLines = 400
 )
 
-// Effective is l with each omitted limit set to its default.
+// Effective is l with an omitted wall clock or diff limit set to its
+// default; MaxAttempts is left as it is, for Attempts to read.
 func (l Limits) Effective() Limits {
 	if l.WallClock == 0 {
 		l.WallClock = DefaultWallClock

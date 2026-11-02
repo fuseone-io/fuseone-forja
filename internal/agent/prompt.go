@@ -2,7 +2,10 @@ package agent
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
+
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // PromptPath is where the prompt is written in the workspace: outside the
@@ -62,10 +65,48 @@ func Render(t Task) []byte {
 			quote(&b, g.Run)
 		}
 	}
+	if t.Retry != nil {
+		retry(&b, *t.Retry, t.Branch)
+	}
 	fmt.Fprintf(&b, "## How to deliver\n\nWork in /workspace, on the branch %s, which is checked out. "+
 		"Commit your changes with git on that branch as you go; do not push, and do not change the remotes. "+
 		"Only your commits on that branch are kept.\n", t.Branch)
 	return []byte(b.String())
+}
+
+// retry is what the previous attempt left: the step that did not pass on
+// its commits and both of its raw streams, quoted as the workspace kept
+// them and never read.
+func retry(b *strings.Builder, r Retry, branch string) {
+	f := r.Failed
+	fmt.Fprintf(b, "## Your previous commits did not pass\n\nThis is attempt %d of %d. "+
+		"The control plane ran the checks on your last commits and the step %s did not pass.\n\n", r.Attempt, r.MaxAttempts, f.Name)
+	quote(b, f.Command)
+	fmt.Fprintf(b, "- status: %s\n- exit code: %s\n", f.Status, exitCode(f))
+	if f.Truncated {
+		b.WriteString("- each stream below is its tail: the workspace cut what came before\n")
+	}
+	b.WriteString("\n")
+	for _, s := range []struct {
+		name string
+		data []byte
+	}{{"stdout", f.Stdout}, {"stderr", f.Stderr}} {
+		fmt.Fprintf(b, "### %s\n\n", s.name)
+		quote(b, string(s.data))
+	}
+	fmt.Fprintf(b, "Fix the failure by adding commits on the branch %s, on top of the commits already there.\n\n", branch)
+}
+
+// exitCode is the step's exit code, or none with the control plane's
+// reason when the step produced none.
+func exitCode(f domain.GateResult) string {
+	if f.ExitCode != domain.NoExitCode {
+		return strconv.Itoa(f.ExitCode)
+	}
+	if f.Reason == "" {
+		return "none"
+	}
+	return "none (" + strings.Join(strings.Fields(f.Reason), " ") + ")"
 }
 
 // quote writes text in a fenced block whose fence is longer than any run

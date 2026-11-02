@@ -33,7 +33,9 @@ func greenEvidence() string {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
-		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
+		Attempts:    []domain.Attempt{{Number: 1, HeadSHA: agentHead, Gates: greenReport(), Tokens: spent}},
+		MaxAttempts: domain.DefaultMaxAttempts,
+		Limits:      domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 	})
 }
 
@@ -74,7 +76,7 @@ func assertDelivered(t *testing.T, fx *implementFixture) {
 func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	t.Helper()
 	got := out
-	got.Setup, got.Gates = nil, nil
+	got.Setup, got.Gates, got.Attempts = nil, nil, nil
 	if got.DiffLines == nil || *got.DiffLines != agentDiffLines {
 		t.Fatalf("diff_lines = %v, want the %d the control plane counted", got.DiffLines, agentDiffLines)
 	}
@@ -82,6 +84,7 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	want := forja.ImplementOutput{
 		RunID: "run-1", State: "succeeded", BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead, Branch: runBranch,
 		PullRequest: &forja.PullRequestRef{Number: 41, URL: prURL}, Evidence: greenEvidence(), TokensIn: 1230, TokensOut: 400,
+		Attempt: 1, MaxAttempts: 3,
 		WallClockSeconds: 1200, MaxDiffLines: 400,
 		ProofApparatus: []forja.ChangedPath{}, HumanMergePaths: []forja.ChangedPath{},
 	}
@@ -90,6 +93,14 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	}
 	if len(out.Setup) != 1 || len(out.Gates) != 2 || out.Gates[1].Stderr != "warn\n" {
 		t.Fatalf("setup %+v gates %+v, want the green report", out.Setup, out.Gates)
+	}
+	assertOneGreenAttempt(t, out.Attempts)
+}
+
+func assertOneGreenAttempt(t *testing.T, attempts []forja.AttemptReport) {
+	t.Helper()
+	if len(attempts) != 1 || attempts[0].Number != 1 || attempts[0].HeadSHA != agentHead || attempts[0].FailedStep != "" || attempts[0].TokensIn != 1230 {
+		t.Fatalf("attempts = %+v, want the one green attempt on the head", attempts)
 	}
 }
 
@@ -161,11 +172,13 @@ func TestImplement_agentChangedContract_gatesRunBaseContract(t *testing.T) {
 	}
 }
 
-// A red gate is the run's result: nothing leaves the control plane, the run
-// fails with the gate's raw log, and the issue is freed.
+// A red gate on the last attempt is the run's result: nothing leaves the
+// control plane, the run fails with the gate's raw log, and the issue is
+// freed.
 func TestImplement_gateRed_noPushNoPRNoStatus_failedWithGateLogs(t *testing.T) {
 	t.Parallel()
 	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.cloner.co.files[".forja.yaml"] = checkoutWithMaxAttempts(1)
 	fx.gates.report = redReport()
 
 	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))

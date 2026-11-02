@@ -49,13 +49,15 @@ type QAResult struct {
 }
 
 // RunQA runs the QA agent as Run runs the implement agent, with the QA
-// prompt, and once it exited 0 on its own exports each candidate's
+// prompt and nothing spent before it, since a verify run starts its own
+// count. Once it exited 0 on its own it exports each candidate's
 // commits beyond the head to its bundle while the workspace still runs. A
 // candidate left at the head or never made is not exported, which is a
 // result.
 func (r *Runner) RunQA(ctx context.Context, t QATask) (QAResult, error) {
 	exported := make([]bool, len(t.Candidates))
-	res, err := r.session(ctx, launch{runID: t.RunID, image: t.Contract.Image, tree: t.Tree, prompt: RenderQA(t)},
+	l := launch{Launch: Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree}, prompt: RenderQA(t)}
+	res, err := r.session(ctx, l,
 		func(ctx context.Context, ws Workspace, res *Result) error { return exportCandidates(ctx, ws, t, exported, res) })
 	if res.Capped {
 		clear(exported)

@@ -8,26 +8,33 @@ import (
 )
 
 // fakeGates answers Run with a scripted report, or an error, and records
-// the run id, the contract, the tree and the deadline it was given. Like
-// the real runner, an error still comes with the report's compute.
+// the run id, the contract, the tree and the deadline it was given. With
+// reports set, the n-th call answers reports[n], the last one once they
+// run out. Like the real runner, an error still comes with the report's
+// compute.
 type fakeGates struct {
-	report   domain.GateReport
-	err      error
-	calls    int
-	runID    string
-	contract domain.Contract
-	tree     string
-	deadline time.Time
-	hasDL    bool
+	report    domain.GateReport
+	reports   []domain.GateReport
+	err       error
+	calls     int
+	runID     string
+	contract  domain.Contract
+	tree      string
+	trees     []string
+	deadline  time.Time
+	hasDL     bool
+	deadlines []time.Time
+	// waitDeadline makes every call return only once its context ended, as
+	// gates that ran past the run's wall clock do.
+	waitDeadline bool
 	// log, when set, records "gates" in the run's call order; during runs
 	// while the gates would.
 	log    *callLog
 	during func()
-	// byTree answers for a tree over report, and errByTree fails it;
-	// trees and contracts are what every call was given, in order.
+	// byTree answers for a tree over report and reports, and errByTree
+	// fails it; contracts are what every call was given, in order.
 	byTree    map[string]domain.GateReport
 	errByTree map[string]error
-	trees     []string
 	contracts []domain.Contract
 	// untilDeadline runs the first gate of that tree until the deadline
 	// and reports it timed out, as the real runner does.
@@ -41,10 +48,14 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 	if f.during != nil {
 		f.during()
 	}
+	if f.waitDeadline {
+		<-ctx.Done()
+	}
 	f.calls++
 	f.runID, f.contract, f.tree = runID, c, tree
 	f.trees, f.contracts = append(f.trees, tree), append(f.contracts, c)
 	f.deadline, f.hasDL = ctx.Deadline()
+	f.deadlines = append(f.deadlines, f.deadline)
 	if tree == f.untilDeadline {
 		<-ctx.Done()
 		return domain.GateReport{
@@ -53,6 +64,9 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 		}, nil
 	}
 	report := f.report
+	if len(f.reports) > 0 {
+		report = f.reports[min(f.calls, len(f.reports))-1]
+	}
 	if r, ok := f.byTree[tree]; ok {
 		report = r
 	}
@@ -81,6 +95,19 @@ func greenReport() domain.GateReport {
 			passed("build", "make build", "built\n", "", 500*time.Millisecond),
 			passed("test", "make test", "ok\n", "warn\n", 2*time.Second),
 		},
+	}
+}
+
+// failedAt is the report of a run whose step failed with exit code 1 and
+// stderr as its raw stream, every step before it passed.
+func failedAt(step, stderr string) domain.GateReport {
+	return domain.GateReport{
+		Setup: []domain.GateResult{passed("setup[0]", "go mod download", "", "", time.Second)},
+		Gates: []domain.GateResult{
+			passed("build", "make build", "built\n", "", time.Second),
+			{Name: step, Command: "make " + step, Status: domain.StepFailed, ExitCode: 1, Duration: time.Second, Stdout: []byte(step + " ran\n"), Stderr: []byte(stderr)},
+		},
+		FailedStep: step,
 	}
 }
 

@@ -8,11 +8,11 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// launch is one agent session: the run and image its workspace is
-// launched for, the tree copied in and the prompt the agent reads.
+// launch is one agent session: the workspace it is launched as and the
+// prompt the agent reads.
 type launch struct {
-	runID, image, tree string
-	prompt             []byte
+	Launch
+	prompt []byte
 }
 
 // deliverFunc brings out of a running workspace what an agent that exited
@@ -23,7 +23,8 @@ type deliverFunc func(ctx context.Context, ws Workspace, res *Result) error
 // under the cap; an agent that exited 0 on its own is delivered while the
 // workspace still runs. Then it halts, reads the proxies and closes the
 // workspace, on every path, with the compute from just before the launch
-// until Close returned, or until a failed launch returned.
+// until Close returned, or until a failed launch returned. A cap already
+// spent at the launch is a capped result with no workspace.
 func (r *Runner) session(ctx context.Context, l launch, deliver deliverFunc) (res Result, err error) {
 	if r.Launcher == nil {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
@@ -32,9 +33,12 @@ func (r *Runner) session(ctx context.Context, l launch, deliver deliverFunc) (re
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a clock")
 	}
 	launched := r.Now()
-	ws, err := r.Launcher.LaunchAgent(ctx, l.runID, l.image, l.tree)
+	ws, err := r.Launcher.LaunchAgent(ctx, l.Launch)
+	if errors.Is(err, ErrCapSpent) {
+		return Result{ExitCode: domain.NoExitCode, Capped: true, Compute: r.Now().Sub(launched)}, nil
+	}
 	if err != nil {
-		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", l.image, err)
+		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", l.Image, err)
 	}
 	detached := context.WithoutCancel(ctx)
 	defer func() {

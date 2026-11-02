@@ -53,6 +53,12 @@ type ImplementOutput struct {
 	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
 	Setup                  []StepReport `json:"setup"`
 	Gates                  []StepReport `json:"gates"`
+	// Attempt is the last attempt's number and MaxAttempts the base
+	// contract's limit, both 0 when no agent ran; Attempts lists every
+	// attempt whose gates ran, always on the wire.
+	Attempt     int             `json:"attempt"`
+	MaxAttempts int             `json:"max_attempts"`
+	Attempts    []AttemptReport `json:"attempts"`
 	// HumanMerge says the agent's head changed an existing file of the base
 	// contract's proof_paths, listed in ProofApparatus, or a path under its
 	// human_merge_paths, listed in HumanMergePaths. All three are always on

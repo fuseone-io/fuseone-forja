@@ -46,11 +46,13 @@ type fakeCheckout struct {
 	closed   int
 	// started is the branch StartBranch created, or the one CloneBranch
 	// checked out. start is the commit that branch starts from, the base
-	// when empty. head is the commit Adopt imports; adoptedDir the tree Dir
-	// holds once it did; adoptErr fails it.
+	// when empty. head is the commit Adopt imports, or with heads set the
+	// n-th Adopt imports heads[n], the last one once they run out;
+	// adoptedDir the tree Dir holds once it did; adoptErr fails it.
 	started    string
 	start      string
 	head       string
+	heads      []string
 	adoptedDir string
 	adoptErr   error
 	adopted    []string
@@ -166,19 +168,23 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	if branch != f.started {
 		return "", fmt.Errorf("fake: adopt %s, started %s", branch, f.started)
 	}
-	if f.head == f.Start() {
+	head := f.head
+	if len(f.heads) > 0 {
+		head = f.heads[min(len(f.adopted), len(f.heads))-1]
+	}
+	if head == f.Start() {
 		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
 	}
-	f.adoptedHead = f.head
-	return f.head, nil
+	f.adoptedHead = head
+	return head, nil
 }
 
 // Diff answers, as the real one, only for a head it holds: the one Adopt
 // imported.
 func (f *fakeCheckout) Diff(_ context.Context, head string) ([]domain.FileChange, error) {
 	f.diffed = append(f.diffed, head)
-	if len(f.adopted) == 0 || head != f.head {
-		return nil, fmt.Errorf("fake: diff against %q, adopted %q", head, f.head)
+	if f.adoptedHead == "" || head != f.adoptedHead {
+		return nil, fmt.Errorf("fake: diff against %q, adopted %q", head, f.adoptedHead)
 	}
 	if f.changesErr != nil {
 		return nil, f.changesErr

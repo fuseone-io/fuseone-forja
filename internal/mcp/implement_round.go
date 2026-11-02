@@ -114,13 +114,14 @@ func (h implementer) clone(ctx context.Context, f *flight) (Checkout, error) {
 	return h.deps.BranchCloner.CloneBranch(ctx, f.run.Repository, f.base, branchPrefix+strconv.Itoa(f.run.Issue))
 }
 
-// steps are the stages after the clone: a first run opens its pull
-// request, a round comments on the one it found.
+// steps are the stages after the clone: the attempts of the agent and the
+// gates, then a first run opens its pull request, a round comments on the
+// one it found.
 func (h implementer) steps(f *flight) []runStep {
 	if f.round == nil {
-		return []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage}
+		return []runStep{h.attempts, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage}
 	}
-	return []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.commentStage, h.statusStage}
+	return []runStep{h.attempts, h.diffStage, h.pushStage, h.commentStage, h.statusStage}
 }
 
 // finding is what the agent is handed besides the issue.

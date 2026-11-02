@@ -150,7 +150,7 @@ func TestRunQA_launchFails_errorNothingRun(t *testing.T) {
 	if err == nil || len(ws.callList()) != 0 || !reflect.DeepEqual(res.Exported, []bool{false, false}) {
 		t.Fatalf("RunQA = %+v, %v, calls %q; want an error and nothing run", res, err, ws.callList())
 	}
-	if l.runID != "run-qa" || l.image != "golang:1.26" || l.tree != "/tmp/forja-verify" {
-		t.Fatalf("launched %s %s %s, want the task's", l.runID, l.image, l.tree)
+	if want := (agent.Launch{RunID: "run-qa", Image: "golang:1.26", Tree: "/tmp/forja-verify"}); l.launch != want {
+		t.Fatalf("launched %+v, want %+v with nothing spent", l.launch, want)
 	}
 }

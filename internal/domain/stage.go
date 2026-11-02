@@ -49,6 +49,9 @@ type Stage struct {
 	// FinishedAt is nil while the stage runs.
 	FinishedAt *time.Time
 	Outcome    StageOutcome
+	// Attempt is the number of the attempt an agent or gates stage belongs
+	// to; zero for the stages outside every attempt.
+	Attempt int
 	// Compute and Tokens are what the stage consumed, recorded when it
 	// ends; zero while it runs and for a stage that uses neither.
 	Compute time.Duration
