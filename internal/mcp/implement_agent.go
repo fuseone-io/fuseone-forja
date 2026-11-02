@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -25,10 +24,6 @@ var errNoAgent = errors.New("not wired: no agent; set FORJA_MODEL_API_KEY, FORJA
 
 // branchPrefix is the namespace of the branches runs push.
 const branchPrefix = "forja/"
-
-// runStep is one stage after the clone, run under the run's deadline
-// with its records on done.
-type runStep func(ctx, done context.Context, f *flight) (bool, error)
 
 // work clones the base, then runs the agent, the gates and the delivery
 // under one deadline: the contract's wall clock counted from the claim,
@@ -131,31 +126,6 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	}
 	f.run.HeadSHA = head
 	return true, nil
-}
-
-// timeLeft is how long the run may work under the held claim: the
-// contract's wall clock counted from the claim. The contract the run works
-// under may differ from the one the lease was sized from, so it is refused
-// when it asks for a longer lease than the claim holds, or when its wall
-// clock would end at or after the lease, or is already spent.
-func (h implementer) timeLeft(c domain.Claim, parsed domain.Contract) (time.Duration, error) {
-	held := c.ExpiresAt.Sub(c.CreatedAt)
-	need, err := domain.LeaseFor(parsed.Limits, h.deps.Lease)
-	if err != nil {
-		return 0, err
-	}
-	if need > held {
-		return 0, fmt.Errorf("needs a lease of %v, the claim holds %v", need, held)
-	}
-	end := c.CreatedAt.Add(wallClock(parsed))
-	if !end.Before(c.ExpiresAt) {
-		return 0, fmt.Errorf("wall clock %v does not end before the claim's lease of %v", wallClock(parsed), held)
-	}
-	left := end.Sub(h.deps.Now())
-	if left <= 0 {
-		return 0, fmt.Errorf("wall clock %v spent before the agent started, within the claim's lease of %v", wallClock(parsed), held)
-	}
-	return left, nil
 }
 
 func agentFiles(files []ContextFile) []agent.File {
