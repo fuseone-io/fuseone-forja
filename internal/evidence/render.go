@@ -1,8 +1,9 @@
 // Package evidence renders the report of an implement run as the body of
 // its pull request: what the run was, what it ran on, every step's
 // command, status, exit code and duration, and each step's raw stream
-// tails. It renders what the control plane recorded and never reads the
-// streams for a verdict. It does no I/O.
+// tails; and the report of a verify run: what the verdict was reached on
+// and which paths were excluded. It renders what the control plane
+// recorded and never reads the streams for a verdict. It does no I/O.
 package evidence
 
 import (
