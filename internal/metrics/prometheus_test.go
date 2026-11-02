@@ -78,12 +78,14 @@ forja_run_failures{repository="acme/api",reason="token_cap"} 0
 forja_run_failures{repository="acme/api",reason="wall_clock"} 0
 forja_run_failures{repository="acme/api",reason="diff_too_large"} 0
 forja_run_failures{repository="acme/api",reason="no_commits"} 0
+forja_run_failures{repository="acme/api",reason="inversion_unavailable"} 0
 forja_run_failures{repository="acme/api",reason="unspecified"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="gate_failed"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="token_cap"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="wall_clock"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="diff_too_large"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="no_commits"} 0
+forja_run_failures{repository="we\"ird\\re\npo",reason="inversion_unavailable"} 0
 forja_run_failures{repository="we\"ird\\re\npo",reason="unspecified"} 0
 # HELP forja_run_duration_seconds_sum Wall time of the finished runs by repository.
 # TYPE forja_run_duration_seconds_sum gauge

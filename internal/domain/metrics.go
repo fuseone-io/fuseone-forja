@@ -16,7 +16,8 @@ const ReasonUnspecified FailureReason = "unspecified"
 func FailureReasons() []FailureReason {
 	return []FailureReason{
 		ReasonGateFailed, ReasonTokenCap, ReasonWallClock,
-		ReasonDiffTooLarge, ReasonNoCommits, ReasonUnspecified,
+		ReasonDiffTooLarge, ReasonNoCommits, ReasonInversionUnavailable,
+		ReasonUnspecified,
 	}
 }
 

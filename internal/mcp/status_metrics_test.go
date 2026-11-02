@@ -99,6 +99,7 @@ func TestStatus_listRepositories_wireKeysAndFailureOrder(t *testing.T) {
 		{"reason": `"wall_clock"`, "count": "0", "rate": "0"},
 		{"reason": `"diff_too_large"`, "count": "0", "rate": "0"},
 		{"reason": `"no_commits"`, "count": "0", "rate": "0"},
+		{"reason": `"inversion_unavailable"`, "count": "0", "rate": "0"},
 		{"reason": `"unspecified"`, "count": "1", "rate": "0.3333"},
 	}
 	if got := flatList(t, failures); !reflect.DeepEqual(got, wantFailures) {
@@ -112,15 +113,15 @@ func TestStatus_listRepositories_wireKeysAndFailureOrder(t *testing.T) {
 }
 
 // assertNothingFinished checks a repository none of whose runs finished:
-// no average, and six failure rows all at rate 0.
+// no average, and one failure row per reason, all at rate 0.
 func assertNothingFinished(t *testing.T, repo map[string]json.RawMessage) {
 	t.Helper()
 	if raw, ok := repo["average_duration_seconds"]; ok {
 		t.Fatalf("average_duration_seconds = %s with no finished run, want absent", raw)
 	}
 	rows := flatList(t, repo["failures"])
-	if len(rows) != 6 {
-		t.Fatalf("failures = %s, want six rows", repo["failures"])
+	if len(rows) != len(domain.FailureReasons()) {
+		t.Fatalf("failures = %s, want %d rows", repo["failures"], len(domain.FailureReasons()))
 	}
 	for _, row := range rows {
 		if row["rate"] != "0" {

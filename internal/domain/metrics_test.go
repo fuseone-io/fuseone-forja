@@ -42,6 +42,7 @@ func TestSummarize_failedRuns_countedByReasonEmptyAsUnspecified(t *testing.T) {
 		failedRun("r1", domain.ReasonGateFailed),
 		failedRun("r2", domain.ReasonGateFailed),
 		failedRun("r3", domain.ReasonTokenCap),
+		failedRun("r7", domain.ReasonInversionUnavailable),
 		failedRun("r4", ""),
 		failedRun("r5", "a reason no control plane gives"),
 		// A reason on a run that did not fail is not a failure.
@@ -54,8 +55,9 @@ func TestSummarize_failedRuns_countedByReasonEmptyAsUnspecified(t *testing.T) {
 	got := onlyRepository(t, domain.Summarize(runs)).Failures
 	want := map[domain.FailureReason]int{
 		domain.ReasonGateFailed:  2,
-		domain.ReasonTokenCap:    1,
-		domain.ReasonUnspecified: 2,
+		domain.ReasonTokenCap:             1,
+		domain.ReasonInversionUnavailable: 1,
+		domain.ReasonUnspecified:          2,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Failures = %v, want %v", got, want)
@@ -66,7 +68,8 @@ func TestFailureReasons_fixedOrderEndingInUnspecified(t *testing.T) {
 	t.Parallel()
 	want := []domain.FailureReason{
 		domain.ReasonGateFailed, domain.ReasonTokenCap, domain.ReasonWallClock,
-		domain.ReasonDiffTooLarge, domain.ReasonNoCommits, domain.ReasonUnspecified,
+		domain.ReasonDiffTooLarge, domain.ReasonNoCommits, domain.ReasonInversionUnavailable,
+		domain.ReasonUnspecified,
 	}
 	got := domain.FailureReasons()
 	if !reflect.DeepEqual(got, want) {

@@ -83,8 +83,9 @@ their zero values and `list` carries the answer:
   FuseOne gets adding the runs up; it is absent without a price table.
 - `egress_denied` lists `{run_id, at, kind, destination}` in the list's order,
   the first 100; `egress_denied_count` is every attempt.
-- `failures` has six rows, always all six, in this order: `gate_failed`,
-  `token_cap`, `wall_clock`, `diff_too_large`, `no_commits`, `unspecified`.
+- `failures` has seven rows, always all seven, in this order: `gate_failed`,
+  `token_cap`, `wall_clock`, `diff_too_large`, `no_commits`,
+  `inversion_unavailable`, `unspecified`.
   Each row is `{reason, count, rate}`, where `rate` is `count` over the
   finished runs, succeeded plus failed, to four decimals, and 0 when none
   finished.
@@ -105,7 +106,7 @@ since the history resets with the process:
 | Metric | Labels |
 |---|---|
 | `forja_runs` | `repository`, `state` = `succeeded`, `failed` or `in_flight` |
-| `forja_run_failures` | `repository`, `reason`, the six above |
+| `forja_run_failures` | `repository`, `reason`, the seven above |
 | `forja_run_duration_seconds_sum`, `forja_run_duration_seconds_count` | `repository`; the wall time and the number of finished runs |
 | `forja_compute_seconds` | `repository` |
 | `forja_tokens` | `repository`, `direction` = `in` or `out` |
