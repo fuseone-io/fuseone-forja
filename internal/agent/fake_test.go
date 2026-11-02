@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -157,30 +158,43 @@ func (f *fakeWorkspace) closeCount() int {
 	return f.closes
 }
 
-// fakeLauncher hands out ws, or fails.
+// fakeLauncher hands out ws, or fails. With a cap set it enforces what the
+// Docker launch does: a launch whose spent tokens reach the cap is refused
+// with agent.ErrCapSpent before any workspace exists, and any other gets
+// the cap's remainder for its proxy.
 type fakeLauncher struct {
 	ws  *fakeWorkspace
 	err error
+	cap int64
 	// onLaunch runs inside LaunchAgent, as the time a launch takes, whether
 	// it fails or not.
 	onLaunch func()
 
-	mu                 sync.Mutex
-	calls              int
-	runID, image, tree string
+	// calls counts every LaunchAgent, launches only those that handed out
+	// a workspace.
+	mu        sync.Mutex
+	launch    agent.Launch
+	calls     int
+	launches  int
+	remainder int64
 }
 
-func (l *fakeLauncher) LaunchAgent(_ context.Context, runID, image, tree string) (agent.Workspace, error) {
+func (l *fakeLauncher) LaunchAgent(_ context.Context, in agent.Launch) (agent.Workspace, error) {
 	if l.onLaunch != nil {
 		l.onLaunch()
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.calls++
-	l.runID, l.image, l.tree = runID, image, tree
+	l.launch = in
 	if l.err != nil {
 		return nil, l.err
 	}
+	if l.cap > 0 && in.Spent >= l.cap {
+		return nil, fmt.Errorf("fake: %d of %d tokens spent: %w", in.Spent, l.cap, agent.ErrCapSpent)
+	}
+	l.launches++
+	l.remainder = l.cap - in.Spent
 	return l.ws, nil
 }
 

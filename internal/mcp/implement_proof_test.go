@@ -88,7 +88,9 @@ func TestImplement_proofChanges_listedOnOutputStatusAndEvidence(t *testing.T) {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: gitBlobSHA(proofContract), HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
-		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
+		Attempts:    []domain.Attempt{{Number: 1, HeadSHA: agentHead, Gates: greenReport(), Tokens: spent}},
+		MaxAttempts: domain.DefaultMaxAttempts,
+		Limits:      domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 		Proof: domain.Proof{ProofPaths: []domain.FileChange{makefileChanged, binaryTestdata}, HumanMergePaths: []domain.FileChange{codeownersAdded}},
 	})
 	if prs := fx.prs.got(); len(prs) != 1 || prs[0].Body != wantBody {

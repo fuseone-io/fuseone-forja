@@ -99,9 +99,14 @@ func TestStatus_noStages_emptyListsOnTheWire(t *testing.T) {
 	cs := connect(t, store)
 
 	wire := statusWire(t, cs, "run-plain")
-	for _, key := range []string{"stages", "setup", "gates"} {
+	for _, key := range []string{"stages", "setup", "gates", "attempts"} {
 		if string(wire[key]) != "[]" {
 			t.Errorf("%s = %s, want []", key, wire[key])
+		}
+	}
+	for _, key := range []string{"attempt", "max_attempts"} {
+		if string(wire[key]) != "0" {
+			t.Errorf("%s = %s, want 0 for a run that read no contract and ran no agent", key, wire[key])
 		}
 	}
 	for _, key := range []string{"head_sha", "base_sha", "contract_sha", "pull_request"} {

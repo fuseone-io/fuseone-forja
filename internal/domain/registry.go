@@ -54,6 +54,14 @@ func (r *RegistryReport) Record(a RegistryAccess) {
 	}
 }
 
+// Merge is r followed by o: both counts, and o's listed accesses after r's
+// while the list has room.
+func (r RegistryReport) Merge(o RegistryReport) RegistryReport {
+	room := max(0, MaxRegistryAccesses-len(r.Accesses))
+	accesses := append(append([]RegistryAccess(nil), r.Accesses...), o.Accesses[:min(room, len(o.Accesses))]...)
+	return RegistryReport{Accesses: accesses, Count: r.Count + o.Count}
+}
+
 // Truncated reports whether accesses were counted that the list leaves out.
 func (r RegistryReport) Truncated() bool {
 	return r.Count > len(r.Accesses)

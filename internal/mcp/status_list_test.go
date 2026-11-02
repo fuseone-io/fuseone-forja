@@ -362,8 +362,8 @@ func TestStatus_byID_wireUnchangedByList(t *testing.T) {
 	if raw, ok := wire["list"]; ok {
 		t.Fatalf("list = %s on a by-id answer, want absent", raw)
 	}
-	if len(wire) != 21 {
-		t.Fatalf("by-id wire has %d keys, want 21: %v", len(wire), wire)
+	if len(wire) != 24 {
+		t.Fatalf("by-id wire has %d keys, want 24: %v", len(wire), wire)
 	}
 	if string(wire["id"]) != `"api-impl-ok"` {
 		t.Fatalf("id = %s, want the run asked for", wire["id"])
