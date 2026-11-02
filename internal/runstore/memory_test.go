@@ -232,6 +232,29 @@ func TestMemory_get_egressListNotShared(t *testing.T) {
 	}
 }
 
+// The tokens and the reason are values: what Get returns is what was put,
+// and a reader's copy is its own.
+func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	run := sampleRun("run-1")
+	run.Tokens = domain.TokenUsage{Input: 1, CacheCreation: 2, CacheRead: 4, Output: 8}
+	run.Reason = domain.ReasonTokenCap
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil || got.Tokens != run.Tokens || got.Reason != run.Reason {
+		t.Fatalf("Get = tokens %+v reason %q (%v), want %+v %q", got.Tokens, got.Reason, err, run.Tokens, run.Reason)
+	}
+	got.Tokens.Output = 999
+	if again, _ := store.Get(ctx, "run-1"); again.Tokens != run.Tokens {
+		t.Fatalf("tokens after a reader's change = %+v, want %+v", again.Tokens, run.Tokens)
+	}
+}
+
 func TestMemory_zeroValue_putThenGet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

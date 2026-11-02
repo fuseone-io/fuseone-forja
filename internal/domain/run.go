@@ -53,6 +53,12 @@ type Run struct {
 	// Egress is what the run's workspace tried to reach and was refused;
 	// empty for a run that launched no workspace.
 	Egress EgressReport
+	// Tokens is what the run's model proxy metered; zero for a run that
+	// called no model.
+	Tokens TokenUsage
+	// Reason is why a failed run failed, when that is more than its
+	// outcome; empty otherwise.
+	Reason FailureReason
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
