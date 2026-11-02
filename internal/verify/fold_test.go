@@ -48,9 +48,14 @@ var reports = map[string]domain.GateReport{
 		Gates:      []domain.GateResult{step("build", domain.StepTimedOut, domain.NoExitCode)},
 		FailedStep: "build",
 	},
-	"gate named like a setup step": {
+	"gate named like a red setup step": {
 		Setup:      []domain.GateResult{step("setup[0]", domain.StepFailed, 1)},
 		Gates:      []domain.GateResult{step("setup[0]", domain.StepSkipped, domain.NoExitCode)},
+		FailedStep: "setup[0]",
+	},
+	"red gate named like a passed setup step": {
+		Setup:      []domain.GateResult{step("setup[0]", domain.StepPassed, 0)},
+		Gates:      []domain.GateResult{step("setup[0]", domain.StepFailed, 2)},
 		FailedStep: "setup[0]",
 	},
 }
@@ -59,7 +64,8 @@ func TestJudge_eachReport_outcome(t *testing.T) {
 	t.Parallel()
 	want := map[string]domain.InversionOutcome{
 		"red at test": domain.InversionBit, "red at build": domain.InversionBit, "green": domain.InversionEscaped,
-		"setup red": "", "service not ready": "", "gate timed out": "", "gate named like a setup step": "",
+		"setup red": "", "service not ready": "", "gate timed out": "", "gate named like a red setup step": "",
+		"red gate named like a passed setup step": domain.InversionBit,
 	}
 	for name, report := range reports {
 		got, conclusive := verify.Judge(report)
