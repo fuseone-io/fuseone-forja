@@ -13,7 +13,8 @@ issues #1–#24, each a vertical slice with its blockers listed inline.
 **Language policy:** everything in the repository is in English — code,
 identifiers, comments, commit messages, and every document in `docs/` (ADRs,
 runbooks, contracts, the PRD). The only exception is the original PRD PDF,
-which arrived in pt-BR and stays as it arrived. Issues on GitHub may be in pt-BR; one document, one language.
+which arrived in pt-BR and stays as it arrived. Issues on GitHub may be in
+pt-BR; one document, one language.
 
 Documents in `docs/` are Markdown, not HTML or PDF: GitHub renders them, they
 diff line by line in review, and nobody has to open a viewer to read one. The

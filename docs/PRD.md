@@ -267,6 +267,82 @@ server. Nothing changes in the model of roles, board or Gate.
   ruleset and NT-013's future `merge_if_ready` can require, each pinned to its
   producer.
 
+## Alignment with the FuseOne factory (NT-013)
+
+Checked on 2026-11-02 against the factory issues in
+[fuseone-io/fuseone-agents](https://github.com/fuseone-io/fuseone-agents/issues?q=label%3Afactory)
+and the umbrella issue
+[#154](https://github.com/fuseone-io/fuseone-agents/issues/154). Forja is the
+"Level 2" that fuseone-agents#154 describes — a coding runtime behind one coarse MCP tool,
+classified `write`, whose observable effect the Gate judges — and its
+non-goals match the factory's v1: roles configured in the console, copilot
+everywhere, a person merges.
+
+What already matches:
+
+| Factory (fuseone-agents) | Forja |
+|---|---|
+| Level 2: `implement(issue, repo, constraints)` → branch, diff summary, test results ([#154](https://github.com/fuseone-io/fuseone-agents/issues/154)) | `forja.implement` → PR, gate evidence, cost |
+| QA cannot run code at Level 1; running the change waits for Level 2 ([#198](https://github.com/fuseone-io/fuseone-agents/issues/198)) | `forja.verify` runs the inversions and the gates |
+| No standing approval covers a factory write (`standing_approvals: forbidden`, [#192](https://github.com/fuseone-io/fuseone-agents/issues/192)) | `implement` and `verify` are writes and wait for a person in copilot |
+| A person merges; the Merger and `merge_if_ready` are deferred ([#199](https://github.com/fuseone-io/fuseone-agents/issues/199), [#193](https://github.com/fuseone-io/fuseone-agents/issues/193)) | Forja never merges |
+| Each role acts as its own GitHub App ([#191](https://github.com/fuseone-io/fuseone-agents/issues/191), [#215](https://github.com/fuseone-io/fuseone-agents/issues/215)) | The Forja App pushes and opens the PR; the role's App keeps signing reviews and comments |
+| Only roles move cards, through a narrow tool ([#213](https://github.com/fuseone-io/fuseone-agents/issues/213)) | Forja never touches the board |
+
+What still has to be agreed with NT-013. Each item is a proposal until it is
+decided on both sides:
+
+1. **The QA signal.** In the factory's v1, QA's verdict is a pull-request
+   review by the QA App on the head SHA; the `factory/qa` status and
+   `record_qa_verdict` are deferred, and the planned ruleset pins `factory/qa`
+   to the QA App
+   ([#198](https://github.com/fuseone-io/fuseone-agents/issues/198),
+   [#207](https://github.com/fuseone-io/fuseone-agents/issues/207),
+   [#208](https://github.com/fuseone-io/fuseone-agents/issues/208)). Forja
+   publishes `forja/qa` from the Forja App. Proposal: `forja/qa` is the
+   execution verdict and `factory/qa` (or the QA review) stays the role's
+   verdict; the ruleset and `merge_if_ready` require `forja/gates` and
+   `forja/qa` pinned to the Forja App's `integration_id`, next to the role's
+   review.
+2. **Two reservations of the same card.** `$fuseone.work_item.claim` holds one
+   open run per card per agent, for as long as the run is non-terminal, and is
+   the key that joins cost to the card
+   ([#206](https://github.com/fuseone-io/fuseone-agents/issues/206),
+   [#201](https://github.com/fuseone-io/fuseone-agents/issues/201)).
+   `refs/forja/claims/<n>` holds one run per issue, with a lease. They do not
+   conflict — Forja's is the runtime's own lock, across agents — but they do
+   not know each other. Proposal: `forja.implement` and `forja.verify` accept
+   the caller's work-item reference and run id, record them on the run, and
+   return them in `forja.status`, so FuseOne's cost per card includes Forja's
+   minutes and tokens.
+3. **Who sets the ceiling.** fuseone-agents#154 wants the runtime's token and time ceiling
+   derived from the platform's per-run budget. Today Forja takes it from
+   `limits.wall_clock` and the model proxy's cap. Proposal: the call may carry
+   a budget and a deadline, and Forja applies the lower of the caller's and the
+   contract's.
+4. **Long calls.** A run can last up to `limits.wall_clock` (30 minutes in the
+   example), longer than a tool call should stay open. Proposal:
+   `forja.implement` and `forja.verify` return the `run_id` as soon as the run
+   is reserved and started, `forja.status` reports the outcome, and FuseOne
+   cancelling its run cancels Forja's (fuseone-agents#154: "the run's context must be able
+   to stop the container").
+5. **Trust of Forja's output.** FuseOne treats an MCP server's output as
+   untrusted by default, and a run that read untrusted text is tainted.
+   `forja.status` returns gate logs and the PR carries text the agent wrote, so
+   a run that reads them is tainted; that is correct, and a role that must
+   stay untainted (the Merger) reads only the commit statuses. Forja keeps the
+   structured fields (state, exit codes, SHAs, counts, cost) separate from the
+   agent-influenced ones, so a caller can read the first without the second.
+6. **The pilot repository.** The factory pilots on fuseone-agents itself.
+   Using it as Forja's pilot as well would put both measurements on the same
+   cards; whether it counts as "another area" is the owner's call.
+7. **When Level 2 starts.** The factory says Level 2 starts when the pilot's
+   data shows the Developer is worth it
+   ([#154](https://github.com/fuseone-io/fuseone-agents/issues/154),
+   [#201](https://github.com/fuseone-io/fuseone-agents/issues/201)); Forja's
+   phase 0 is being built before that data. The mitigation stays the one in
+   the risk table: keep the MCP interface aligned with NT-013.
+
 ## Success metrics
 
 The targets below are hypotheses to calibrate in the pilot; none has been
