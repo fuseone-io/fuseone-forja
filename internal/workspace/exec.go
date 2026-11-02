@@ -139,10 +139,11 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 }
 
 // Close kills and removes every sidecar, then the workspace, then its
-// registry proxy and its gateway, then the run's network, which the daemon
-// removes only once nothing is attached to it. A container or network the
-// daemon no longer knows is already closed, so Close is idempotent. Every
-// removal is attempted whatever the one before it returned.
+// registry proxy and its gateway, each with the anonymous volumes its image
+// declared, then the run's network, which the daemon removes only once
+// nothing is attached to it. A container or network the daemon no longer
+// knows is already closed, so Close is idempotent. Every removal is
+// attempted whatever the one before it returned.
 func (c *Container) Close(ctx context.Context) error {
 	sidecars := c.tracked()
 	errs := make([]error, 0, len(sidecars)+4)
@@ -160,13 +161,14 @@ func (c *Container) Close(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-// removeContainer kills and removes one container; one that was never
-// created or that the daemon no longer knows is already removed.
+// removeContainer kills and removes one container and its anonymous
+// volumes; one that was never created or that the daemon no longer knows
+// is already removed.
 func removeContainer(ctx context.Context, cli *client.Client, id string) error {
 	if id == "" {
 		return nil
 	}
-	_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
+	_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true, RemoveVolumes: true})
 	if err != nil && !cerrdefs.IsNotFound(err) {
 		return fmt.Errorf("workspace: remove container %s: %w", id, err)
 	}
