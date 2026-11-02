@@ -106,7 +106,7 @@ func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
 	}
 	out.RunID = runID
 	out.Contract = &parsed
-	out.addReport(parsed, report)
+	out.addReport(report)
 	return out, nil
 }
 

@@ -16,6 +16,10 @@ import (
 // DefaultWallClock bounds a run whose contract sets no limits.wall_clock.
 const DefaultWallClock = 30 * time.Minute
 
+// DefaultReadiness is how long a service has to become ready when the
+// Runner sets no Readiness.
+const DefaultReadiness = 60 * time.Second
+
 // closeTimeout bounds the removal of a workspace whose run context may
 // already be dead.
 const closeTimeout = 30 * time.Second
@@ -40,7 +44,13 @@ type Workspace interface {
 	// Egress is what the workspace's gateway refused so far, read from the
 	// gateway's own log. It fails once the workspace is closed.
 	Egress(ctx context.Context) (domain.EgressReport, error)
-	// Close destroys the workspace. It is idempotent.
+	// StartService starts svc as a sidecar the tree reaches by name and
+	// waits up to readiness for it to be ready. err is only for a failure
+	// to start at all (pull, daemon error, ctx); a service that is not
+	// ready in time or exits is a result, not an error.
+	StartService(ctx context.Context, name string, svc domain.Service, readiness time.Duration) (ServiceResult, error)
+	// Close destroys the workspace and every service started in it. It is
+	// idempotent.
 	Close(ctx context.Context) error
 }
 
@@ -57,6 +67,8 @@ type Runner struct {
 	// Now is the clock each step's duration is measured with; a nil clock
 	// is a configuration error.
 	Now func() time.Time
+	// Readiness bounds each service's start; zero is DefaultReadiness.
+	Readiness time.Duration
 }
 
 // step is one command to run, with the name the report gives it.
@@ -68,10 +80,12 @@ type step struct {
 
 // Run launches c.Image as the workspace of runID, runs c.Setup then
 // c.Gates and returns a report listing every declared step and what the
-// workspace's gateway refused meanwhile. A failed or timed out step stops
-// the run and the rest is skipped; a gate with needs is skipped without
-// stopping it. The run's own deadline is a result; a cancellation is an
-// error. Close is always called, after the egress was read.
+// workspace's gateway refused meanwhile. A gate's needs are started from
+// c.Services right before it, once per run. A failed or timed out step, or
+// a service that is not ready, stops the run and the rest is skipped. The
+// run's own deadline is a result; a cancellation is an error. Close is
+// always called, after the egress was read, and takes the services down
+// with the workspace.
 func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree string) (report domain.GateReport, err error) {
 	if r.Now == nil {
 		return domain.GateReport{}, errors.New("gates: Runner needs a clock")
@@ -90,7 +104,8 @@ func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree 
 			err = errors.Join(err, fmt.Errorf("gates: close workspace: %w", closeErr))
 		}
 	}()
-	report, err = (&execution{ws: ws, now: r.Now}).run(ctx, c)
+	run := &execution{ws: ws, now: r.Now, services: newServices(ws, c.Services, r.Readiness)}
+	report, err = run.run(ctx, c)
 	if err != nil {
 		return domain.GateReport{}, err
 	}
@@ -118,12 +133,13 @@ func gateSteps(c domain.Contract) []step {
 	return steps
 }
 
-// execution is the state of one run: the workspace and the first step
-// that did not pass, after which nothing runs.
+// execution is the state of one run: the workspace, the services started
+// in it and the first step that did not pass, after which nothing runs.
 type execution struct {
-	ws     Workspace
-	now    func() time.Time
-	failed string
+	ws       Workspace
+	now      func() time.Time
+	services *services
+	failed   string
 }
 
 // run runs the setup steps, then the gates.
@@ -154,28 +170,40 @@ func (e *execution) steps(ctx context.Context, steps []step) ([]domain.GateResul
 }
 
 func (e *execution) step(ctx context.Context, s step) (domain.GateResult, error) {
-	if e.failed != "" || len(s.needs) > 0 {
+	if e.failed != "" {
 		return skipped(s), nil
 	}
 	start := e.now()
-	out, err := e.ws.Exec(ctx, s.command)
-	res := domain.GateResult{
-		Name: s.name, Command: s.command, ExitCode: out.ExitCode, Duration: e.now().Sub(start),
-		Stdout: out.Stdout, Stderr: out.Stderr, Truncated: out.Truncated,
-	}
+	res, err := e.attempt(ctx, s)
+	res.Duration = e.now().Sub(start)
 	switch {
 	case err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded):
 		res.Status, res.ExitCode = domain.StepTimedOut, domain.NoExitCode
-		e.failed = s.name
 	case err != nil:
 		return domain.GateResult{}, fmt.Errorf("gates: %s: %w", s.name, err)
-	case out.ExitCode == 0:
-		res.Status = domain.StepPassed
-	default:
-		res.Status = domain.StepFailed
+	}
+	if res.Status != domain.StepPassed {
 		e.failed = s.name
 	}
 	return res, nil
+}
+
+// attempt starts the step's services, then runs its command only if every
+// one of them is ready. A service that is not ready fails the step with
+// no exit code, its reason and its log.
+func (e *execution) attempt(ctx context.Context, s step) (domain.GateResult, error) {
+	res := domain.GateResult{Name: s.name, Command: s.command, Status: domain.StepFailed, ExitCode: domain.NoExitCode}
+	svc, err := e.services.start(ctx, s.needs)
+	if err != nil || !svc.Ready {
+		res.Reason, res.Stdout, res.Truncated = svc.Reason, svc.Log, svc.Truncated
+		return res, err
+	}
+	out, err := e.ws.Exec(ctx, s.command)
+	res.ExitCode, res.Stdout, res.Stderr, res.Truncated = out.ExitCode, out.Stdout, out.Stderr, out.Truncated
+	if out.ExitCode == 0 {
+		res.Status = domain.StepPassed
+	}
+	return res, err
 }
 
 func skipped(s step) domain.GateResult {

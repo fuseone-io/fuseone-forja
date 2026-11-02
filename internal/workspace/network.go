@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 
@@ -38,9 +37,11 @@ func nameRune(r rune) bool {
 	return alnum(r) || r == '_' || r == '.' || r == '-'
 }
 
-// createNetwork creates the run's internal network: a bridge with no route
-// out, where the only way to the outside is a container also attached
-// elsewhere.
+// createNetwork creates the run's internal network: a user-defined bridge
+// with no route out, where the only way to the outside is a container also
+// attached elsewhere. A container created on it gets the daemon's embedded
+// DNS, which resolves the gateway and every sidecar by its alias, and the
+// daemon isolates it from every other bridge, the default one included.
 func createNetwork(ctx context.Context, cli *client.Client, runID string) (string, error) {
 	created, err := cli.NetworkCreate(ctx, networkName(runID), client.NetworkCreateOptions{
 		Driver:   "bridge",
@@ -53,45 +54,15 @@ func createNetwork(ctx context.Context, cli *client.Client, runID string) (strin
 	return created.ID, nil
 }
 
-// removeContainer kills and removes id; a container the daemon no longer
-// knows is already removed.
-func removeContainer(ctx context.Context, cli *client.Client, id string) error {
-	if id == "" {
-		return nil
-	}
-	_, err := cli.ContainerRemove(ctx, id, client.ContainerRemoveOptions{Force: true})
-	if err != nil && !cerrdefs.IsNotFound(err) {
-		return err
-	}
-	return nil
-}
-
-// removeNetwork removes id; a network the daemon no longer knows is
-// already removed.
+// removeNetwork removes the run network. One the daemon no longer knows,
+// or that was never created, is already removed.
 func removeNetwork(ctx context.Context, cli *client.Client, id string) error {
 	if id == "" {
 		return nil
 	}
 	_, err := cli.NetworkRemove(ctx, id, client.NetworkRemoveOptions{})
 	if err != nil && !cerrdefs.IsNotFound(err) {
-		return err
+		return fmt.Errorf("workspace: remove network: %w", err)
 	}
 	return nil
-}
-
-// teardown removes the workspace, then the gateway, then the network: a
-// network goes only once nothing is attached to it. Every step runs
-// whatever the one before did.
-func (c *Container) teardown(ctx context.Context) error {
-	var errs []error
-	if err := removeContainer(ctx, c.cli, c.id); err != nil {
-		errs = append(errs, fmt.Errorf("workspace: remove container: %w", err))
-	}
-	if err := removeContainer(ctx, c.cli, c.gateway); err != nil {
-		errs = append(errs, fmt.Errorf("workspace: remove gateway: %w", err))
-	}
-	if err := removeNetwork(ctx, c.cli, c.network); err != nil {
-		errs = append(errs, fmt.Errorf("workspace: remove network: %w", err))
-	}
-	return errors.Join(errs...)
 }

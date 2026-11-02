@@ -37,6 +37,11 @@ func (w pilotWorkspace) Exec(ctx context.Context, command string) (gates.ExecRes
 	return gates.ExecResult(res), err
 }
 
+func (w pilotWorkspace) StartService(ctx context.Context, name string, svc domain.Service, readiness time.Duration) (gates.ServiceResult, error) {
+	res, err := w.Container.StartService(ctx, name, svc, readiness)
+	return gates.ServiceResult(res), err
+}
+
 // TestPilot_doctorContractOnThisRepository runs this repository's own
 // contract against its own tree, the way forja.doctor will, behind a
 // gateway that lets out only FORJA_EGRESS_ALLOW, and prints the report

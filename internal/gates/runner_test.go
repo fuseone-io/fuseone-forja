@@ -78,7 +78,7 @@ func TestRunner_setupThenGates_runInDeclaredOrder(t *testing.T) {
 	ws := &fakeWorkspace{script: allGreen()}
 	runner, launcher := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tmp/forja-plan-1")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tmp/forja-plan-1")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -134,7 +134,7 @@ func TestRunner_streamCutByWorkspace_truncatedCarriedIntoResult(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tmp/forja-plan-1")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tmp/forja-plan-1")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -159,7 +159,7 @@ func TestRunner_firstGateRed_laterGatesSkipped(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -187,7 +187,7 @@ func TestRunner_setupRed_noGateRuns(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -206,36 +206,6 @@ func TestRunner_setupRed_noGateRuns(t *testing.T) {
 	}
 	if len(report.Gates) != 3 {
 		t.Errorf("report lists %d gates, want every declared gate even when none ran", len(report.Gates))
-	}
-}
-
-func TestRunner_gateWithNeeds_skippedWithoutStoppingTheRun(t *testing.T) {
-	t.Parallel()
-	c := pilotContract()
-	c.Gates = []domain.Gate{
-		{Name: "build", Run: "make build"},
-		{Name: "integration", Run: "make integration-test", Needs: []string{"postgres"}},
-		{Name: "test", Run: "make test"},
-	}
-	ws := &fakeWorkspace{script: allGreen()}
-	runner, _ := newRunner(ws)
-
-	report, err := runner.Run(context.Background(), testRunID, c, "/tree")
-	if err != nil {
-		t.Fatalf("Run: %v", err)
-	}
-	want := []domain.StepStatus{domain.StepPassed, domain.StepSkipped, domain.StepPassed}
-	if got := statuses(report.Gates); !reflect.DeepEqual(got, want) {
-		t.Fatalf("gate statuses = %v, want %v", got, want)
-	}
-	assertResult(t, report.Gates[1], "make integration-test", domain.StepSkipped, domain.NoExitCode, "", "")
-	if !report.OK() || report.FailedStep != "" {
-		t.Errorf("FailedStep = %q, want empty: a gate waiting for its services is not a failure", report.FailedStep)
-	}
-	for _, cmd := range ws.ran() {
-		if cmd == "make integration-test" {
-			t.Errorf("the gate with needs was sent to the workspace")
-		}
 	}
 }
 
@@ -334,7 +304,7 @@ func TestRunner_launchFails_errorNamesImageAndNothingRan(t *testing.T) {
 	launcher := &fakeLauncher{err: errors.New("pull access denied")}
 	runner := &gates.Runner{Launcher: launcher, Now: ticking()}
 
-	_, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err == nil {
 		t.Fatal("Run with a failed launch = nil error")
 	}
@@ -352,7 +322,7 @@ func TestRunner_execFailsToRun_errorNotAFailedGate(t *testing.T) {
 	ws := &fakeWorkspace{script: script}
 	runner, _ := newRunner(ws)
 
-	_, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err == nil || !strings.Contains(err.Error(), "connection reset") || !strings.Contains(err.Error(), "build") {
 		t.Fatalf("Run = %v, want an error naming the gate and the daemon failure", err)
 	}
@@ -366,7 +336,7 @@ func TestRunner_closeFails_reportedAsError(t *testing.T) {
 	ws := &fakeWorkspace{script: allGreen(), closeErr: errors.New("daemon: remove failed")}
 	runner, _ := newRunner(ws)
 
-	report, err := runner.Run(context.Background(), testRunID, pilotContract(),"/tree")
+	report, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
 	if err == nil || !strings.Contains(err.Error(), "remove failed") {
 		t.Fatalf("Run = %v, want the Close failure: a container left behind is not a clean run", err)
 	}

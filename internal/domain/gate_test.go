@@ -65,12 +65,13 @@ func TestGateReport_OK_firstNonPassingStepDecides(t *testing.T) {
 			want: false,
 		},
 		{
-			name: "a gate skipped for its services, nothing failed",
+			name: "a gate failed by a service that was not ready",
 			report: domain.GateReport{
-				Setup: []domain.GateResult{},
-				Gates: []domain.GateResult{step("build", domain.StepPassed), step("integration", domain.StepSkipped), step("test", domain.StepPassed)},
+				Setup:      []domain.GateResult{},
+				Gates:      []domain.GateResult{step("build", domain.StepPassed), step("integration", domain.StepFailed), step("test", domain.StepSkipped)},
+				FailedStep: "integration",
 			},
-			want: true,
+			want: false,
 		},
 	}
 	for _, tt := range tests {

@@ -177,6 +177,12 @@ func (c container) Exec(ctx context.Context, command string) (gates.ExecResult, 
 	return gates.ExecResult(res), err
 }
 
+func (c container) StartService(ctx context.Context, name string, svc domain.Service, readiness time.Duration) (gates.ServiceResult, error) {
+	res, err := c.Container.StartService(ctx, name, svc, readiness)
+	// Field for field the same, like the exec result.
+	return gates.ServiceResult(res), err
+}
+
 // unavailableContracts is the reader served when no credential is set.
 type unavailableContracts struct {
 	err error

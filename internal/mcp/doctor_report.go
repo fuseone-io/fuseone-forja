@@ -1,8 +1,6 @@
 package mcp
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -15,24 +13,29 @@ type StepReport struct {
 	Name    string `json:"name"`
 	Command string `json:"command"`
 	Status  string `json:"status"`
-	// ExitCode is -1 when the step produced none: skipped or timed out.
+	// ExitCode is -1 when the step produced none: skipped, timed out, or
+	// failed by a service that was not ready.
 	ExitCode int `json:"exit_code"`
 	// Duration is in nanoseconds, as limits.wall_clock is.
 	Duration time.Duration `json:"duration"`
-	Stdout   string        `json:"stdout"`
-	Stderr   string        `json:"stderr"`
+	// Stdout and Stderr are the service's own log when a service failed the
+	// step, since its command never ran.
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
 	// Truncated says the workspace cut a stream to its tail.
 	Truncated bool `json:"truncated"`
+	// Reason is the control plane's account of a step that failed with no
+	// exit code of its own, such as a service that never became ready;
+	// absent when the exit code says it all.
+	Reason string `json:"reason,omitempty"`
 }
 
-// addReport fills the run part of the output from the report and the
-// contract it ran.
-func (o *DoctorOutput) addReport(c domain.Contract, report domain.GateReport) {
+// addReport fills the run part of the output from the report.
+func (o *DoctorOutput) addReport(report domain.GateReport) {
 	o.OK = report.OK()
 	o.Setup = stepReports(report.Setup)
 	o.Gates = stepReports(report.Gates)
 	o.FailedStep = report.FailedStep
-	o.Warnings = needsWarnings(c)
 }
 
 func stepReports(results []domain.GateResult) []StepReport {
@@ -47,19 +50,8 @@ func stepReports(results []domain.GateResult) []StepReport {
 			Stdout:    string(r.Stdout),
 			Stderr:    string(r.Stderr),
 			Truncated: r.Truncated,
+			Reason:    r.Reason,
 		})
 	}
 	return out
-}
-
-// needsWarnings names every gate the run skipped for its services.
-func needsWarnings(c domain.Contract) []string {
-	warnings := []string{}
-	for _, g := range c.Gates {
-		if len(g.Needs) == 0 {
-			continue
-		}
-		warnings = append(warnings, fmt.Sprintf("gate %s needs %s: skipped, services land in a later slice", g.Name, strings.Join(g.Needs, ", ")))
-	}
-	return warnings
 }

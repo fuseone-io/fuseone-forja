@@ -6,9 +6,9 @@
 // went away. The API gives the exec's ExitCode from ExecInspect, apart from
 // any transport error, which is the distinction a gate's verdict rests on.
 //
-// Each run gets its own internal network. The workspace is attached to it
-// alone; the run's egress gateway is the only container there that may
-// also be attached to a network with a route out.
+// Each run gets its own internal network. The workspace and its sidecars
+// are attached to it alone; the run's egress gateway is the only container
+// there that may also be attached to a network with a route out.
 package workspace
 
 import (
@@ -86,7 +86,7 @@ func (d *Docker) Launch(ctx context.Context, runID, image, tree string) (*Contai
 		return nil, err
 	}
 	for _, img := range []string{image, gatewayImage} {
-		if err := d.ensureImage(ctx, img); err != nil {
+		if err := ensureImage(ctx, d.cli, img); err != nil {
 			return nil, fmt.Errorf("workspace: image %s: %w", img, err)
 		}
 	}
@@ -122,7 +122,8 @@ func (d *Docker) assemble(ctx context.Context, c *Container, binary, image, tree
 }
 
 // createWorkspace creates the workspace container on the run's network
-// alone, never on the default bridge.
+// alone, never on the default bridge. The network is set at creation: a
+// container connected afterwards does not get the embedded DNS.
 func (d *Docker) createWorkspace(ctx context.Context, runID, image string) (string, error) {
 	netName := networkName(runID)
 	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
@@ -154,15 +155,15 @@ func proxyEnv() []string {
 }
 
 // ensureImage pulls image only when the daemon does not already hold it.
-func (d *Docker) ensureImage(ctx context.Context, image string) error {
-	_, err := d.cli.ImageInspect(ctx, image)
+func ensureImage(ctx context.Context, cli *client.Client, image string) error {
+	_, err := cli.ImageInspect(ctx, image)
 	if err == nil {
 		return nil
 	}
 	if !cerrdefs.IsNotFound(err) {
 		return err
 	}
-	pull, err := d.cli.ImagePull(ctx, image, client.ImagePullOptions{})
+	pull, err := cli.ImagePull(ctx, image, client.ImagePullOptions{})
 	if err != nil {
 		return fmt.Errorf("pull: %w", err)
 	}

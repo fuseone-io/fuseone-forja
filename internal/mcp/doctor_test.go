@@ -268,28 +268,69 @@ func TestDoctor_runnerFails_toolErrorAndCheckoutClosed(t *testing.T) {
 	}
 }
 
-func TestDoctor_gateWithNeeds_warningNamesGateAndServices(t *testing.T) {
+// serviceFailedReport is the report of needsContract where postgres never
+// became ready: the gate failed with no exit code, the control plane's
+// reason, and the service's own log as its stream.
+func serviceFailedReport() domain.GateReport {
+	return domain.GateReport{
+		Setup: []domain.GateResult{},
+		Gates: []domain.GateResult{
+			passed("build", "make build", "built\n", "", time.Second),
+			{
+				Name: "integration", Command: "make integration-test", Status: domain.StepFailed, ExitCode: domain.NoExitCode,
+				Duration: time.Minute, Stdout: []byte("initdb: waiting\n"), Truncated: true,
+				Reason: "service postgres not healthy within 1m0s",
+			},
+		},
+		FailedStep: "integration",
+	}
+}
+
+func TestDoctor_gateFailedByService_reasonOnTheWireNoWarning(t *testing.T) {
+	t.Parallel()
+	cs := connectDoctor(t, &fakeCloner{co: doctorCheckout(needsContract)}, &fakeGates{report: serviceFailedReport()})
+
+	res := callDoctor(t, cs, doctorRepo)
+	got := decodeDoctor(t, res)
+	if got.OK || got.FailedStep != "integration" {
+		t.Fatalf("ok = %v, failed_step = %q; want false and integration", got.OK, got.FailedStep)
+	}
+	want := forja.StepReport{
+		Name: "integration", Command: "make integration-test", Status: "failed", ExitCode: -1, Duration: time.Minute,
+		Stdout: "initdb: waiting\n", Truncated: true, Reason: "service postgres not healthy within 1m0s",
+	}
+	if got.Gates[1] != want {
+		t.Fatalf("integration = %+v\nwant %+v", got.Gates[1], want)
+	}
+	wire := wireOf(t, res)
+	if raw := string(wire["warnings"]); raw != "[]" {
+		t.Errorf("warnings on the wire = %s, want []: services run now, nothing is skipped for them", raw)
+	}
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal(wire["gates"], &steps); err != nil || len(steps) != 2 {
+		t.Fatalf("gates = %s (%v)", wire["gates"], err)
+	}
+	if raw := string(steps[1]["reason"]); raw != `"service postgres not healthy within 1m0s"` {
+		t.Errorf("gates[1].reason on the wire = %s, want the reason", raw)
+	}
+	if _, present := steps[0]["reason"]; present {
+		t.Errorf("gates[0].reason on the wire = %s, want absent for a step its exit code explains", steps[0]["reason"])
+	}
+}
+
+// A contract that declares services and gates that need them, all green:
+// nothing to warn about.
+func TestDoctor_gateWithNeedsGreen_noWarning(t *testing.T) {
 	t.Parallel()
 	report := domain.GateReport{
 		Setup: []domain.GateResult{},
-		Gates: []domain.GateResult{passed("build", "make build", "", "", time.Second), skippedStep("integration", "make integration-test")},
+		Gates: []domain.GateResult{passed("build", "make build", "", "", time.Second), passed("integration", "make integration-test", "", "", time.Second)},
 	}
 	cs := connectDoctor(t, &fakeCloner{co: doctorCheckout(needsContract)}, &fakeGates{report: report})
 
 	got := decodeDoctor(t, callDoctor(t, cs, doctorRepo))
-	if !got.OK {
-		t.Fatalf("ok = false, want true: a gate waiting for its services does not decide")
-	}
-	if len(got.Warnings) != 1 {
-		t.Fatalf("warnings = %q, want exactly one", got.Warnings)
-	}
-	for _, want := range []string{"integration", "postgres", "skipped"} {
-		if !strings.Contains(got.Warnings[0], want) {
-			t.Errorf("warning %q does not say %q", got.Warnings[0], want)
-		}
-	}
-	if got.Gates[1].Status != "skipped" {
-		t.Errorf("integration status = %q, want skipped", got.Gates[1].Status)
+	if !got.OK || len(got.Warnings) != 0 {
+		t.Fatalf("ok = %v, warnings = %q; want true and none", got.OK, got.Warnings)
 	}
 }
 
@@ -404,6 +445,26 @@ func TestDoctor_stepOnTheWire_snakeCaseFields(t *testing.T) {
 	}
 	if string(steps[0]["duration"]) != "500000000" {
 		t.Errorf("gates[0].duration = %s, want nanoseconds 500000000", steps[0]["duration"])
+	}
+}
+
+func TestDoctor_stepFailedByServiceOnTheWire_reasonKeyAdded(t *testing.T) {
+	t.Parallel()
+	cs := connectDoctor(t, &fakeCloner{co: doctorCheckout(needsContract)}, &fakeGates{report: serviceFailedReport()})
+
+	var steps []map[string]json.RawMessage
+	if err := json.Unmarshal(wireOf(t, callDoctor(t, cs, doctorRepo))["gates"], &steps); err != nil || len(steps) != 2 {
+		t.Fatalf("gates did not decode into two steps (%v)", err)
+	}
+	want := []string{"name", "command", "status", "exit_code", "duration", "stdout", "stderr", "truncated", "reason"}
+	var got []string
+	for key := range steps[1] {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("gates[1] keys = %q, want %q", got, want)
 	}
 }
 

@@ -99,8 +99,11 @@ func TestParse_pilotContract_accepted(t *testing.T) {
 	t.Parallel()
 	c := mustParse(t, string(mustReadFile(t, "../../.forja.yaml")))
 
-	if c.Services == nil || len(c.Services) != 0 {
-		t.Errorf("Services = %#v, want empty and non-nil", c.Services)
+	wantServices := map[string]domain.Service{
+		"postgres": {Image: "postgres:16", Env: map[string]string{"POSTGRES_HOST_AUTH_METHOD": "trust"}},
+	}
+	if !reflect.DeepEqual(c.Services, wantServices) {
+		t.Errorf("Services = %#v, want %#v", c.Services, wantServices)
 	}
 	if c.Registries == nil || len(c.Registries) != 0 {
 		t.Errorf("Registries = %#v, want empty and non-nil", c.Registries)
@@ -109,9 +112,12 @@ func TestParse_pilotContract_accepted(t *testing.T) {
 	for _, g := range c.Gates {
 		names = append(names, g.Name)
 	}
-	want := []string{"build", "vet", "lint", "test", "race"}
+	want := []string{"build", "vet", "lint", "test", "race", "integration"}
 	if !reflect.DeepEqual(names, want) {
-		t.Errorf("gate names = %q, want %q", names, want)
+		t.Fatalf("gate names = %q, want %q", names, want)
+	}
+	if needs := c.Gates[len(c.Gates)-1].Needs; !reflect.DeepEqual(needs, []string{"postgres"}) {
+		t.Errorf("integration needs = %q, want [postgres]", needs)
 	}
 }
 

@@ -16,6 +16,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/client"
 
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
@@ -231,6 +232,9 @@ func TestDocker_env_imagesOwnPlusGatewayOnly(t *testing.T) {
 	d := newDocker(t)
 	c := launch(t, d, newRunID(t), treeWith(t))
 	ctx := context.Background()
+	// A service's env is the sidecar's alone, never the tree's.
+	withEnv := domain.Service{Image: sidecarImage, Env: map[string]string{"SIDECAR_ONLY_PASSWORD": "secret-sidecar-89ab"}}
+	startReady(t, c, "cache", withEnv)
 
 	res, err := c.Exec(ctx, "env")
 	if err != nil || res.ExitCode != 0 {
@@ -259,9 +263,11 @@ func TestDocker_env_imagesOwnPlusGatewayOnly(t *testing.T) {
 	}
 }
 
+// assertNoSecrets checks no control-plane secret, and no sidecar's own
+// env, reached a container's environment.
 func assertNoSecrets(t *testing.T, where, env string) {
 	t.Helper()
-	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key"} {
+	for _, leak := range []string{"FORJA_GITHUB_TOKEN", "secret-github-token", "ANTHROPIC_API_KEY", "secret-anthropic-key", "SIDECAR_ONLY_PASSWORD", "secret-sidecar"} {
 		if strings.Contains(env, leak) {
 			t.Errorf("%s env carries %q:\n%s", where, leak, env)
 		}
@@ -291,6 +297,55 @@ func TestDocker_ctxDeadline_duringExec_containerRemoved(t *testing.T) {
 		t.Fatalf("Close after the deadline: %v", err)
 	}
 	assertGone(t, c.ID())
+}
+
+func rawClient(t *testing.T) *client.Client {
+	t.Helper()
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	return cli
+}
+
+// Each launch gets a network of its own, labelled as Forja's, and the
+// workspace sits on it alone: not on the default bridge every container
+// shares, and not on another run's.
+func TestDocker_launch_workspaceOnItsOwnNetworkOnly(t *testing.T) {
+	d := newDocker(t)
+	a, b := launch(t, d, newRunID(t), treeWith(t)), launch(t, d, newRunID(t), treeWith(t))
+
+	if a.NetworkID() == "" || a.NetworkID() == b.NetworkID() {
+		t.Fatalf("network ids = %q and %q, want two distinct networks", a.NetworkID(), b.NetworkID())
+	}
+	cli := rawClient(t)
+	inspect, err := cli.ContainerInspect(context.Background(), a.ID(), client.ContainerInspectOptions{})
+	if err != nil {
+		t.Fatalf("ContainerInspect: %v", err)
+	}
+	var on []string
+	for _, ep := range inspect.Container.NetworkSettings.Networks {
+		on = append(on, ep.NetworkID)
+	}
+	if len(on) != 1 || on[0] != a.NetworkID() {
+		t.Fatalf("workspace on networks %q, want only %q", on, a.NetworkID())
+	}
+	net, err := cli.NetworkInspect(context.Background(), a.NetworkID(), client.NetworkInspectOptions{})
+	if err != nil {
+		t.Fatalf("NetworkInspect: %v", err)
+	}
+	if _, ok := net.Network.Labels["forja.run"]; !ok || !strings.HasPrefix(net.Network.Name, "forja-run-") {
+		t.Fatalf("network = {name %q, labels %v}, want forja-run-* labelled forja.run", net.Network.Name, net.Network.Labels)
+	}
+}
+
+// assertNetworkGone asserts the daemon no longer knows the network.
+func assertNetworkGone(t *testing.T, id string) {
+	t.Helper()
+	_, err := rawClient(t).NetworkInspect(context.Background(), id, client.NetworkInspectOptions{})
+	if !cerrdefs.IsNotFound(err) {
+		t.Fatalf("NetworkInspect(%s) after Close = %v, want not found", id, err)
+	}
 }
 
 func TestDocker_launch_imageUnknown_errorNamesIt(t *testing.T) {
