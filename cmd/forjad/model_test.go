@@ -123,7 +123,7 @@ func TestModelCommand_readyForwardsWithKeyFileThenCleanStop(t *testing.T) {
 		next <- lines.Text()
 		_, _ = io.Copy(io.Discard, stdoutR)
 	}()
-	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/messages", strings.NewReader("{}"))
+	req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/v1/messages", strings.NewReader(`{"max_tokens":16}`))
 	req.Header.Set("x-api-key", testModelToken)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

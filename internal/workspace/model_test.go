@@ -180,7 +180,7 @@ func launchAgent(t *testing.T, d *workspace.Docker, runID string) *workspace.Con
 
 // postMessages is the agent's call, made with what the workspace was given.
 const postMessages = `curl -sS -o /tmp/answer -w '%{http_code}' -X POST -H "x-api-key: $ANTHROPIC_API_KEY" ` +
-	`-H 'content-type: application/json' -d '{"stream":true}' "$ANTHROPIC_BASE_URL/v1/messages?beta=true"; cat /tmp/answer`
+	`-H 'content-type: application/json' -d '{"max_tokens":1,"stream":true}' "$ANTHROPIC_BASE_URL/v1/messages?beta=true"; cat /tmp/answer`
 
 // From the workspace, the model is the proxy on the run network: the fake
 // upstream answers, which it does only for the real key. Anything else
