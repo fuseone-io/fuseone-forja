@@ -53,21 +53,25 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Lease = lease
-	allow, err := egress.ParseAllow(getenv(EnvEgressAllow))
+	opts, agentOn, err := driverOptions(getenv)
 	if err != nil {
-		return mcp.Deps{}, nil, fmt.Errorf("%s: %w", EnvEgressAllow, err)
+		return mcp.Deps{}, nil, err
 	}
-	docker, err := workspace.NewDocker(workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow})
+	docker, err := workspace.NewDocker(opts)
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
 	deps.Gates = &gates.Runner{Launcher: launcher{docker}, Now: time.Now}
+	deps.Agent = agentRunner(docker, agentOn)
 	tokens, err := github.TokenSourceFromEnv(getenv)
 	if errors.Is(err, github.ErrNoCredentials) {
 		deps.Contracts = unavailableContracts{err: err}
 		deps.Claims = unavailableClaims{err: err}
 		deps.Cloner = unavailablePlan{err: err}
 		deps.Issues = unavailablePlan{err: err}
+		if deps.Agent == nil {
+			deps.Agent = unavailableAgent{err: err}
+		}
 		return deps, nil, nil
 	}
 	if err != nil {
@@ -79,6 +83,21 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
+}
+
+// driverOptions is the workspace driver's configuration: the gateway, the
+// egress allowlist, and the agent with its model proxy when a key is set.
+func driverOptions(getenv func(string) string) (workspace.Options, bool, error) {
+	allow, err := egress.ParseAllow(getenv(EnvEgressAllow))
+	if err != nil {
+		return workspace.Options{}, false, fmt.Errorf("%s: %w", EnvEgressAllow, err)
+	}
+	opts, agentOn, err := agentConfig(getenv)
+	if err != nil {
+		return workspace.Options{}, false, err
+	}
+	opts.GatewayBinary, opts.EgressAllow = getenv(EnvGatewayBinary), allow
+	return opts, agentOn, nil
 }
 
 func claimLease(getenv func(string) string) (time.Duration, error) {

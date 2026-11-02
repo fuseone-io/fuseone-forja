@@ -44,6 +44,7 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 		Cloner: &fakeCloner{err: errors.New("no cloner in this test")},
 		Issues: &fakeIssues{err: errors.New("no issue reader in this test")},
 		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
+		Agent:  &fakeAgent{err: errors.New("no agent in this test")},
 		NewID:  ids.next, Now: startedAt, Version: "test",
 	}
 }
@@ -333,7 +334,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "tokens_in", "tokens_out"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)

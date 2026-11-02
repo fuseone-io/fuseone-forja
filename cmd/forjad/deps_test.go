@@ -1,16 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/moby/moby/client"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
@@ -36,6 +40,80 @@ func linuxForjad(ctx context.Context, t *testing.T) string {
 		t.Fatalf("go build forjad for linux/%s: %v\n%s", v.Arch, err, out)
 	}
 	return path
+}
+
+const wireKey = "sk-ant-wire-test-key-77aa"
+
+// agentEnv is a complete agent configuration with credentials, with
+// overrides applied; an empty override unsets the variable.
+func agentEnv(t *testing.T, overrides map[string]string) func(string) string {
+	t.Helper()
+	binary := filepath.Join(t.TempDir(), "claude")
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{
+		"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_MODEL_API_KEY": wireKey,
+		"FORJA_MODEL_TOKEN_CAP": "500000", "FORJA_AGENT_BINARY": binary,
+	}
+	for k, v := range overrides {
+		env[k] = v
+	}
+	return func(k string) string { return env[k] }
+}
+
+// A key without a usable cap, upstream or agent would serve a tool that
+// fails on its first run: the server does not start, and says which
+// variable, never what the key is.
+func TestWire_modelKeyWithBadCompanion_startupErrorNamingVariable(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, variable, value string
+	}{
+		{name: "cap unset", variable: "FORJA_MODEL_TOKEN_CAP", value: ""},
+		{name: "cap not a number", variable: "FORJA_MODEL_TOKEN_CAP", value: "lots"},
+		{name: "cap zero", variable: "FORJA_MODEL_TOKEN_CAP", value: "0"},
+		{name: "cap negative", variable: "FORJA_MODEL_TOKEN_CAP", value: "-5"},
+		{name: "upstream with a path", variable: "FORJA_MODEL_UPSTREAM", value: "https://api.anthropic.com/v1"},
+		{name: "agent unset", variable: "FORJA_AGENT_BINARY", value: ""},
+		{name: "agent missing", variable: "FORJA_AGENT_BINARY", value: filepath.Join(t.TempDir(), "no-claude")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			getenv := agentEnv(t, map[string]string{tt.variable: tt.value})
+			var stderr bytes.Buffer
+
+			_, _, err := wire(getenv, &stderr)
+			if err == nil || !strings.Contains(err.Error(), tt.variable) {
+				t.Fatalf("wire = %v, want a startup error naming %s", err, tt.variable)
+			}
+			if strings.Contains(err.Error(), wireKey) || strings.Contains(stderr.String(), wireKey) {
+				t.Fatalf("the key's value leaked: error %q, stderr %q", err, stderr.String())
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			_, serverTransport := sdk.NewInMemoryTransports()
+			stderr.Reset()
+			if code := serve(ctx, serverTransport, &stderr, getenv); code != 1 || strings.Contains(stderr.String(), wireKey) {
+				t.Fatalf("serve = %d, stderr %q; want 1 without the key", code, stderr.String())
+			}
+		})
+	}
+}
+
+// With the agent configured, forja.implement has an agent; without a key
+// it has none and says what to set.
+func TestWire_modelKey_decidesTheAgent(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil || deps.Agent == nil {
+		t.Fatalf("wire with the agent configured = agent %v, %v; want an agent", deps.Agent, err)
+	}
+	deps, _, err = wire(agentEnv(t, map[string]string{"FORJA_MODEL_API_KEY": "", "FORJA_MODEL_TOKEN_CAP": "", "FORJA_AGENT_BINARY": ""}), io.Discard)
+	if err != nil || deps.Agent != nil {
+		t.Fatalf("wire without a key = agent %v, %v; want none and no error", deps.Agent, err)
+	}
 }
 
 // Postgres runs for seconds before it listens, so a readiness the adapter

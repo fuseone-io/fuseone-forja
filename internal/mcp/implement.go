@@ -39,9 +39,9 @@ type implementer struct {
 	deps Deps
 }
 
-// implementHandler reserves the issue, records the run and releases the
-// reservation. A refused claim is a tool error naming the holder and
-// records no run.
+// implementHandler reserves the issue, records the run, runs the agent and
+// releases the reservation. A refused claim is a tool error naming the
+// holder and records no run.
 func implementHandler(deps Deps) sdk.ToolHandlerFor[ImplementInput, ImplementOutput] {
 	h := implementer{deps: deps}
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in ImplementInput) (*sdk.CallToolResult, ImplementOutput, error) {
@@ -70,7 +70,7 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 	if err != nil {
 		return ImplementOutput{}, err
 	}
-	if err := h.run(ctx, c); err != nil {
+	if err := h.run(ctx, c, in.BaseBranch); err != nil {
 		return ImplementOutput{}, fmt.Errorf("run %s: %w", c.RunID, err)
 	}
 	return ImplementOutput{RunID: c.RunID}, nil
@@ -78,8 +78,11 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 
 func (h implementer) wired() error {
 	d := h.deps
-	if d.Runs == nil || d.Contracts == nil || d.Claims == nil || d.NewID == nil || d.Now == nil {
-		return errors.New("not wired: runs, contracts, claims, NewID and Now are all required")
+	if d.Runs == nil || d.Contracts == nil || d.Claims == nil || d.Cloner == nil || d.Issues == nil || d.NewID == nil || d.Now == nil {
+		return errors.New("not wired: runs, contracts, claims, cloner, issues, NewID and Now are all required")
+	}
+	if d.Agent == nil {
+		return errNoAgent
 	}
 	return nil
 }
@@ -98,10 +101,11 @@ func (h implementer) lease(ctx context.Context, repo string) (time.Duration, err
 	return domain.LeaseFor(parsed.Limits, h.deps.Lease)
 }
 
-// run records the run as running, releases the claim and records the
-// terminal state: succeeded, or failed when the release failed. The work
-// between the two records is not this handler's yet.
-func (h implementer) run(ctx context.Context, c domain.Claim) error {
+// run records the run as running, runs the agent on the base branch,
+// releases the claim and records the terminal state with what the
+// proxies recorded, on every outcome. Any failure of the work or the
+// release is returned after the run was recorded failed.
+func (h implementer) run(ctx context.Context, c domain.Claim, base string) error {
 	run := domain.Run{
 		ID: c.RunID, Tool: domain.ToolImplement, Repository: c.Repository, Issue: c.Issue,
 		State: domain.StateRunning, StartedAt: h.deps.Now(),
@@ -118,17 +122,16 @@ func (h implementer) run(ctx context.Context, c domain.Claim) error {
 	if err := h.deps.Runs.Put(done, run); err != nil {
 		return errors.Join(fmt.Errorf("record run: %w", err), h.release(done, c))
 	}
+	res, workErr := h.work(ctx, c, base)
 	releaseErr := h.release(done, c)
 	finished := h.deps.Now()
 	run.FinishedAt = &finished
-	run.State = domain.StateSucceeded
-	if releaseErr != nil {
-		run.State = domain.StateFailed
-	}
+	run.Tokens, run.Egress = res.Tokens, res.Egress
+	run.State, run.Reason = outcome(res, workErr, releaseErr)
 	if err := h.deps.Runs.Put(done, run); err != nil {
-		return errors.Join(releaseErr, fmt.Errorf("record run: %w", err))
+		return errors.Join(workErr, releaseErr, fmt.Errorf("record run: %w", err))
 	}
-	return releaseErr
+	return errors.Join(workErr, releaseErr)
 }
 
 func (h implementer) release(ctx context.Context, c domain.Claim) error {
