@@ -200,10 +200,12 @@ So is the agent that runs inside it ([#2](https://github.com/fuseone-io/fuseone-
 
 Prerequisites: Go 1.25 or later and [golangci-lint](https://golangci-lint.run)
 v2.15.0 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`).
-No token, no Docker and no GitHub App are needed for the checks.
+No token and no GitHub App are needed for the checks; only `make docker-test`
+needs a Docker daemon.
 
 ```sh
-make check       # build, vet, lint, tests, race
+make check       # build, vet, lint, tests, race, docker-test
+scripts/gates.sh # the same gates in one call, a table of exit codes
 make serve       # the MCP server over stdio
 ```
 

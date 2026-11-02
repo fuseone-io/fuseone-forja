@@ -209,7 +209,7 @@ func TestEvidence_contractChangedByAgent_gatesStillFromBaseSHA(t *testing.T)
 ## Definition of done
 
 - [ ] Test written before the implementation, and it failed before it passed
-- [ ] `make check` clean — build, vet, lint, test, race
+- [ ] `make check` clean — build, vet, lint, test, race, docker-test (`scripts/gates.sh` runs it as a table of exit codes)
 - [ ] No Go file over 300 lines
 - [ ] No `any` without a justifying comment
 - [ ] `context.Context` threaded through every I/O path

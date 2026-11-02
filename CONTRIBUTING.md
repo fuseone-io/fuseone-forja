@@ -12,7 +12,7 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 ## Set up
 
 - Go 1.25 or later, golangci-lint v2.15.0 (`go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.15.0`), Docker (the workspace runtime of the first slices), `gh` authenticated against `fuseone-io`.
-- `make check` runs build, vet, lint, tests and race; `make serve` starts the MCP server over stdio. The README says how to register it in a client.
+- `make check` runs build, vet, lint, tests, race and the Docker driver tests (`make docker-test`, which needs a daemon; `make test` and `make race` skip them unless `FORJA_DOCKER_TEST=1`). `scripts/gates.sh` runs the same gates in one call and prints each exit code with the sha; `make serve` starts the MCP server over stdio. The README says how to register it in a client.
 - Running a slice against the pilot repository needs the Forja GitHub App installed there ([#4](https://github.com/fuseone-io/fuseone-forja/issues/4)). Nothing in this repository needs your personal GitHub token.
 - Working with Claude Code: the roles in [`.claude/agents/`](.claude/agents/) (architect, developer, qa, security-reviewer, triager, measurer) and the rules they read in [`.claude/agent-rules.md`](.claude/agent-rules.md).
 
@@ -29,15 +29,16 @@ Thanks for helping. This page is the short version of how we work; the engineeri
 
 - [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/), scoped and imperative: `feat(claim): …`, `fix(gates): …`. Types: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`. One logical change per commit; more than five files is probably two commits. The body says why, not what the diff shows.
 - Work on a branch; `main` is never rewritten and never pushed to directly. Amending and force-pushing your own PR branch is fine for humans; agents never force-push.
-- Before opening the PR, run the checks for the areas you touched, one variable per command, and put the real exit codes in the PR:
+- Before opening the PR, run the checks for the areas you touched and put the real exit codes in the PR. `scripts/gates.sh [gate...]` runs Makefile gates and prints the table:
 
   | Area | Checks |
   |---|---|
   | Go | `make build`, `make vet`, `make lint`, `make test` |
+  | `internal/workspace/`, `cmd/forjad/` | `make docker-test` (real Docker Engine) |
   | Store, run state or SQL | `make integration-test` (real Postgres) |
   | `internal/` | `semgrep --config p/security-audit --config p/secrets internal/` |
   | `deploy/` | `helm lint deploy/helm/forja` |
-  | Everything | `make check` — build, vet, lint, test, race — on the final commit |
+  | Everything | `scripts/gates.sh` — build, vet, lint, test, race, docker-test — on the final commit |
 
 - The PR body carries the gate table with the exit codes and the sha each ran on, a `Documentation:` line (`none`, `contract`, `runbook`, `new ADR`, `supersedes ADR NNNN`) and `Closes #<n>`. Put `Closes` in the description, not in commits.
 - A PR that touches tokens, the proxies, egress, the claim, the contract reader or the evidence gets a security review before merge; say so in the description.

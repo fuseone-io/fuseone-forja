@@ -42,6 +42,9 @@ func linuxForjad(ctx context.Context, t *testing.T) string {
 // Postgres runs for seconds before it listens, so a readiness the adapter
 // did not hand on to the container would leave it not ready.
 func TestContainer_startService_readinessReachesTheContainer(t *testing.T) {
+	if os.Getenv("FORJA_DOCKER_TEST") != "1" {
+		t.Skip("set FORJA_DOCKER_TEST=1 (make docker-test) to run the tests against the Docker Engine")
+	}
 	probe, err := workspace.NewDocker(workspace.Options{})
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
@@ -49,7 +52,7 @@ func TestContainer_startService_readinessReachesTheContainer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if err := probe.Ping(ctx); err != nil {
-		t.Skipf("no Docker daemon: %v", err)
+		t.Fatalf("Docker tests requested but no daemon answered: %v", err)
 	}
 	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: linuxForjad(ctx, t)})
 	if err != nil {
