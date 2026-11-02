@@ -1,0 +1,146 @@
+package agent_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+
+	"github.com/fuseone-io/fuseone-forja/internal/agent"
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
+)
+
+// fakeWorkspace is an agent workspace in memory. Like the Docker one, it
+// refuses every call once closed, and Exec once halted; AwaitCap returns
+// nil only once the cap is reached, and an error when its ctx ends.
+type fakeWorkspace struct {
+	// exec answers the agent's command; nil exits 0 at once.
+	exec   func(ctx context.Context) (agent.ExecResult, error)
+	report agent.ModelReport
+	egress domain.EgressReport
+	// modelErr fails the usage read.
+	modelErr error
+	// capReached is closed to say the proxy reached the cap.
+	capReached chan struct{}
+
+	mu        sync.Mutex
+	calls     []string
+	commands  []string
+	files     map[string][]byte
+	halted    bool
+	closes    int
+	watchDone chan struct{}
+}
+
+func newFakeWorkspace() *fakeWorkspace {
+	return &fakeWorkspace{capReached: make(chan struct{}), files: map[string][]byte{}, watchDone: make(chan struct{})}
+}
+
+func (f *fakeWorkspace) log(call string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, call)
+	if f.closes > 0 {
+		return errors.New("fake: workspace closed")
+	}
+	return nil
+}
+
+func (f *fakeWorkspace) Exec(ctx context.Context, command string) (agent.ExecResult, error) {
+	if err := f.log("exec"); err != nil {
+		return agent.ExecResult{ExitCode: -1}, err
+	}
+	f.mu.Lock()
+	f.commands = append(f.commands, command)
+	halted := f.halted
+	f.mu.Unlock()
+	if halted {
+		return agent.ExecResult{ExitCode: -1}, errors.New("fake: workspace halted")
+	}
+	if f.exec == nil {
+		return agent.ExecResult{}, nil
+	}
+	return f.exec(ctx)
+}
+
+func (f *fakeWorkspace) WriteFile(_ context.Context, path string, data []byte) error {
+	if err := f.log("write " + path); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.files[path] = append([]byte(nil), data...)
+	return nil
+}
+
+func (f *fakeWorkspace) Model(context.Context) (agent.ModelReport, error) {
+	if err := f.log("model"); err != nil {
+		return agent.ModelReport{}, err
+	}
+	return f.report, f.modelErr
+}
+
+func (f *fakeWorkspace) AwaitCap(ctx context.Context) error {
+	defer close(f.watchDone)
+	select {
+	case <-f.capReached:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (f *fakeWorkspace) Egress(context.Context) (domain.EgressReport, error) {
+	if err := f.log("egress"); err != nil {
+		return domain.EgressReport{}, err
+	}
+	return f.egress, nil
+}
+
+func (f *fakeWorkspace) Halt(context.Context) error {
+	if err := f.log("halt"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.halted = true
+	return nil
+}
+
+func (f *fakeWorkspace) Close(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "close")
+	f.closes++
+	return nil
+}
+
+func (f *fakeWorkspace) callList() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.calls...)
+}
+
+func (f *fakeWorkspace) closeCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.closes
+}
+
+// fakeLauncher hands out ws, or fails.
+type fakeLauncher struct {
+	ws  *fakeWorkspace
+	err error
+
+	mu                 sync.Mutex
+	runID, image, tree string
+}
+
+func (l *fakeLauncher) LaunchAgent(_ context.Context, runID, image, tree string) (agent.Workspace, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.runID, l.image, l.tree = runID, image, tree
+	if l.err != nil {
+		return nil, l.err
+	}
+	return l.ws, nil
+}
