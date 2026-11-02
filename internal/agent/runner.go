@@ -73,8 +73,11 @@ type File struct {
 
 // Task is one agent run: the contract and the context come from the base
 // commit, the tree is the checkout the agent commits on, on Branch,
-// started at BaseSHA. Bundle is the path on the control plane the agent's
-// commits are exported to.
+// started at BaseSHA, which is the branch tip in a correction round.
+// Bundle is the path on the control plane the agent's commits are
+// exported to. Finding is the review finding a correction round answers,
+// empty for a first run; it is untrusted text that reaches only the
+// prompt.
 type Task struct {
 	RunID    string
 	Contract domain.Contract
@@ -84,6 +87,7 @@ type Task struct {
 	Branch   string
 	BaseSHA  string
 	Bundle   string
+	Finding  string
 }
 
 // Result is how the agent run ended and what the proxies recorded for it.
