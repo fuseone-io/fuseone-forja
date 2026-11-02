@@ -465,6 +465,48 @@ func TestWire_wellFormedEgressAllow_starts(t *testing.T) {
 	}
 }
 
+// A credentials file that cannot be read would leave every run that
+// declares a registry unable to start; it stops the server before it
+// serves, naming the variable and never a value from the file.
+func TestWire_malformedRegistryCredentials_startupError(t *testing.T) {
+	t.Parallel()
+	for name, path := range map[string]string{
+		"malformed": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": canary-wire-secret}}`),
+		"bad entry": registryCredentials(t, `{"ghp_canary-wire-secret": {"username": "u", "password": "p"}}`),
+		"absent":    filepath.Join(t.TempDir(), "absent.json"),
+	} {
+		env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": path}
+		_, _, err := wire(func(k string) string { return env[k] }, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "FORJA_REGISTRY_CREDENTIALS") || strings.Contains(err.Error(), "canary-wire-secret") {
+			t.Errorf("%s: wire = %v, want a startup error naming the variable and no value", name, err)
+		}
+	}
+}
+
+func TestServe_malformedRegistryCredentials_exitsOne(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, "not json")}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+		t.Fatalf("serve with malformed registry credentials = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "FORJA_REGISTRY_CREDENTIALS") {
+		t.Fatalf("stderr %q does not name the variable", stderr.String())
+	}
+}
+
+func TestWire_wellFormedRegistryCredentials_starts(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "p"}}`)}
+	if _, _, err := wire(func(k string) string { return env[k] }, io.Discard); err != nil {
+		t.Fatalf("wire with well-formed registry credentials = %v", err)
+	}
+}
+
 // Without credentials forja.implement fails before reserving anything,
 // naming the variables to set.
 func TestServe_noCredentials_implementFailsExplicitly(t *testing.T) {

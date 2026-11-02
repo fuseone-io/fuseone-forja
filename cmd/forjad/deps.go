@@ -16,6 +16,7 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 	"github.com/fuseone-io/fuseone-forja/internal/proxy/egress"
+	"github.com/fuseone-io/fuseone-forja/internal/proxy/registry"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -37,13 +38,18 @@ const (
 	// tunnel to through its gateway, matched exactly. Unset, nothing
 	// leaves.
 	EnvEgressAllow = "FORJA_EGRESS_ALLOW"
+	// EnvRegistryCredentials is the path to a JSON file, mounted from the
+	// vault, of each registry entry's read credential. Unset, a run whose
+	// contract declares a registry is refused at launch.
+	EnvRegistryCredentials = "FORJA_REGISTRY_CREDENTIALS"
 )
 
 // wire assembles the tools' dependencies from the environment. With no
 // credentials at all the server still serves the tools that need none,
 // and every GitHub-backed tool answers with the error naming the variables
 // to set; the claim store is then nil. A half-configured App, a malformed
-// lease or egress allowlist, or a Docker client that cannot be built from
+// lease, egress allowlist or registry credentials file, or a Docker client
+// that cannot be built from
 // DOCKER_HOST and its siblings is a startup failure. The wall clock and
 // the id generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
@@ -57,7 +63,11 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	if err != nil {
 		return mcp.Deps{}, nil, fmt.Errorf("%s: %w", EnvEgressAllow, err)
 	}
-	docker, err := workspace.NewDocker(workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow})
+	creds, err := loadRegistryCredentials(getenv)
+	if err != nil {
+		return mcp.Deps{}, nil, err
+	}
+	docker, err := workspace.NewDocker(workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow, RegistryCredentials: creds})
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
@@ -94,6 +104,20 @@ func claimLease(getenv func(string) string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %v is not a positive duration", EnvClaimLease, lease)
 	}
 	return lease, nil
+}
+
+// loadRegistryCredentials reads the file the variable names; unset, there
+// is no credential.
+func loadRegistryCredentials(getenv func(string) string) (map[string]registry.Credential, error) {
+	path := getenv(EnvRegistryCredentials)
+	if path == "" {
+		return map[string]registry.Credential{}, nil
+	}
+	creds, err := registry.LoadCredentials(path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", EnvRegistryCredentials, err)
+	}
+	return creds, nil
 }
 
 // journal is the claim journal under the state directory, or nil with one
