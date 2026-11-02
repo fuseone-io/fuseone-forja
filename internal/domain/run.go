@@ -53,6 +53,9 @@ type Run struct {
 	// Egress is what the run's workspace tried to reach and was refused;
 	// empty for a run that launched no workspace.
 	Egress EgressReport
+	// Registry is every request the run's workspace made to its registry
+	// proxy; empty for a run whose contract declares no registry.
+	Registry RegistryReport
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
