@@ -11,7 +11,7 @@ with verifiable evidence:<br>the commands that ran, their exit codes, the raw
 gate logs and whether the tests bite.</p>
 
 <p>
-  <a href="docs/PRD.pdf">PRD</a> ·
+  <a href="docs/PRD.md">PRD</a> ·
   <a href="https://github.com/fuseone-io/fuseone-forja/issues">Issues</a> ·
   <a href="CLAUDE.md">Engineering rules</a>
 </p>
@@ -274,7 +274,7 @@ docs/               PRD, ADRs, technical notes
 
 | | |
 |---|---|
-| [PRD](docs/PRD.pdf) | What Forja is, the contract, the flows, isolation, the open questions and the phase 0 decision asked for |
+| [PRD](docs/PRD.md) | What Forja is, the contract, the flows, isolation, the open questions and the phase 0 decision asked for |
 | [Issues #1–#24](https://github.com/fuseone-io/fuseone-forja/issues) | The backlog as vertical slices, in dependency order, with milestones Fase 0 and Fase 1 |
 | [CLAUDE.md](CLAUDE.md) | The engineering rules: the non-negotiables, size limits, Go conventions, tests, definition of done |
 | [.claude/agent-rules.md](.claude/agent-rules.md) | The operating rules for the agents that write to this repository |

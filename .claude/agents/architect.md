@@ -20,7 +20,7 @@ You do not edit files, do not commit and do not change the issue on GitHub
    `gh issue view <n> --json state,body,comments` and
    `git log origin/main -- <targets>`. An issue may have been paid by another
    session, or closed with the opposite decision.
-2. Read the PRD (`docs/PRD.pdf`) section the issue implements and the
+2. Read the PRD (`docs/PRD.md`) section the issue implements and the
    non-negotiable rules in `CLAUDE.md`. Every slice of Forja touches at least
    one of them: contract from the base commit, evidence written by the control
    plane, no credential in the workspace, gate is an exit code, one run per
