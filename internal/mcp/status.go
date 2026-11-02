@@ -50,6 +50,26 @@ type StatusOutput struct {
 	// FailureReason says why a failed run failed when the control plane
 	// knows more than its state; absent otherwise.
 	FailureReason string `json:"failure_reason,omitempty"`
+	// Stages are an implement run's steps as they started; Setup and Gates
+	// the report of the gates it ran, with each raw stream's tail. All three
+	// are always on the wire, empty for a run that has none.
+	Stages []StageReport `json:"stages"`
+	Setup  []StepReport  `json:"setup"`
+	Gates  []StepReport  `json:"gates"`
+	// BaseSHA, ContractSHA and HeadSHA are absent until the run knows them;
+	// PullRequest until it opened one.
+	BaseSHA     string          `json:"base_sha,omitempty"`
+	ContractSHA string          `json:"contract_sha,omitempty"`
+	HeadSHA     string          `json:"head_sha,omitempty"`
+	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+}
+
+// StageReport is one stage of a run; FinishedAt is absent while it runs.
+type StageReport struct {
+	Name       string     `json:"name"`
+	StartedAt  time.Time  `json:"started_at"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
+	Outcome    string     `json:"outcome"`
 }
 
 // RegistryEvent is one request the workspace made to its registry proxy.
@@ -108,6 +128,14 @@ func statusOutput(run domain.Run) StatusOutput {
 		TokensIn:      run.Tokens.In(),
 		TokensOut:     run.Tokens.Output,
 		FailureReason: string(run.Reason),
+
+		Stages:      stageReports(run.Stages),
+		Setup:       stepReports(run.Gates.Setup),
+		Gates:       stepReports(run.Gates.Gates),
+		BaseSHA:     run.BaseSHA,
+		ContractSHA: run.ContractSHA,
+		HeadSHA:     run.HeadSHA,
+		PullRequest: pullRequestRef(run.PullRequest),
 	}
 }
 

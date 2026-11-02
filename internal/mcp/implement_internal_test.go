@@ -63,7 +63,27 @@ func (c oneFileCheckout) ReadFile(_ context.Context, path string) ([]byte, error
 	return c.contract, nil
 }
 func (oneFileCheckout) ListFiles(context.Context, string) ([]string, error) { return nil, nil }
-func (oneFileCheckout) BlobSHA(context.Context, string) (string, error)    { return "blob", nil }
+func (oneFileCheckout) BlobSHA(context.Context, string) (string, error)     { return "blob", nil }
+func (oneFileCheckout) StartBranch(context.Context, string) error           { return nil }
+func (oneFileCheckout) Adopt(context.Context, string, string) (string, error) {
+	return "04915d552e6e507929c4c734b4f4a3a31ae05820", nil
+}
+
+// greenGates passes every step.
+type greenGates struct{}
+
+func (greenGates) Run(context.Context, string, domain.Contract, string) (domain.GateReport, error) {
+	return domain.GateReport{}, nil
+}
+
+// acceptingGitHub takes every push, pull request and status.
+type acceptingGitHub struct{}
+
+func (acceptingGitHub) Push(context.Context, github.PushRequest) error { return nil }
+func (acceptingGitHub) Open(context.Context, github.PullRequestRequest) (domain.PullRequest, error) {
+	return domain.PullRequest{Number: 1, URL: "https://github.com/fuseone-io/fuseone-forja/pull/1"}, nil
+}
+func (acceptingGitHub) Publish(context.Context, github.StatusRequest) error { return nil }
 
 type checkoutCloner struct{ co Checkout }
 
@@ -75,12 +95,12 @@ func (staticIssues) Read(context.Context, string, int) (domain.Issue, error) {
 	return domain.Issue{Number: 12, Title: "t", Body: "b"}, nil
 }
 
-// exitingAgent exits 0 whatever its context says, as an agent that had
-// already finished would.
+// exitingAgent exits 0 with a commit whatever its context says, as an
+// agent that had already finished would.
 type exitingAgent struct{}
 
 func (exitingAgent) Run(context.Context, agent.Task) (agent.Result, error) {
-	return agent.Result{}, nil
+	return agent.Result{Exported: true}, nil
 }
 
 // The caller going away between the claim and the release must not leave
@@ -100,8 +120,10 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 		Cloner:    checkoutCloner{co: oneFileCheckout{contract: body}},
 		Issues:    staticIssues{},
 		Agent:     exitingAgent{},
-		NewID:     func() string { return "run-cancelled" },
-		Now:       func() time.Time { return now },
+		Gates:     greenGates{},
+		Pusher:    acceptingGitHub{}, PullRequests: acceptingGitHub{}, Statuses: acceptingGitHub{},
+		NewID: func() string { return "run-cancelled" },
+		Now:   func() time.Time { return now },
 	}
 
 	_, out, err := implementHandler(deps)(ctx, nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})

@@ -19,8 +19,11 @@ type Cloner interface {
 }
 
 // Checkout is a clone pinned at one commit. Every read answers for that
-// commit; Dir is the tree on disk the gates run on; Close discards the
-// clone.
+// commit; Dir is the tree on disk the agent and the gates run on; Close
+// discards the clone. StartBranch checks a new branch out at the commit;
+// Adopt imports that branch from a bundle the agent's workspace exported
+// and checks its head out in Dir, while every read still answers for the
+// pinned commit.
 type Checkout interface {
 	SHA() string
 	Branch() string
@@ -28,6 +31,8 @@ type Checkout interface {
 	ReadFile(ctx context.Context, path string) ([]byte, error)
 	ListFiles(ctx context.Context, dir string) ([]string, error)
 	BlobSHA(ctx context.Context, path string) (string, error)
+	StartBranch(ctx context.Context, name string) error
+	Adopt(ctx context.Context, bundle, branch string) (string, error)
 	Close() error
 }
 

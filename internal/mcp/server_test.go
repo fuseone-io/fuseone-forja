@@ -12,6 +12,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/github"
 	forja "github.com/fuseone-io/fuseone-forja/internal/mcp"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
@@ -46,6 +47,9 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
 		Agent:  &fakeAgent{err: errors.New("no agent in this test")},
 		NewID:  ids.next, Now: startedAt, Version: "test",
+		Pusher:       &fakePusher{deliveryLog[github.PushRequest]{err: errors.New("no pusher in this test")}},
+		PullRequests: &fakePullRequests{deliveryLog[github.PullRequestRequest]{err: errors.New("no pull requests in this test")}},
+		Statuses:     &fakeStatuses{deliveryLog[github.StatusRequest]{err: errors.New("no statuses in this test")}},
 	}
 }
 
@@ -334,7 +338,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "stages", "setup", "gates"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)

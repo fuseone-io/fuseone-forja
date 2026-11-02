@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -27,6 +28,8 @@ type fakeAgent struct {
 	deadline time.Time
 }
 
+// Run exports, as the real runner does, only into the bundle path the task
+// names, which the control plane must have made ready.
 func (f *fakeAgent) Run(ctx context.Context, t agent.Task) (agent.Result, error) {
 	if f.calls != nil {
 		f.calls.add("agent")
@@ -35,7 +38,17 @@ func (f *fakeAgent) Run(ctx context.Context, t agent.Task) (agent.Result, error)
 	defer f.mu.Unlock()
 	f.tasks = append(f.tasks, t)
 	f.deadline, _ = ctx.Deadline()
+	if f.result.Exported {
+		if err := os.WriteFile(t.Bundle, []byte("# v2 git bundle\n"), 0o600); err != nil {
+			return agent.Result{ExitCode: domain.NoExitCode}, err
+		}
+	}
 	return f.result, f.err
+}
+
+// exported is the result of an agent that exited 0 and committed.
+func exported() agent.Result {
+	return agent.Result{ExitCode: 0, Exported: true, Tokens: spent}
 }
 
 func (f *fakeAgent) task(t *testing.T) agent.Task {
@@ -55,9 +68,13 @@ var implementStatement = domain.Issue{Number: implementIssue, Title: "Meter the 
 const checkoutContract = "version: 1\nimage: golang:1.26\ngates:\n  - name: build\n    run: make build\n" +
 	"limits:\n  wall_clock: 20m\nagent_context:\n  - CLAUDE.md\n  - docs/\n"
 
+// agentHead is the commit the agent left on its branch.
+const agentHead = "04915d552e6e507929c4c734b4f4a3a31ae05820"
+
 func implementCheckout() *fakeCheckout {
 	return &fakeCheckout{
 		sha: planSHA, branch: "main", dir: "/tmp/forja-plan-implement",
+		head: agentHead, adoptedDir: "/tmp/forja-plan-implement-adopted",
 		files: map[string]string{
 			".forja.yaml": checkoutContract,
 			"CLAUDE.md":   "# Rules\n",
@@ -95,6 +112,9 @@ func assertTaskFromCheckout(t *testing.T, task agent.Task) {
 	if task.RunID != "run-1" || task.Tree != "/tmp/forja-plan-implement" || task.Contract.Image != "golang:1.26" || task.Issue != implementStatement {
 		t.Fatalf("task = %+v, want run-1 on the checkout's tree with its contract and the issue", task)
 	}
+	if task.Branch != "forja/12" || task.BaseSHA != planSHA || task.Bundle == "" {
+		t.Fatalf("task branch %q base %q bundle %q, want forja/12 started at the base with a bundle path", task.Branch, task.BaseSHA, task.Bundle)
+	}
 	want := []agent.File{{Path: "CLAUDE.md", Content: "# Rules\n"}, {Path: "docs/a.md", Content: "a\n"}, {Path: "docs/b.md", Content: "b\n"}}
 	if !reflect.DeepEqual(task.Context, want) {
 		t.Fatalf("context = %+v, want %+v", task.Context, want)
@@ -116,11 +136,12 @@ func TestImplement_outcomes_stateReasonAndTokensInStatus(t *testing.T) {
 		wantState  string
 		wantReason string
 	}{
-		{name: "agent exits 0", result: agent.Result{ExitCode: 0, Tokens: spent}, wantState: "succeeded"},
+		{name: "agent exits 0 and committed", result: exported(), wantState: "succeeded"},
+		{name: "agent exits 0 without committing", result: agent.Result{ExitCode: 0, Tokens: spent}, wantState: "failed", wantReason: `"no_commits"`},
 		{name: "agent exits 1", result: agent.Result{ExitCode: 1, Tokens: spent}, wantState: "failed"},
 		{name: "deadline", result: agent.Result{ExitCode: domain.NoExitCode, TimedOut: true, Tokens: spent}, wantState: "failed"},
 		{name: "cap", result: agent.Result{ExitCode: domain.NoExitCode, Capped: true, Tokens: spent}, wantState: "failed", wantReason: `"token_cap"`},
-		{name: "cap, agent exited 0", result: agent.Result{ExitCode: 0, Capped: true, Tokens: spent}, wantState: "failed", wantReason: `"token_cap"`},
+		{name: "cap, agent exited 0 and exported", result: agent.Result{ExitCode: 0, Capped: true, Exported: true, Tokens: spent}, wantState: "failed", wantReason: `"token_cap"`},
 		{name: "infrastructure error", result: agent.Result{ExitCode: domain.NoExitCode, Tokens: spent}, err: errors.New("daemon gone"), wantState: "failed"},
 	}
 	for _, tt := range tests {
@@ -163,11 +184,13 @@ func TestImplement_agentEgress_inStatus(t *testing.T) {
 func TestImplement_beforeAgentFails_runFailedClaimReleased(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*implementFixture){
-		"clone":          func(fx *implementFixture) { fx.cloner.err = errors.New("clone refused") },
-		"contract":       func(fx *implementFixture) { fx.cloner.co.files[".forja.yaml"] = "version: 1\n" },
-		"agent_context":  func(fx *implementFixture) { fx.cloner.co.failPath, fx.cloner.co.failErr = "CLAUDE.md", errors.New("disk") },
-		"contract gone":  func(fx *implementFixture) { delete(fx.cloner.co.files, ".forja.yaml") },
-		"issue":          func(fx *implementFixture) { fx.issues.err = errors.New("issue unreadable") },
+		"clone":    func(fx *implementFixture) { fx.cloner.err = errors.New("clone refused") },
+		"contract": func(fx *implementFixture) { fx.cloner.co.files[".forja.yaml"] = "version: 1\n" },
+		"agent_context": func(fx *implementFixture) {
+			fx.cloner.co.failPath, fx.cloner.co.failErr = "CLAUDE.md", errors.New("disk")
+		},
+		"contract gone": func(fx *implementFixture) { delete(fx.cloner.co.files, ".forja.yaml") },
+		"issue":         func(fx *implementFixture) { fx.issues.err = errors.New("issue unreadable") },
 	}
 	for name, breakIt := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -179,7 +202,7 @@ func TestImplement_beforeAgentFails_runFailedClaimReleased(t *testing.T) {
 			if !res.IsError {
 				t.Fatalf("IsError = false when %s fails", name)
 			}
-			if got := fx.calls.list(); !reflect.DeepEqual(got, []string{"claim", "put running", "release", "put failed"}) {
+			if got := fx.calls.list(); !reflect.DeepEqual(got, []string{"claim", "put running", "clone", "release", "put failed"}) {
 				t.Fatalf("calls = %q, want the claim released and the run failed without the agent", got)
 			}
 			if wire := statusOf(t, fx); string(wire["tokens_in"]) != "0" {

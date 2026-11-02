@@ -21,9 +21,38 @@ type ImplementInput struct {
 	BaseBranch string `json:"base_branch" jsonschema:"branch the PR targets"`
 }
 
-// ImplementOutput is the result of forja.implement.
+// ImplementOutput is the result of forja.implement: how the run ended,
+// what it ran on and, when its gates were green, the pull request it
+// opened. A red gate is a result, not a tool error. Setup and Gates are
+// always on the wire, empty when no gate ran.
 type ImplementOutput struct {
 	RunID string `json:"run_id"`
+	State string `json:"state"`
+	// FailureReason and FailedStep are absent unless the run failed for a
+	// reason the control plane names, or at a step of its gates.
+	FailureReason string `json:"failure_reason,omitempty"`
+	FailedStep    string `json:"failed_step,omitempty"`
+	// BaseSHA is the base commit, ContractSHA the blob of .forja.yaml there,
+	// HeadSHA the agent's commit the gates ran on, Branch the run's branch.
+	BaseSHA     string `json:"base_sha,omitempty"`
+	ContractSHA string `json:"contract_sha,omitempty"`
+	HeadSHA     string `json:"head_sha,omitempty"`
+	Branch      string `json:"branch,omitempty"`
+	// PullRequest is absent when the run opened none.
+	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// Evidence is the report the pull request carries, rendered once the
+	// gates ran; absent before.
+	Evidence  string       `json:"evidence,omitempty"`
+	TokensIn  int64        `json:"tokens_in"`
+	TokensOut int64        `json:"tokens_out"`
+	Setup     []StepReport `json:"setup"`
+	Gates     []StepReport `json:"gates"`
+}
+
+// PullRequestRef is a pull request a run opened.
+type PullRequestRef struct {
+	Number int    `json:"number"`
+	URL    string `json:"url"`
 }
 
 // VerifyInput is the argument of forja.verify.

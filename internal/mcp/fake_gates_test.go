@@ -18,9 +18,19 @@ type fakeGates struct {
 	tree     string
 	deadline time.Time
 	hasDL    bool
+	// log, when set, records "gates" in the run's call order; during runs
+	// while the gates would.
+	log    *callLog
+	during func()
 }
 
 func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tree string) (domain.GateReport, error) {
+	if f.log != nil {
+		f.log.add("gates")
+	}
+	if f.during != nil {
+		f.during()
+	}
 	f.calls++
 	f.runID, f.contract, f.tree = runID, c, tree
 	f.deadline, f.hasDL = ctx.Deadline()

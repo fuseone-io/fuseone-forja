@@ -73,7 +73,7 @@ func TestImplement_checkoutOutlivesHeldLease_agentNeverRuns(t *testing.T) {
 			if fx.agent.runs() != 0 {
 				t.Fatalf("the agent ran %d times past the lease, want never", fx.agent.runs())
 			}
-			if got, want := fx.calls.list(), []string{"claim", "put running", "release", "put failed"}; !reflect.DeepEqual(got, want) {
+			if got, want := fx.calls.list(), []string{"claim", "put running", "clone", "release", "put failed"}; !reflect.DeepEqual(got, want) {
 				t.Fatalf("calls = %q, want %q", got, want)
 			}
 		})
