@@ -55,24 +55,25 @@ func credentialsFor(all map[string]registry.Credential, entries []string) (map[s
 // the alias the workspace's URL names. It is not started. The command
 // names the entries and the file, never a credential: docker inspect
 // shows both the command and the environment.
-func createRegistry(ctx context.Context, cli *client.Client, runID string, entries []string) (string, error) {
-	cmd := []string{gatewayDir + "/" + gatewayBin, "registry", "-run", runID,
+func (c *Container) createRegistry(ctx context.Context, entries []string) (string, error) {
+	cmd := []string{gatewayDir + "/" + gatewayBin, "registry", "-run", c.runID,
 		"-registries", strings.Join(entries, ","), "-credentials", registryCredentialsPath}
-	netName := networkName(runID)
-	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	netName := networkName(c.runID)
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:   netName + "-registry",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
+			Runtime:     c.runtime,
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			netName: {Aliases: []string{registryAlias}},
 		}},
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: create registry proxy of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create registry proxy of run %s: %w", c.runID, err)
 	}
 	return created.ID, nil
 }

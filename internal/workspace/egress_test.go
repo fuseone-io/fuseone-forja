@@ -324,7 +324,7 @@ func TestDocker_launchFails_noNetworkOrGatewayLeft(t *testing.T) {
 
 func TestDocker_noGatewayBinary_launchRefusedNothingCreated(t *testing.T) {
 	newDocker(t)
-	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: filepath.Join(t.TempDir(), "no-forjad")})
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: filepath.Join(t.TempDir(), "no-forjad"), Runtime: suiteRuntime(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +379,7 @@ func TestDocker_gatewayExitsBeforeReady_launchFailsNothingLeft(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: script})
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: script, Runtime: suiteRuntime(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
