@@ -169,17 +169,13 @@ func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
 
-		HumanMerge:      run.Proof.HumanMerge(),
-		ProofApparatus:  changedPaths(run.Proof.ProofPaths),
-		HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
+		HumanMerge: run.Proof.HumanMerge(), ProofApparatus: changedPaths(run.Proof.ProofPaths), HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
 
 		Verdict:       string(run.QA.Verdict),
 		VerdictReason: string(run.QA.Reason),
 		Excluded:      excludedOf(run.QA),
 
-		WallClockSeconds: run.Limits.WallClock.Seconds(),
-		MaxDiffLines:     run.Limits.MaxDiffLines,
-		DiffLines:        run.DiffLines,
+		WallClockSeconds: run.Limits.WallClock.Seconds(), MaxDiffLines: run.Limits.MaxDiffLines, DiffLines: run.DiffLines,
 	}
 }
 
