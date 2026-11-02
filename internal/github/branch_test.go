@@ -302,6 +302,91 @@ func adoptRefusals() []adoptCase {
 	}
 }
 
+// In a correction round the workspace's export starts at the branch tip:
+// that is its one prerequisite, and the control plane's clone of the base
+// plus the tip verifies it.
+func TestBundle_ofCloneBranch_singlePrerequisiteIsTheTip(t *testing.T) {
+	t.Parallel()
+	_, co, base, tip := roundCheckout(t)
+	ws := workspaceCopy(t, co)
+	agentCommit(t, ws, map[string]string{"proof.txt": "second round\n"}, "address the finding")
+
+	bundle := exportBundle(t, ws, co.Start(), agentBranch)
+	if got := prerequisites(t, bundle); len(got) != 1 || got[0] != tip || got[0] == base {
+		t.Fatalf("prerequisites = %q, want only the tip %s", got, tip)
+	}
+	runGit(t, co.Dir(), "bundle", "verify", "-q", bundle)
+}
+
+// After CloneBranch, a head is the round's work only when it descends from
+// the tip and differs from it: new commits on top are adopted, a branch
+// left at the tip is no commit at all.
+func TestCheckout_adoptAfterCloneBranch_headMustDescendFromTip(t *testing.T) {
+	t.Parallel()
+	t.Run("commits on top of the tip", func(t *testing.T) {
+		t.Parallel()
+		_, co, _, tip := roundCheckout(t)
+		ws := workspaceCopy(t, co)
+		head := agentCommit(t, ws, map[string]string{"proof.txt": "second round\n"}, "address the finding")
+
+		got, err := co.Adopt(context.Background(), exportBundle(t, ws, co.Start(), agentBranch), agentBranch)
+		if err != nil || got != head {
+			t.Fatalf("Adopt = %s, %v; want the new head %s", got, err, head)
+		}
+		if parent := runGit(t, co.Dir(), "rev-parse", "HEAD^"); parent != tip {
+			t.Fatalf("the new head's parent is %s, want the tip %s", parent, tip)
+		}
+	})
+	t.Run("branch left at the tip", func(t *testing.T) {
+		t.Parallel()
+		repo, co, _, tip := roundCheckout(t)
+		path := filepath.Join(t.TempDir(), "full.bundle")
+		runGit(t, repo.work, "bundle", "create", "-q", path, "refs/heads/"+agentBranch)
+
+		head, err := co.Adopt(context.Background(), path, agentBranch)
+		if !errors.Is(err, domain.ErrNoCommits) {
+			t.Fatalf("Adopt = %s, %v; want ErrNoCommits for a head at the tip", head, err)
+		}
+		if on := runGit(t, co.Dir(), "rev-parse", "HEAD"); on != tip {
+			t.Fatalf("clone HEAD = %s, want the tip %s", on, tip)
+		}
+	})
+}
+
+// A history that does not keep the earlier round's commits is refused: an
+// amend of the tip, or a reset to the base with a new commit, which still
+// descends from the base.
+func TestCheckout_adoptAfterCloneBranch_rewrittenHistoryRefused(t *testing.T) {
+	t.Parallel()
+	rewrites := map[string]func(t *testing.T, ws string, base string){
+		"amend": func(t *testing.T, ws, _ string) {
+			runGit(t, ws, "-c", "user.name=Forja agent", "-c", "user.email=agent@forja.invalid", "commit", "-q", "--amend", "-m", "rewritten")
+		},
+		"reset to the base": func(t *testing.T, ws, base string) {
+			runGit(t, ws, "reset", "-q", "--hard", base)
+			agentCommit(t, ws, map[string]string{"proof.txt": "again\n"}, "start over")
+			// Fails the test unless the new history still descends from the base.
+			runGit(t, ws, "merge-base", "--is-ancestor", base, "HEAD")
+		},
+	}
+	for name, rewrite := range rewrites {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			_, co, base, tip := roundCheckout(t)
+			ws := workspaceCopy(t, co)
+			rewrite(t, ws, base)
+
+			head, err := co.Adopt(context.Background(), exportBundle(t, ws, base, agentBranch), agentBranch)
+			if err == nil {
+				t.Fatalf("Adopt = %s, nil; want a rewritten history refused", head)
+			}
+			if on := runGit(t, co.Dir(), "rev-parse", "HEAD"); on != tip {
+				t.Fatalf("clone HEAD = %s after a refused Adopt, want the tip %s", on, tip)
+			}
+		})
+	}
+}
+
 func TestCheckout_adopt_notTheAgentsWorkOnTheBase_refusedTreeUntouched(t *testing.T) {
 	t.Parallel()
 	for _, tt := range adoptRefusals() {

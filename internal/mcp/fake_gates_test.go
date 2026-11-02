@@ -10,16 +10,17 @@ import (
 // fakeGates answers Run with a scripted report, or an error, and records
 // the run id, the contract, the tree and the deadline it was given. With
 // reports set, the n-th call answers reports[n], the last one once they
-// run out.
+// run out. Like the real runner, an error still comes with the report's
+// compute.
 type fakeGates struct {
-	report   domain.GateReport
-	reports  []domain.GateReport
-	err      error
-	calls    int
-	runID    string
-	contract domain.Contract
-	tree     string
-	trees    []string
+	report    domain.GateReport
+	reports   []domain.GateReport
+	err       error
+	calls     int
+	runID     string
+	contract  domain.Contract
+	tree      string
+	trees     []string
 	deadline  time.Time
 	hasDL     bool
 	deadlines []time.Time
@@ -48,7 +49,7 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 	f.deadline, f.hasDL = ctx.Deadline()
 	f.deadlines = append(f.deadlines, f.deadline)
 	if f.err != nil {
-		return domain.GateReport{}, f.err
+		return domain.GateReport{Compute: f.report.Compute}, f.err
 	}
 	if len(f.reports) > 0 {
 		return f.reports[min(f.calls, len(f.reports))-1], nil

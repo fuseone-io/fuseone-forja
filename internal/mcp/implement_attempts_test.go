@@ -65,7 +65,7 @@ func TestImplement_lintRedThenGreen_pullRequestWithTwoAttempts(t *testing.T) {
 		attemptView{1, firstHead, "lint", firstSpent.In(), firstSpent.Output, 1, 2, lintStderr},
 		attemptView{2, agentHead, "", spent.In(), spent.Output, 1, 2, "warn\n"})
 	assertStageAttempts(t, stagesOf(t, statusOf(t, fx)),
-		"claim:0", "clone:0", "agent:1", "gates:1", "agent:2", "gates:2", "push:0", "pull_request:0", "status:0", "release:0")
+		"claim:0", "clone:0", "agent:1", "gates:1", "agent:2", "gates:2", "diff:0", "push:0", "pull_request:0", "status:0", "release:0")
 }
 
 // outcome is what a run's output says of how it ended.
@@ -360,7 +360,7 @@ func TestImplement_retryAgentCapped_tokenCapNoFurtherAttempt(t *testing.T) {
 }
 
 // The wall clock is one for every attempt: a red gate that came back after
-// it passed starts no new attempt.
+// it passed starts no new attempt, and the run fails for the wall clock.
 func TestImplement_deadlinePassedAfterRedGate_noNewAttempt(t *testing.T) {
 	t.Parallel()
 	fx := retryFixture(t)
@@ -371,8 +371,8 @@ func TestImplement_deadlinePassedAfterRedGate_noNewAttempt(t *testing.T) {
 	if len(fx.agent.taskList()) != 1 || fx.gates.calls != 1 || len(fx.pusher.got()) != 0 {
 		t.Fatalf("agent %d gates %d pushes %d, want 1, 1 and none", len(fx.agent.taskList()), fx.gates.calls, len(fx.pusher.got()))
 	}
-	if out.State != "failed" || out.FailureReason != "gate_failed" || out.FailedStep != "lint" {
-		t.Fatalf("state %q reason %q failed_step %q, want failed gate_failed at lint", out.State, out.FailureReason, out.FailedStep)
+	if out.State != "failed" || out.FailureReason != "wall_clock" || out.FailedStep != "lint" {
+		t.Fatalf("state %q reason %q failed_step %q, want failed wall_clock at lint", out.State, out.FailureReason, out.FailedStep)
 	}
 }
 

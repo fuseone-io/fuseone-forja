@@ -81,7 +81,8 @@ type Launcher interface {
 // Result is how the agent run ended and what the proxies recorded for it.
 // ExitCode is domain.NoExitCode when the agent was stopped, by the
 // deadline (TimedOut) or by the cap (Capped). Exported says the agent's
-// commits are in the task's Bundle.
+// commits are in the task's Bundle. Compute is the time the workspace was
+// up, on every path, a failed launch included.
 type Result struct {
 	ExitCode int
 	TimedOut bool
@@ -89,11 +90,15 @@ type Result struct {
 	Exported bool
 	Tokens   domain.TokenUsage
 	Egress   domain.EgressReport
+	Compute  time.Duration
 }
 
 // Runner runs the agent once per Task.
 type Runner struct {
 	Launcher Launcher
+	// Now is the clock the workspace's compute is measured with; a nil
+	// clock is a configuration error.
+	Now func() time.Time
 }
 
 // Run launches the workspace, writes the prompt to PromptPath and runs the
@@ -102,17 +107,23 @@ type Runner struct {
 // while the workspace still runs. Then it halts the workspace, reads the
 // usage and the egress, and closes it, on every path. The deadline is a
 // result; a cancellation is an error. So is the cap: spent before the
-// launch, no workspace exists and nothing more is metered.
+// launch, no workspace exists and nothing more is metered. The compute
+// runs from just before the launch until Close returned, or until a
+// failed launch returned.
 func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 	if r.Launcher == nil {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
 	}
+	if r.Now == nil {
+		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a clock")
+	}
+	launched := r.Now()
 	ws, err := r.Launcher.LaunchAgent(ctx, Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree, Spent: t.Spent.Total()})
 	if errors.Is(err, ErrCapSpent) {
-		return Result{ExitCode: domain.NoExitCode, Capped: true}, nil
+		return Result{ExitCode: domain.NoExitCode, Capped: true, Compute: r.Now().Sub(launched)}, nil
 	}
 	if err != nil {
-		return Result{ExitCode: domain.NoExitCode}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
+		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
 	}
 	detached := context.WithoutCancel(ctx)
 	defer func() {
@@ -121,6 +132,7 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 		if closeErr := ws.Close(closeCtx); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("agent: close workspace: %w", closeErr))
 		}
+		res.Compute = r.Now().Sub(launched)
 	}()
 	res, err = execute(ctx, ws, t)
 	if err == nil {

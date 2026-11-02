@@ -10,8 +10,8 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// flight is one implement run in progress: its claim, the base branch it
-// starts from, what each stage left for the next, and the record
+// flight is one implement or verify run in progress: its claim, the base
+// branch it starts from, what each stage left for the next, and the record
 // forja.status reads, written when each stage starts and when it ends.
 // One goroutine owns it.
 type flight struct {
@@ -20,6 +20,8 @@ type flight struct {
 	runs  RunStore
 	now   func() time.Time
 	run   domain.Run
+	// round is the correction round the run is; nil for a first run.
+	round *round
 
 	// co and what was read from it at the base commit; set by the clone
 	// stage.
@@ -45,16 +47,17 @@ type flight struct {
 	retry   *agent.Retry
 }
 
-// newFlight is the run of claim c, its claim stage already over.
-func newFlight(deps Deps, c domain.Claim, base string, claimed domain.Stage) *flight {
+// newFlight is the run of t's tool under claim c, from t's base branch,
+// its claim stage already over.
+func newFlight(deps Deps, t runTarget, c domain.Claim, claimed domain.Stage) *flight {
 	run := domain.Run{
-		ID: c.RunID, Tool: domain.ToolImplement, Repository: c.Repository, Issue: c.Issue,
+		ID: c.RunID, Tool: t.tool, Repository: c.Repository, Issue: c.Issue,
 		State: domain.StateRunning, StartedAt: claimed.StartedAt, Stages: []domain.Stage{claimed},
 	}
 	if c.Supersedes != nil {
 		run.Supersedes = c.Supersedes.RunID
 	}
-	return &flight{claim: c, base: base, runs: deps.Runs, now: deps.Now, run: run}
+	return &flight{claim: c, base: t.base, runs: deps.Runs, now: deps.Now, run: run}
 }
 
 // stage records name as started, runs do and records how it ended. do
@@ -89,6 +92,14 @@ func (f *flight) finish(ok bool) {
 	}
 }
 
+// charge records on the stage in flight what it consumed and adds it to
+// the run's totals, which are therefore the sum of its stages'.
+func (f *flight) charge(compute time.Duration, tokens domain.TokenUsage) {
+	s := &f.run.Stages[len(f.run.Stages)-1]
+	s.Compute, s.Tokens = s.Compute+compute, s.Tokens.Add(tokens)
+	f.run.Compute, f.run.Tokens = f.run.Compute+compute, f.run.Tokens.Add(tokens)
+}
+
 func (f *flight) put(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
 	defer cancel()
@@ -115,7 +126,10 @@ func claimStage(started, finished time.Time) domain.Stage {
 func stageReports(stages []domain.Stage) []StageReport {
 	out := make([]StageReport, 0, len(stages))
 	for _, s := range stages {
-		out = append(out, StageReport{Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome), Attempt: s.Attempt})
+		out = append(out, StageReport{
+			Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome), Attempt: s.Attempt,
+			ComputeMinutes: computeMinutes(s.Compute), TokensIn: s.Tokens.In(), TokensOut: s.Tokens.Output,
+		})
 	}
 	return out
 }

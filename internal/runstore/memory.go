@@ -54,6 +54,10 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 // shared between the store and its callers.
 func clone(run domain.Run) domain.Run {
 	run.FinishedAt = cloneTime(run.FinishedAt)
+	if run.DiffLines != nil {
+		lines := *run.DiffLines
+		run.DiffLines = &lines
+	}
 	run.Egress.Denied = slices.Clone(run.Egress.Denied)
 	run.Registry.Accesses = slices.Clone(run.Registry.Accesses)
 	run.Stages = slices.Clone(run.Stages)
@@ -65,6 +69,9 @@ func clone(run domain.Run) domain.Run {
 	for i := range run.Attempts {
 		run.Attempts[i].Gates = cloneReport(run.Attempts[i].Gates)
 	}
+	run.Proof.ProofPaths = slices.Clone(run.Proof.ProofPaths)
+	run.Proof.HumanMergePaths = slices.Clone(run.Proof.HumanMergePaths)
+	run.QA.Excluded = slices.Clone(run.QA.Excluded)
 	return run
 }
 

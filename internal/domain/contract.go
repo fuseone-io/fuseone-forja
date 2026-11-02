@@ -38,13 +38,32 @@ type Verify struct {
 	Exclude []string `json:"exclude"`
 }
 
-// Limits bounds a run.
+// Limits bounds a run: how long it may work, counted from its claim, and
+// how many lines its diff against the base may add and delete.
 type Limits struct {
 	WallClock    time.Duration `json:"wall_clock"`
 	MaxDiffLines int           `json:"max_diff_lines"`
 	// MaxAttempts is how many times the agent may try to turn the gates
 	// green; zero when omitted, which Attempts reads as the default.
 	MaxAttempts int `json:"max_attempts"`
+}
+
+// The limits of a run whose contract omits them.
+const (
+	DefaultWallClock    = 30 * time.Minute
+	DefaultMaxDiffLines = 400
+)
+
+// Effective is l with an omitted wall clock or diff limit set to its
+// default; MaxAttempts is left as it is, for Attempts to read.
+func (l Limits) Effective() Limits {
+	if l.WallClock == 0 {
+		l.WallClock = DefaultWallClock
+	}
+	if l.MaxDiffLines == 0 {
+		l.MaxDiffLines = DefaultMaxDiffLines
+	}
+	return l
 }
 
 // ContractSource is the raw contract as read from the base commit: the

@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -26,9 +25,9 @@ var errNoAgent = errors.New("not wired: no agent; set FORJA_MODEL_API_KEY, FORJA
 // branchPrefix is the namespace of the branches runs push.
 const branchPrefix = "forja/"
 
-// runStep is one stage after the clone, run under the run's deadline
-// with its records on done.
-type runStep func(ctx, done context.Context, f *flight) (bool, error)
+// errWallClock is the cause of a run's deadline: the contract's wall
+// clock ran out.
+var errWallClock = errors.New("limits.wall_clock spent")
 
 // work clones the base, then runs the attempts of the agent and the gates,
 // and the delivery, under one deadline: the contract's wall clock counted
@@ -40,7 +39,7 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	if ok, err := h.cloneStage(ctx, done, f); !ok || err != nil {
 		return false, err
 	}
-	runCtx, cancel := context.WithTimeout(ctx, f.left)
+	runCtx, cancel := context.WithTimeoutCause(ctx, f.left, errWallClock)
 	defer cancel()
 	if f.bundles, err = os.MkdirTemp("", "forja-bundle-*"); err != nil {
 		return false, fmt.Errorf("bundle directory: %w", err)
@@ -48,35 +47,56 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	// The bundles were imported or refused by now; a directory that could
 	// not be removed changes neither.
 	defer func() { _ = os.RemoveAll(f.bundles) }()
-	for _, step := range []runStep{h.attempts, h.pushStage, h.pullRequestStage, h.statusStage} {
+	for _, step := range h.steps(f) {
 		if ok, err := step(runCtx, done, f); !ok || err != nil {
-			return false, err
+			return false, stopped(runCtx, f, err)
 		}
 	}
 	return true, nil
 }
 
-// cloneStage clones the base branch and reads at that commit what the run
-// needs, then starts the run's branch.
+// stopped is what a stage that ended the run leaves to return. When the
+// wall clock ran out, the run failed for it, a result whatever the stage
+// met on the way: it names the reason unless the cap or the run's own
+// terms already named a more specific one than a red gate. Otherwise it
+// is the stage's error.
+func stopped(runCtx context.Context, f *flight, err error) error {
+	if !errors.Is(context.Cause(runCtx), errWallClock) {
+		return err
+	}
+	if f.run.Reason == "" || f.run.Reason == domain.ReasonGateFailed {
+		f.run.Reason = domain.ReasonWallClock
+	}
+	return nil
+}
+
+// cloneStage clones the base branch, with the run's branch at its tip in a
+// correction round, and reads at the base commit what the run needs, then
+// starts the run's branch.
 func (h implementer) cloneStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageClone, func() (bool, error) {
-		co, err := h.deps.Cloner.Clone(ctx, f.run.Repository, f.base)
+		co, err := h.clone(ctx, f)
 		if err != nil {
 			return false, err
 		}
 		f.co, f.run.BaseSHA = co, co.SHA()
+		if f.round != nil {
+			f.run.StartSHA = co.Start()
+		}
 		return true, h.prepare(ctx, f)
 	})
 }
 
 // prepare reads the contract, the issue and the agent_context of the base
-// checkout, sizes what is left of the wall clock and starts the branch.
+// checkout, sizes what is left of the wall clock and starts the branch; a
+// correction round's clone has it checked out already.
 func (h implementer) prepare(ctx context.Context, f *flight) error {
 	parsed, contractSHA, err := readContract(ctx, f.co, f.run.Repository)
 	if err != nil {
 		return err
 	}
-	f.contract, f.run.ContractSHA, f.run.MaxAttempts = parsed, contractSHA, parsed.Limits.Attempts()
+	f.contract, f.run.ContractSHA, f.run.Limits = parsed, contractSHA, parsed.Limits.Effective()
+	f.run.MaxAttempts = parsed.Limits.Attempts()
 	if f.issue, err = h.deps.Issues.Read(ctx, f.run.Repository, f.run.Issue); err != nil {
 		return err
 	}
@@ -87,6 +107,9 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 		return fmt.Errorf("contract at %s: %w", f.co.SHA(), err)
 	}
 	f.run.Branch = branchPrefix + strconv.Itoa(f.run.Issue)
+	if f.round != nil {
+		return nil
+	}
 	return f.co.StartBranch(ctx, f.run.Branch)
 }
 
@@ -100,10 +123,12 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 		f.bundle = filepath.Join(f.bundles, "attempt-"+strconv.Itoa(f.attempt)+".bundle")
 		res, err := h.deps.Agent.Run(ctx, agent.Task{
 			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),
-			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle, Spent: f.run.Tokens, Retry: f.retry,
+			Branch: f.run.Branch, BaseSHA: f.co.Start(), Bundle: f.bundle, Finding: f.finding(),
+			Spent: f.run.Tokens, Retry: f.retry,
 		})
 		f.spent = res.Tokens
-		f.run.Tokens, f.run.Egress = f.run.Tokens.Add(res.Tokens), f.run.Egress.Merge(res.Egress)
+		f.charge(res.Compute, res.Tokens)
+		f.run.Egress = f.run.Egress.Merge(res.Egress)
 		if res.Capped {
 			f.run.Reason = domain.ReasonTokenCap
 		}
@@ -120,9 +145,11 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	})
 }
 
-// adopt brings the exported commits into the checkout; a head at the base
-// is no commit at all, and so is a later attempt's head that is the one
-// the gates already ran on.
+// adopt brings the exported commits into the checkout, counts what the
+// head changes against the base on the control plane's own clone, and
+// classifies those changes by the base contract's lists; a head at the
+// branch's start is no commit at all, and so is a later attempt's head
+// that is the one the gates already ran on.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) || (err == nil && head == f.run.HeadSHA) {
@@ -133,32 +160,17 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 		return false, err
 	}
 	f.run.HeadSHA = head
-	return true, nil
-}
-
-// timeLeft is how long the run may work under the held claim: the
-// contract's wall clock counted from the claim. The contract the run works
-// under may differ from the one the lease was sized from, so it is refused
-// when it asks for a longer lease than the claim holds, or when its wall
-// clock would end at or after the lease, or is already spent.
-func (h implementer) timeLeft(c domain.Claim, parsed domain.Contract) (time.Duration, error) {
-	held := c.ExpiresAt.Sub(c.CreatedAt)
-	need, err := domain.LeaseFor(parsed.Limits, h.deps.Lease)
+	lines, err := f.co.DiffLines(ctx, head)
 	if err != nil {
-		return 0, err
+		return false, err
 	}
-	if need > held {
-		return 0, fmt.Errorf("needs a lease of %v, the claim holds %v", need, held)
+	f.run.DiffLines = &lines
+	changes, err := f.co.Diff(ctx, head)
+	if err != nil {
+		return false, err
 	}
-	end := c.CreatedAt.Add(wallClock(parsed))
-	if !end.Before(c.ExpiresAt) {
-		return 0, fmt.Errorf("wall clock %v does not end before the claim's lease of %v", wallClock(parsed), held)
-	}
-	left := end.Sub(h.deps.Now())
-	if left <= 0 {
-		return 0, fmt.Errorf("wall clock %v spent before the agent started, within the claim's lease of %v", wallClock(parsed), held)
-	}
-	return left, nil
+	f.run.Proof = domain.ClassifyProof(f.contract, changes)
+	return true, nil
 }
 
 func agentFiles(files []ContextFile) []agent.File {

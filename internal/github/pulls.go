@@ -68,6 +68,77 @@ func (p *PullRequests) Open(ctx context.Context, req PullRequestRequest) (domain
 	return domain.PullRequest{Number: res.Number, URL: res.HTMLURL}, nil
 }
 
+// Sentinels for the pull request a branch is asked for.
+var (
+	ErrNoPullRequest    = errors.New("no open pull request")
+	ErrManyPullRequests = errors.New("more than one open pull request")
+)
+
+// listedPull is the subset of a listed pull request Find reads. The head's
+// repository is null when the fork it lived in was deleted.
+type listedPull struct {
+	Number  int    `json:"number"`
+	HTMLURL string `json:"html_url"`
+	User    struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	Head struct {
+		Ref  string `json:"ref"`
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
+	} `json:"head"`
+	Base struct {
+		Ref string `json:"ref"`
+	} `json:"base"`
+}
+
+// Find returns the one open pull request whose head is branch of the
+// repository's owner, with who opened it, the branch it targets and the
+// repository its head lives in, read with a token that only reads pull
+// requests. The head is always sent as owner:branch: without the owner
+// the API ignores the filter. None wraps ErrNoPullRequest, more than one
+// ErrManyPullRequests.
+func (p *PullRequests) Find(ctx context.Context, repo, branch string) (domain.PullRequest, error) {
+	base, err := repoPath(repo)
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	if err := validBranch(branch); err != nil {
+		return domain.PullRequest{}, fmt.Errorf("github: find pull request: %w", err)
+	}
+	owner, _, _ := splitRepo(repo)
+	api, err := mintClient(ctx, scopedClient{tokens: p.Tokens, repo: repo, perms: ReadPullRequests, http: p.HTTP, base: p.BaseURL})
+	if err != nil {
+		return domain.PullRequest{}, err
+	}
+	// Two answers are enough to tell one pull request from many.
+	query := url.Values{"state": {"open"}, "head": {owner + ":" + branch}, "per_page": {"2"}}
+	var listed []listedPull
+	if err := api.do(ctx, apiCall{path: base + "/pulls?" + query.Encode(), want: http.StatusOK}, &listed); err != nil {
+		return domain.PullRequest{}, fmt.Errorf("github: find pull request of %s on %s: %w", branch, repo, err)
+	}
+	return onePull(listed, repo, branch)
+}
+
+// onePull is the single listed pull request of branch.
+func onePull(listed []listedPull, repo, branch string) (domain.PullRequest, error) {
+	switch {
+	case len(listed) == 0:
+		return domain.PullRequest{}, fmt.Errorf("github: %s on %s: %w", branch, repo, ErrNoPullRequest)
+	case len(listed) > 1:
+		return domain.PullRequest{}, fmt.Errorf("github: %s on %s: %w", branch, repo, ErrManyPullRequests)
+	case listed[0].Head.Ref != branch:
+		return domain.PullRequest{}, fmt.Errorf("github: %s on %s: the listing answered a pull request of %q", branch, repo, listed[0].Head.Ref)
+	}
+	pr := listed[0]
+	found := domain.PullRequest{Number: pr.Number, URL: pr.HTMLURL, Author: pr.User.Login, Base: pr.Base.Ref}
+	if pr.Head.Repo != nil {
+		found.HeadRepository = pr.Head.Repo.FullName
+	}
+	return found, nil
+}
+
 // scopedClient is what mintClient needs to build one call's client.
 type scopedClient struct {
 	tokens TokenSource

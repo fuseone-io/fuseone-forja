@@ -25,7 +25,7 @@ func (c *steppingClock) now() time.Time {
 	return c.at
 }
 
-var implementStages = []string{"claim", "clone", "agent", "gates", "push", "pull_request", "status", "release"}
+var implementStages = []string{"claim", "clone", "agent", "gates", "diff", "push", "pull_request", "status", "release"}
 
 func stagesOf(t *testing.T, wire map[string]json.RawMessage) []forja.StageReport {
 	t.Helper()

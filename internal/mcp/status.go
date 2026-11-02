@@ -47,6 +47,13 @@ type StatusOutput struct {
 	// that called no model.
 	TokensIn  int64 `json:"tokens_in"`
 	TokensOut int64 `json:"tokens_out"`
+	// ComputeMinutes is the container-minutes of the run's workspaces and
+	// service sidecars, to three decimals; 0 for a run that launched none.
+	// EstimatedCostUSDMicros prices the compute and the tokens at the
+	// server's current price table, and is absent when it has none. For a
+	// run in flight both count the stages that ended.
+	ComputeMinutes         float64 `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64  `json:"estimated_cost_usd_micros,omitempty"`
 	// FailureReason says why a failed run failed when the control plane
 	// knows more than its state; absent otherwise.
 	FailureReason string `json:"failure_reason,omitempty"`
@@ -69,16 +76,38 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// HumanMerge, ProofApparatus and HumanMergePaths are what of the agent's
+	// head asks for a human merge, as forja.implement reports them; always
+	// on the wire, false and empty before the head is adopted.
+	HumanMerge      bool          `json:"human_merge"`
+	ProofApparatus  []ChangedPath `json:"proof_apparatus"`
+	HumanMergePaths []ChangedPath `json:"human_merge_paths"`
+	// Verdict and VerdictReason are a verify run's, absent until it reached
+	// one; Excluded the changed paths verify.exclude matched, always on the
+	// wire, empty for any other run.
+	Verdict       string   `json:"verdict,omitempty"`
+	VerdictReason string   `json:"verdict_reason,omitempty"`
+	Excluded      []string `json:"excluded"`
+	// WallClockSeconds and MaxDiffLines are the limits an implement run
+	// works under, absent before it read its contract; DiffLines is what its
+	// head adds and deletes against the base, absent until counted.
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs,
-// and Attempt for a stage outside every attempt.
+// and Attempt for a stage outside every attempt. Its compute and tokens
+// are on the wire once it ended, and 0 while it runs or when it used none.
 type StageReport struct {
-	Name       string     `json:"name"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Outcome    string     `json:"outcome"`
-	Attempt    int        `json:"attempt,omitempty"`
+	Name           string     `json:"name"`
+	StartedAt      time.Time  `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Outcome        string     `json:"outcome"`
+	Attempt        int        `json:"attempt,omitempty"`
+	ComputeMinutes float64    `json:"compute_minutes"`
+	TokensIn       int64      `json:"tokens_in"`
+	TokensOut      int64      `json:"tokens_out"`
 }
 
 // RegistryEvent is one request the workspace made to its registry proxy.
@@ -102,22 +131,22 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, its stages, the attempt in flight out of the contract's limit with every attempt's gates, the model tokens it used, what its workspace was refused on the way out, and every request it made to its registry proxy.",
+		Description: "State, start and end of a run, its stages, the attempt in flight out of the contract's limit with every attempt's gates, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy.",
 		Annotations: readClass(),
 	}
 }
 
-func statusHandler(runs RunReader) sdk.ToolHandlerFor[StatusInput, StatusOutput] {
+func statusHandler(runs RunReader, prices *domain.PriceTable) sdk.ToolHandlerFor[StatusInput, StatusOutput] {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in StatusInput) (*sdk.CallToolResult, StatusOutput, error) {
 		run, err := runs.Get(ctx, in.RunID)
 		if err != nil {
 			return nil, StatusOutput{}, fmt.Errorf("%s: %w", domain.ToolStatus, err)
 		}
-		return nil, statusOutput(run), nil
+		return nil, statusOutput(run, prices), nil
 	}
 }
 
-func statusOutput(run domain.Run) StatusOutput {
+func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 	return StatusOutput{
 		ID:         run.ID,
 		Tool:       string(run.Tool),
@@ -134,20 +163,29 @@ func statusOutput(run domain.Run) StatusOutput {
 		RegistryAccessCount: run.Registry.Count,
 		RegistryAccess:      registryEvents(run.Registry.Accesses),
 
-		TokensIn:      run.Tokens.In(),
-		TokensOut:     run.Tokens.Output,
-		FailureReason: string(run.Reason),
+		TokensIn:               run.Tokens.In(),
+		TokensOut:              run.Tokens.Output,
+		ComputeMinutes:         computeMinutes(run.Compute),
+		EstimatedCostUSDMicros: estimate(prices, run),
+		FailureReason:          string(run.Reason),
+
+		Attempt: currentAttempt(run.Stages), MaxAttempts: run.MaxAttempts, Attempts: attemptReports(run.Attempts),
 
 		Stages:      stageReports(run.Stages),
 		Setup:       stepReports(run.Gates.Setup),
 		Gates:       stepReports(run.Gates.Gates),
-		Attempt:     currentAttempt(run.Stages),
-		MaxAttempts: run.MaxAttempts,
-		Attempts:    attemptReports(run.Attempts),
 		BaseSHA:     run.BaseSHA,
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
+
+		HumanMerge: run.Proof.HumanMerge(), ProofApparatus: changedPaths(run.Proof.ProofPaths), HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
+
+		Verdict:       string(run.QA.Verdict),
+		VerdictReason: string(run.QA.Reason),
+		Excluded:      excludedOf(run.QA),
+
+		WallClockSeconds: run.Limits.WallClock.Seconds(), MaxDiffLines: run.Limits.MaxDiffLines, DiffLines: run.DiffLines,
 	}
 }
 

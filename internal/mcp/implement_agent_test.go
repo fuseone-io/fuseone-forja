@@ -100,10 +100,14 @@ const checkoutContract = "version: 1\nimage: golang:1.26\ngates:\n  - name: buil
 // agentHead is the commit the agent left on its branch.
 const agentHead = "04915d552e6e507929c4c734b4f4a3a31ae05820"
 
+// agentDiffLines is what the agent's head changes against the base, under
+// the default max_diff_lines.
+const agentDiffLines = 120
+
 func implementCheckout() *fakeCheckout {
 	return &fakeCheckout{
 		sha: planSHA, branch: "main", dir: "/tmp/forja-plan-implement",
-		head: agentHead, adoptedDir: "/tmp/forja-plan-implement-adopted",
+		head: agentHead, adoptedDir: "/tmp/forja-plan-implement-adopted", diffLines: agentDiffLines,
 		files: map[string]string{
 			".forja.yaml": checkoutContract,
 			"CLAUDE.md":   "# Rules\n",

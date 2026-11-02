@@ -73,6 +73,25 @@ func TestRender_green_citesShasStepsTokensAndElapsed(t *testing.T) {
 	)
 }
 
+// A correction round names the branch tip it started from, next to the
+// base whose contract applied; a first run has no such line.
+func TestRender_startSHA_namedInHeader(t *testing.T) {
+	t.Parallel()
+	const tip = "5f814f9aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+	run := greenRun()
+	run.StartSHA = tip
+
+	body := evidence.Render(run)
+	assertLines(t, body,
+		"| Base commit | `"+baseSHA+"` |",
+		"| Branch tip before this round | `"+tip+"` |",
+		"| Head | `"+headSHA+"` |",
+	)
+	if first := evidence.Render(greenRun()); strings.Contains(first, "Branch tip before this round") {
+		t.Fatalf("a first run's evidence names a branch tip:\n%s", first)
+	}
+}
+
 func TestRender_redGate_exitCodesAsTheyWereSkippedHasNone(t *testing.T) {
 	t.Parallel()
 	run := greenRun()
@@ -163,6 +182,199 @@ func TestRender_underBodyCap_noNote(t *testing.T) {
 	t.Parallel()
 	if body := evidence.Render(greenRun()); strings.Contains(body, "truncated to stay under") {
 		t.Fatalf("a small report carries the truncation note:\n%s", body)
+	}
+}
+
+func proofChange(path string, kind domain.ChangeKind, added, deleted int) domain.FileChange {
+	return domain.FileChange{Path: path, Kind: kind, Added: added, Deleted: deleted}
+}
+
+// sectionOf is the text of body from heading to the next heading.
+func sectionOf(t *testing.T, body, heading string) string {
+	t.Helper()
+	start := strings.Index(body, "\n"+heading+"\n")
+	if start < 0 {
+		t.Fatalf("body lacks %q:\n%s", heading, body)
+	}
+	rest := body[start+1+len(heading):]
+	if end := strings.Index(rest, "\n## "); end >= 0 {
+		rest = rest[:end]
+	}
+	return rest
+}
+
+func TestRender_bothLists_separateSections(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{
+		ProofPaths:      []domain.FileChange{proofChange("Makefile", domain.ChangeModified, 3, 1), {Path: "x/testdata/img.png", Kind: domain.ChangeDeleted, Binary: true}},
+		HumanMergePaths: []domain.FileChange{proofChange(".github/CODEOWNERS", domain.ChangeAdded, 2, 0)},
+	}
+
+	body := evidence.Render(run)
+	if !strings.HasPrefix(body, "Refs #13\n\n**Human merge required.** The agent changed existing files of the base contract's `proof_paths` and files under its `human_merge_paths`.\n\n") {
+		t.Fatalf("body does not mark the human merge right after the reference:\n%s", body)
+	}
+	proof := sectionOf(t, body, "## Proof apparatus")
+	assertLines(t, proof, "| File | Change | Lines |", "| `Makefile` | modified | +3 -1 |", "| `x/testdata/img.png` | deleted | binary |")
+	human := sectionOf(t, body, "## Human merge paths")
+	assertLines(t, human, "| File | Change | Lines |", "| `.github/CODEOWNERS` | added | +2 -0 |")
+	if strings.Contains(proof, "CODEOWNERS") || strings.Contains(human, "Makefile") {
+		t.Fatalf("a list leaked into the other's section:\n%s", body)
+	}
+	if steps := strings.Index(body, "\n## Steps\n"); steps < strings.Index(body, "\n## Human merge paths\n") || steps < strings.Index(body, "\n## Proof apparatus\n") {
+		t.Fatalf("the sections are not before the steps:\n%s", body)
+	}
+}
+
+func TestRender_onlyHumanMergePaths_markedWithoutProofSection(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{HumanMergePaths: []domain.FileChange{proofChange(".github/CODEOWNERS", domain.ChangeAdded, 2, 0)}}
+
+	body := evidence.Render(run)
+	assertLines(t, body, "**Human merge required.** The agent changed files under the base contract's `human_merge_paths`.", "## Human merge paths")
+	if strings.Contains(body, "## Proof apparatus") {
+		t.Fatalf("a proof section with no proof_paths change:\n%s", body)
+	}
+}
+
+func TestRender_onlyProofPaths_markedWithoutHumanMergeSection(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange("pkg/old_test.go", domain.ChangeTypeChanged, 1, 4)}}
+
+	body := evidence.Render(run)
+	assertLines(t, body, "**Human merge required.** The agent changed existing files of the base contract's `proof_paths`.",
+		"## Proof apparatus", "| `pkg/old_test.go` | type_changed | +1 -4 |")
+	if strings.Contains(body, "## Human merge paths") {
+		t.Fatalf("a human merge section with no human_merge_paths change:\n%s", body)
+	}
+}
+
+func TestRender_noProof_noSectionsNoMarking(t *testing.T) {
+	t.Parallel()
+	body := evidence.Render(greenRun())
+	for _, absent := range []string{"Human merge required", "## Proof apparatus", "## Human merge paths"} {
+		if strings.Contains(body, absent) {
+			t.Fatalf("body of a run that changed no listed path carries %q:\n%s", absent, body)
+		}
+	}
+}
+
+// However many paths the agent changed and however long the logs, the body
+// stays under the cap with both sections, the steps and the footer kept,
+// and says how many paths it left out.
+func TestRender_manyChangedPaths_sectionsKeptBodyUnderMax(t *testing.T) {
+	t.Parallel()
+	for name, pathOf := range map[string]func(i int) string{
+		"short paths": func(i int) string { return fmt.Sprintf("pkg/p%04d_test.go", i) },
+		"long paths":  func(i int) string { return fmt.Sprintf("%s/p%04d_test.go", strings.Repeat("d", 3000), i) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			run := greenRun()
+			for i := range 400 {
+				g := step(fmt.Sprintf("gate-%03d", i), "make gate", domain.StepPassed, 0, time.Second)
+				g.Stdout = []byte(strings.Repeat("o", evidence.TailBytes))
+				run.Gates.Gates = append(run.Gates.Gates, g)
+			}
+			for i := range 5000 {
+				run.Proof.ProofPaths = append(run.Proof.ProofPaths, proofChange(pathOf(i), domain.ChangeModified, 1, 1))
+				run.Proof.HumanMergePaths = append(run.Proof.HumanMergePaths, proofChange(".github/"+pathOf(i), domain.ChangeAdded, 1, 0))
+			}
+
+			body := evidence.Render(run)
+			if len(body) > evidence.MaxBody {
+				t.Fatalf("body is %d bytes, want at most %d", len(body), evidence.MaxBody)
+			}
+			for _, section := range []string{"## Proof apparatus", "## Human merge paths"} {
+				rows := strings.Count(sectionOf(t, body, section), "_test.go` |")
+				more := fmt.Sprintf("_…and %d more; full list: `forja.status run_id=run-abc`._", 5000-rows)
+				if rows == 0 || rows > evidence.MaxProofEntries || !strings.Contains(sectionOf(t, body, section), "\n"+more+"\n") {
+					t.Fatalf("%s: %d rows, want 1 to %d followed by %q:\n%s", section, rows, evidence.MaxProofEntries, more, sectionOf(t, body, section))
+				}
+			}
+			assertLines(t, body, "## Steps", "| Head | `"+headSHA+"` |", "| gate-399 | `make gate` | passed | 0 | 1s |")
+			if !strings.HasSuffix(body, "Full tail: `forja.status run_id=run-abc`\n") {
+				t.Fatal("body does not end with where the full tail is")
+			}
+		})
+	}
+}
+
+// A path is the agent's: whatever it holds stays inside its cell.
+func TestRender_pathWithBackticksAndPipes_cannotBreakTable(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange("a`|b\n| forged | row |\n## Steps", domain.ChangeModified, 1, 1)}}
+
+	body := evidence.Render(run)
+	assertLines(t, body, "| ``a`\\|b \\| forged \\| row \\| ## Steps`` | modified | +1 -1 |")
+	if strings.Count(body, "## Steps") != 2 || strings.Contains(body, "\n| forged | row |") {
+		t.Fatalf("the path escaped its cell:\n%s", body)
+	}
+}
+
+// A single path longer than the whole body is left out of its table, not
+// written past the bound into the steps.
+func TestRender_onePathLongerThanBody_leftOutBodyUnderMax(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange(strings.Repeat("d/", evidence.MaxBody)+"x_test.go", domain.ChangeModified, 1, 1)}}
+
+	body := evidence.Render(run)
+	if len(body) > evidence.MaxBody {
+		t.Fatalf("body is %d bytes, want at most %d", len(body), evidence.MaxBody)
+	}
+	assertLines(t, sectionOf(t, body, "## Proof apparatus"), "_…and 1 more; full list: `forja.status run_id=run-abc`._")
+	assertLines(t, body, "## Steps")
+}
+
+// Git keeps a path as bytes; one that is not UTF-8 is shown with a
+// replacement character, so the body the byte budget measured is the body
+// the API receives.
+func TestRender_pathNotUTF8_replacedBodyValid(t *testing.T) {
+	t.Parallel()
+	run := greenRun()
+	run.Proof = domain.Proof{ProofPaths: []domain.FileChange{proofChange("pkg/\xff\xfe_test.go", domain.ChangeModified, 1, 1)}}
+
+	body := evidence.Render(run)
+	if !utf8.ValidString(body) {
+		t.Fatal("body is not valid UTF-8")
+	}
+	assertLines(t, body, "| `pkg/�_test.go` | modified | +1 -1 |")
+}
+
+// The limits the run worked under are cited next to what it measured: the
+// wall clock, and the diff's lines against their cap, whichever side of it
+// they fell.
+func TestRender_limits_wallClockAndDiffLinesAgainstLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		wallClock time.Duration
+		measured  int
+		limit     int
+		want      []string
+	}{
+		{name: "under the limit", wallClock: 20 * time.Minute, measured: 120, limit: 400,
+			want: []string{"| Wall clock limit | 20m0s |", "| Diff lines (measured / limit) | 120 / 400 |"}},
+		{name: "over the limit", wallClock: 90 * time.Second, measured: 401, limit: 400,
+			want: []string{"| Wall clock limit | 1m30s |", "| Diff lines (measured / limit) | 401 / 400 |"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run := greenRun()
+			run.Limits, run.DiffLines = domain.Limits{WallClock: tt.wallClock, MaxDiffLines: tt.limit}, tt.measured
+
+			body := evidence.Render(run)
+			assertLines(t, body, tt.want...)
+			if again := evidence.Render(run); again != body {
+				t.Fatalf("two renders of the same limits differ:\n%s\n---\n%s", body, again)
+			}
+		})
 	}
 }
 

@@ -35,6 +35,7 @@ func greenEvidence() string {
 		Gates: greenReport(), Tokens: spent,
 		Attempts:    []domain.Attempt{{Number: 1, HeadSHA: agentHead, Gates: greenReport(), Tokens: spent}},
 		MaxAttempts: domain.DefaultMaxAttempts,
+		Limits:      domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 	})
 }
 
@@ -76,10 +77,16 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	t.Helper()
 	got := out
 	got.Setup, got.Gates, got.Attempts = nil, nil, nil
+	if got.DiffLines == nil || *got.DiffLines != agentDiffLines {
+		t.Fatalf("diff_lines = %v, want the %d the control plane counted", got.DiffLines, agentDiffLines)
+	}
+	got.DiffLines = nil
 	want := forja.ImplementOutput{
 		RunID: "run-1", State: "succeeded", BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead, Branch: runBranch,
 		PullRequest: &forja.PullRequestRef{Number: 41, URL: prURL}, Evidence: greenEvidence(), TokensIn: 1230, TokensOut: 400,
 		Attempt: 1, MaxAttempts: 3,
+		WallClockSeconds: 1200, MaxDiffLines: 400,
+		ProofApparatus: []forja.ChangedPath{}, HumanMergePaths: []forja.ChangedPath{},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("output = %+v\nwant %+v", got, want)
@@ -87,8 +94,13 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	if len(out.Setup) != 1 || len(out.Gates) != 2 || out.Gates[1].Stderr != "warn\n" {
 		t.Fatalf("setup %+v gates %+v, want the green report", out.Setup, out.Gates)
 	}
-	if len(out.Attempts) != 1 || out.Attempts[0].Number != 1 || out.Attempts[0].HeadSHA != agentHead || out.Attempts[0].FailedStep != "" || out.Attempts[0].TokensIn != 1230 {
-		t.Fatalf("attempts = %+v, want the one green attempt on the head", out.Attempts)
+	assertOneGreenAttempt(t, out.Attempts)
+}
+
+func assertOneGreenAttempt(t *testing.T, attempts []forja.AttemptReport) {
+	t.Helper()
+	if len(attempts) != 1 || attempts[0].Number != 1 || attempts[0].HeadSHA != agentHead || attempts[0].FailedStep != "" || attempts[0].TokensIn != 1230 {
+		t.Fatalf("attempts = %+v, want the one green attempt on the head", attempts)
 	}
 }
 

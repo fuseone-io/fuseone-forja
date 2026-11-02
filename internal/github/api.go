@@ -75,6 +75,16 @@ type apiCall struct {
 	body   []byte
 	// want is the status that carries the expected response.
 	want int
+	// limit bounds what is read of the expected response; zero means
+	// maxBody.
+	limit int64
+}
+
+func (a apiCall) bodyLimit() int64 {
+	if a.limit > 0 {
+		return a.limit
+	}
+	return maxBody
 }
 
 func (a apiCall) verb() string {
@@ -107,7 +117,7 @@ func (c *apiClient) do(ctx context.Context, call apiCall, out any) error {
 	if out == nil {
 		return nil
 	}
-	if err := json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(out); err != nil {
+	if err := json.NewDecoder(io.LimitReader(res.Body, call.bodyLimit())).Decode(out); err != nil {
 		return fmt.Errorf("%s %s: decode response: %w", call.verb(), call.path, err)
 	}
 	return nil

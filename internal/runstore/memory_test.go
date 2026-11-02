@@ -233,6 +233,69 @@ func TestMemory_get_egressListNotShared(t *testing.T) {
 	}
 }
 
+// The changed paths are evidence: neither list is shared with the writer
+// after Put nor with a reader after Get.
+func TestMemory_proofLists_notSharedWithCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	proof := domain.FileChange{Path: "Makefile", Kind: domain.ChangeModified, Added: 1}
+	human := domain.FileChange{Path: ".github/CODEOWNERS", Kind: domain.ChangeAdded, Added: 2}
+	original := sampleRun("run-1")
+	original.Proof = domain.Proof{ProofPaths: []domain.FileChange{proof}, HumanMergePaths: []domain.FileChange{human}}
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	original.Proof.ProofPaths[0].Path, original.Proof.HumanMergePaths[0].Path = "after-put", "after-put"
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Proof.ProofPaths) != 1 || got.Proof.ProofPaths[0] != proof || len(got.Proof.HumanMergePaths) != 1 || got.Proof.HumanMergePaths[0] != human {
+		t.Fatalf("proof after the writer's change = %+v, want [%+v] and [%+v]", got.Proof, proof, human)
+	}
+	got.Proof.ProofPaths[0].Path, got.Proof.HumanMergePaths[0].Path = "after-get", "after-get"
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.Proof.ProofPaths[0] != proof || again.Proof.HumanMergePaths[0] != human {
+		t.Fatalf("proof after a reader's change = %+v", again.Proof)
+	}
+}
+
+// The excluded paths are what a verify run's verdict was reached on: no
+// writer after Put nor reader after Get changes them through a shared list.
+func TestMemory_get_qaExcludedListNotShared(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	original := sampleRun("run-1")
+	original.Tool = domain.ToolVerify
+	original.QA = domain.QA{Verdict: domain.VerdictNotVerifiable, Reason: domain.NotVerifiableOnlyExcludedPaths, Excluded: []string{"README.md"}}
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	original.QA.Excluded[0] = "changed-after-put.go"
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if !reflect.DeepEqual(got.QA.Excluded, []string{"README.md"}) {
+		t.Fatalf("excluded after the writer's change = %q, want [README.md]", got.QA.Excluded)
+	}
+	got.QA.Excluded[0] = "changed-after-get.go"
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if !reflect.DeepEqual(again.QA.Excluded, []string{"README.md"}) {
+		t.Fatalf("excluded after a reader's change = %q, want [README.md]", again.QA.Excluded)
+	}
+}
+
 // The tokens and the reason are values: what Get returns is what was put,
 // and a reader's copy is its own.
 func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
@@ -253,6 +316,31 @@ func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
 	got.Tokens.Output = 999
 	if again, _ := store.Get(ctx, "run-1"); again.Tokens != run.Tokens {
 		t.Fatalf("tokens after a reader's change = %+v, want %+v", again.Tokens, run.Tokens)
+	}
+}
+
+// The limits and the measured diff are values too: a reader changing its
+// copy, or the writer changing the run after Put, changes neither what the
+// store holds.
+func TestMemory_limitsAndDiffLines_notSharedWithCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	run := sampleRun("run-1")
+	lines := 120
+	run.Limits, run.DiffLines = domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, &lines
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	lines = 999
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil || got.DiffLines == nil || *got.DiffLines != 120 || got.Limits != run.Limits {
+		t.Fatalf("Get = diff lines %v limits %+v (%v), want 120 under %+v", got.DiffLines, got.Limits, err, run.Limits)
+	}
+	*got.DiffLines = 7
+	if again, _ := store.Get(ctx, "run-1"); again.DiffLines == nil || *again.DiffLines != 120 {
+		t.Fatalf("diff lines after a reader's change = %v, want 120", again.DiffLines)
 	}
 }
 
