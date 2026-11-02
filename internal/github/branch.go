@@ -84,7 +84,7 @@ func validBranch(name string) error {
 	if name == "" || strings.HasPrefix(name, "-") {
 		return fmt.Errorf("branch %q is not a branch name", name)
 	}
-	if strings.ContainsAny(name, " ~^:?*[\\\x7f") || strings.Contains(name, "@{") || strings.Contains(name, "..") {
+	if refusedBytes(name) {
 		return fmt.Errorf("branch %q has a character git refuses", name)
 	}
 	for _, segment := range strings.Split(name, "/") {
@@ -92,10 +92,14 @@ func validBranch(name string) error {
 			return fmt.Errorf("branch %q has a segment git refuses", name)
 		}
 	}
-	for _, r := range name {
-		if r < 0x20 {
-			return fmt.Errorf("branch %q has a control character", name)
-		}
-	}
 	return validRef("refs/heads/" + name)
+}
+
+// refusedBytes reports a control character or any byte sequence
+// git-check-ref-format refuses anywhere in a ref.
+func refusedBytes(name string) bool {
+	if strings.ContainsAny(name, " ~^:?*[\\\x7f") || strings.Contains(name, "@{") || strings.Contains(name, "..") {
+		return true
+	}
+	return strings.ContainsFunc(name, func(r rune) bool { return r < 0x20 })
 }
