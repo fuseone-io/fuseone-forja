@@ -1,4 +1,4 @@
-# ADR 9999: model proxy and the agent in the workspace
+# ADR 0038: model proxy and the agent in the workspace
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #11
