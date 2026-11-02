@@ -14,4 +14,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |
 | [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
-| [9999](9999-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |
+| [0048](0048-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |

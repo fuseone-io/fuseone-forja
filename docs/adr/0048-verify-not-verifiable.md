@@ -1,4 +1,4 @@
-# ADR 9999: forja.verify, the "not verifiable" verdict and forja/qa pending
+# ADR 0048: forja.verify, the "not verifiable" verdict and forja/qa pending
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #21
