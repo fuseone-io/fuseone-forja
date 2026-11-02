@@ -170,6 +170,21 @@ func TestPullRequests_find_moreThanOne_refused(t *testing.T) {
 	}
 }
 
+// A listing that did not honour the head filter answers another branch's
+// pull request, which is never taken for the branch's own.
+func TestPullRequests_find_listingIgnoresHead_otherBranchRefused(t *testing.T) {
+	t.Parallel()
+	fake := newFakeDelivery(t, deliveryToken)
+	fake.listed = roundPulls()[2:]
+	fake.unfiltered = true
+	prs, _ := pullRequests(fake)
+
+	got, err := prs.Find(context.Background(), fakeRepo, agentBranch)
+	if err == nil {
+		t.Fatalf("Find = %+v, want an error for a listing of another branch's pull request", got)
+	}
+}
+
 func TestPullRequests_findBadInput_refusedBeforeAnyMint(t *testing.T) {
 	t.Parallel()
 	fake := newFakeDelivery(t, deliveryToken)

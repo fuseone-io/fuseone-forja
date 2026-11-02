@@ -45,6 +45,9 @@ type fakeDelivery struct {
 	commits  map[string]bool
 	listed   []fakePull
 	login    string
+	// unfiltered answers the listing as the API does for a head it does
+	// not honour: every pull request of the state asked for.
+	unfiltered bool
 
 	mu       sync.Mutex
 	nextPR   int
@@ -210,6 +213,7 @@ func (f *fakeDelivery) listPulls(w http.ResponseWriter, r *http.Request) {
 		state = "open"
 	}
 	owner, ref, filtered := strings.Cut(q.Get("head"), ":")
+	filtered = filtered && !f.unfiltered
 	out := []map[string]any{}
 	for _, p := range f.listed {
 		if (state != "all" && p.state != state) || (filtered && (owner != fakeOwner || p.head != ref)) {
