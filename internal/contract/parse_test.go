@@ -207,6 +207,42 @@ func TestParse_invalid_errorNamesPathAndLine(t *testing.T) {
 	}
 }
 
+// A registry entry outside host[:port][/path] is a contract defect at its
+// own index and line; an uppercase one is the same entry, lowercased.
+func TestParse_registryEntryMalformed_errorWithPath(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		entry string
+		// want is the normalised entry when the contract is accepted.
+		want string
+	}{
+		{name: "scheme", entry: "https://ghcr.io/my-org"},
+		{name: "query", entry: "ghcr.io/my-org?x=1"},
+		{name: "wildcard", entry: "'*.github.com'"},
+		{name: "dot dot segment", entry: "ghcr.io/my-org/../other"},
+		{name: "trailing slash", entry: "ghcr.io/my-org/"},
+		{name: "uppercase normalised", entry: "GHCR.io/My-Org", want: "ghcr.io/my-org"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			src := minimal + "registries:\n  - npm.pkg.github.com\n  - " + tt.entry + "\n"
+			c, err := contract.Parse([]byte(src))
+			if tt.want != "" {
+				if err != nil || !reflect.DeepEqual(c.Registries, []string{"npm.pkg.github.com", tt.want}) {
+					t.Fatalf("Parse = (%q, %v), want [npm.pkg.github.com %s]", c.Registries, err, tt.want)
+				}
+				return
+			}
+			errs := fieldErrors(t, err)
+			if len(errs) != 1 || errs[0].Path != "registries[1]" || errs[0].Line != 8 || errs[0].Message == "" {
+				t.Fatalf("errors = %v, want one at registries[1] on line 8", errs)
+			}
+		})
+	}
+}
+
 func TestParse_severalErrors_allReported(t *testing.T) {
 	t.Parallel()
 	// The needs reference can only be judged once services are known, so it

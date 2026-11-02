@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/proxy/egress"
+	"github.com/fuseone-io/fuseone-forja/internal/proxy/registry"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
@@ -20,8 +22,8 @@ type pilotLauncher struct {
 	docker *workspace.Docker
 }
 
-func (l pilotLauncher) Launch(ctx context.Context, runID, image, tree string) (gates.Workspace, error) {
-	c, err := l.docker.Launch(ctx, runID, image, tree)
+func (l pilotLauncher) Launch(ctx context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
+	c, err := l.docker.Launch(ctx, workspace.LaunchSpec(spec))
 	if err != nil {
 		return nil, err
 	}
@@ -83,6 +85,52 @@ func TestPilot_doctorContractOnThisRepository(t *testing.T) {
 	logReport(t, report)
 }
 
+// TestPilot_setupThroughRegistryProxy runs this repository's setup with
+// the Go module proxy declared as a registry, in memory, and no egress at
+// all: every module and the toolchain come through the run's registry
+// proxy, which holds a canary credential. .forja.yaml is not changed. It
+// is a manual run: set FORJA_PILOT_TEST=1.
+func TestPilot_setupThroughRegistryProxy(t *testing.T) {
+	if os.Getenv("FORJA_PILOT_TEST") != "1" {
+		t.Skip("set FORJA_PILOT_TEST=1 to run the pilot setup through the registry proxy in Docker")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := os.ReadFile(filepath.Join(root, ".forja.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := contract.Parse(body)
+	if err != nil || len(c.Setup) != 2 {
+		t.Fatalf("contract.Parse = %d setup steps, %v; want the pilot's two", len(c.Setup), err)
+	}
+	// proxy.golang.org does not proxy the checksum database, so the go
+	// command is pointed at it through the registry proxy as well.
+	const goproxy = `GOPROXY=$FORJA_REGISTRY_URL/proxy.golang.org GOSUMDB="sum.golang.org $FORJA_REGISTRY_URL/sum.golang.org" `
+	c.Registries = []string{"proxy.golang.org", "sum.golang.org"}
+	c.Setup = []string{goproxy + c.Setup[0], "GOTOOLCHAIN=auto " + goproxy + c.Setup[1]}
+	c.Gates = []domain.Gate{}
+	secret := canary(t)
+	d := newDockerWith(t, workspace.Options{RegistryCredentials: map[string]registry.Credential{
+		"proxy.golang.org": {Username: "forja-pilot", Password: secret},
+		"sum.golang.org":   {Username: "forja-pilot", Password: secret},
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), gates.DefaultWallClock)
+	defer cancel()
+
+	runner := &gates.Runner{Launcher: pilotLauncher{d}, Now: time.Now}
+	report, err := runner.Run(ctx, newRunID(t), c, root)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	logReport(t, report)
+	if !report.OK() || report.Registry.Count == 0 {
+		t.Fatalf("setup through the registry proxy: ok=%v accesses=%d, want ok with accesses", report.OK(), report.Registry.Count)
+	}
+}
+
 func logReport(t *testing.T, report domain.GateReport) {
 	t.Helper()
 	for _, r := range append(report.Setup, report.Gates...) {
@@ -95,7 +143,14 @@ func logReport(t *testing.T, report domain.GateReport) {
 	for _, denial := range report.Egress.Denied {
 		t.Logf("denied %-7s %s", denial.Kind, denial.Destination)
 	}
-	t.Logf("ok=%v failed_step=%q egress_denied=%d", report.OK(), report.FailedStep, report.Egress.Count)
+	outcomes := map[string]int{}
+	for _, a := range report.Registry.Accesses {
+		outcomes[a.Registry+" "+string(a.Outcome)+" "+strconv.Itoa(a.Status)]++
+	}
+	for key, n := range outcomes {
+		t.Logf("registry %s x%d", key, n)
+	}
+	t.Logf("ok=%v failed_step=%q egress_denied=%d registry_access=%d", report.OK(), report.FailedStep, report.Egress.Count, report.Registry.Count)
 }
 
 func tail(b []byte) string {

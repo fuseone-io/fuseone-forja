@@ -11,3 +11,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0029](0029-workspace-agent.md) | Agent that runs in the workspace (provisional default) | proposed — ratification pending |
 | [0033](0033-reservation-by-ref-with-lease.md) | Issue reservation by ref with lease | proposed |
 | [0035](0035-egress-gateway.md) | Per-run egress gateway | proposed |
+| [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |

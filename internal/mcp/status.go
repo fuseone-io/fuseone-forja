@@ -37,6 +37,21 @@ type StatusOutput struct {
 	// EgressDenied lists the first of them, empty when there were none.
 	EgressDeniedCount int           `json:"egress_denied_count"`
 	EgressDenied      []EgressEvent `json:"egress_denied"`
+	// RegistryAccessCount is every request the run's registry proxy served
+	// or refused; RegistryAccess lists the first of them, empty when the
+	// run made none or declares no registry.
+	RegistryAccessCount int             `json:"registry_access_count"`
+	RegistryAccess      []RegistryEvent `json:"registry_access"`
+}
+
+// RegistryEvent is one request the workspace made to its registry proxy.
+type RegistryEvent struct {
+	At       time.Time `json:"at"`
+	Registry string    `json:"registry"`
+	// Path follows the registry entry, without the query.
+	Path    string `json:"path"`
+	Outcome string `json:"outcome"`
+	Status  int    `json:"status"`
 }
 
 // EgressEvent is one refused attempt to leave the workspace.
@@ -50,7 +65,7 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, and what its workspace was refused on the way out.",
+		Description: "State, start and end of a run, what its workspace was refused on the way out, and every request it made to its registry proxy.",
 		Annotations: readClass(),
 	}
 }
@@ -78,7 +93,18 @@ func statusOutput(run domain.Run) StatusOutput {
 
 		EgressDeniedCount: run.Egress.Count,
 		EgressDenied:      egressEvents(run.Egress.Denied),
+
+		RegistryAccessCount: run.Registry.Count,
+		RegistryAccess:      registryEvents(run.Registry.Accesses),
 	}
+}
+
+func registryEvents(accesses []domain.RegistryAccess) []RegistryEvent {
+	events := make([]RegistryEvent, 0, len(accesses))
+	for _, a := range accesses {
+		events = append(events, RegistryEvent{At: a.At, Registry: a.Registry, Path: a.Path, Outcome: string(a.Outcome), Status: a.Status})
+	}
+	return events
 }
 
 func egressEvents(denied []domain.EgressDenial) []EgressEvent {

@@ -30,14 +30,16 @@ type ExecResult struct {
 	Truncated bool
 }
 
-// Container is one running workspace, with the network and the gateway of
-// its run and the sidecars started for it.
+// Container is one running workspace, with the network, the gateway and
+// the registry proxy of its run and the sidecars started for it.
 type Container struct {
 	cli     *client.Client
 	runID   string
 	id      string
 	gateway string
-	network string
+	// registry is empty for a run that declares no registry.
+	registry string
+	network  string
 
 	mu       sync.Mutex
 	sidecars []string
@@ -134,17 +136,20 @@ func (c *Container) exitCode(ctx context.Context, execID string) (int, error) {
 }
 
 // Close kills and removes every sidecar, then the workspace, then its
-// gateway, then the run's network, which the daemon removes only once
-// nothing is attached to it. A container or network the daemon no longer
-// knows is already closed, so Close is idempotent. Every removal is
-// attempted whatever the one before it returned.
+// registry proxy and its gateway, then the run's network, which the daemon
+// removes only once nothing is attached to it. A container or network the
+// daemon no longer knows is already closed, so Close is idempotent. Every
+// removal is attempted whatever the one before it returned.
 func (c *Container) Close(ctx context.Context) error {
 	sidecars := c.tracked()
-	errs := make([]error, 0, len(sidecars)+3)
+	errs := make([]error, 0, len(sidecars)+4)
 	for _, id := range sidecars {
 		errs = append(errs, removeContainer(ctx, c.cli, id))
 	}
 	errs = append(errs, removeContainer(ctx, c.cli, c.id))
+	if err := removeContainer(ctx, c.cli, c.registry); err != nil {
+		errs = append(errs, fmt.Errorf("registry proxy: %w", err))
+	}
 	if err := removeContainer(ctx, c.cli, c.gateway); err != nil {
 		errs = append(errs, fmt.Errorf("gateway: %w", err))
 	}

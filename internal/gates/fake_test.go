@@ -68,6 +68,40 @@ type fakeWorkspace struct {
 	egress      domain.EgressReport
 	egressErr   error
 	egressReads int
+	// registry is what the registry proxy served; registryErr fails
+	// reading it.
+	registry      domain.RegistryReport
+	registryErr   error
+	registryReads int
+	// registryReadAt is how many events had happened at the last read.
+	registryReadAt int
+}
+
+// registryRead is how many times the proxy's log was read, and how many
+// events had happened by the last read.
+func (w *fakeWorkspace) registryRead() (reads, at int) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.registryReads, w.registryReadAt
+}
+
+// Registry fails like Egress: on a context that already ended, and after
+// Close, when the proxy and its log no longer exist.
+func (w *fakeWorkspace) Registry(ctx context.Context) (domain.RegistryReport, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.RegistryReport{}, fmt.Errorf("fake: registry: %w", err)
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if !w.launched || w.closed > 0 {
+		return domain.RegistryReport{}, errors.New("fake: registry read without a proxy")
+	}
+	w.registryReads++
+	w.registryReadAt = len(w.events)
+	if w.registryErr != nil {
+		return domain.RegistryReport{}, w.registryErr
+	}
+	return w.registry, nil
 }
 
 // Egress fails on a context that already ended, as a daemon call does, and
@@ -218,12 +252,14 @@ type fakeLauncher struct {
 	runID string
 	image string
 	tree  string
-	calls int
+	// registries is what the last Launch was asked to proxy.
+	registries []string
+	calls      int
 }
 
-func (l *fakeLauncher) Launch(_ context.Context, runID, image, tree string) (gates.Workspace, error) {
+func (l *fakeLauncher) Launch(_ context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
 	l.calls++
-	l.runID, l.image, l.tree = runID, image, tree
+	l.runID, l.image, l.tree, l.registries = spec.RunID, spec.Image, spec.Tree, spec.Registries
 	if l.err != nil {
 		return nil, l.err
 	}

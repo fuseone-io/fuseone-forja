@@ -82,7 +82,7 @@ func (p *parser) topLevel() map[string]func(*yaml.Node) {
 		"image":             func(n *yaml.Node) { p.c.Image = p.nonEmptyString(n, "image") },
 		"setup":             func(n *yaml.Node) { p.c.Setup = p.stringList(n, "setup") },
 		"services":          p.services,
-		"registries":        func(n *yaml.Node) { p.c.Registries = p.stringList(n, "registries") },
+		"registries":        p.registries,
 		"gates":             p.gates,
 		"verify":            p.verify,
 		"proof_paths":       func(n *yaml.Node) { p.c.ProofPaths = p.globs(n, "proof_paths") },

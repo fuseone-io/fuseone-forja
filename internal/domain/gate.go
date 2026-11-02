@@ -51,6 +51,10 @@ type GateReport struct {
 	// Egress is what the run's gateway refused while the steps ran, as the
 	// control plane read it from the gateway's own log.
 	Egress EgressReport
+	// Registry is what the run's registry proxy served and refused, as the
+	// control plane read it from the proxy's own log; empty when the
+	// contract declares no registry.
+	Registry RegistryReport
 }
 
 // OK reports whether the run may be trusted: no step failed or timed out,
