@@ -1,4 +1,4 @@
-# ADR 9999: per-run registry proxy
+# ADR 0037: per-run registry proxy
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #16

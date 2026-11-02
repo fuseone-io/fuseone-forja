@@ -158,7 +158,7 @@ outside the declared entries is denied and logged. Forja configures no tool:
 the repository's `setup` points its own at that URL, for example
 `GOPROXY=$FORJA_REGISTRY_URL/proxy.golang.org` or
 `git config --global url."$FORJA_REGISTRY_URL/github.com/my-org/".insteadOf "https://github.com/my-org/"`.
-See [ADR 9999](docs/adr/9999-registry-proxy.md).
+See [ADR 0037](docs/adr/0037-registry-proxy.md).
 
 ## The tools
 
