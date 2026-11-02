@@ -398,6 +398,78 @@ func TestMemory_zeroValue_putThenGet(t *testing.T) {
 	assertSameRun(t, got, sampleRun("run-1"))
 }
 
+// listedRun is sampleRun in repo, started offset after noon.
+func listedRun(id, repo string, offset time.Duration) domain.Run {
+	run := stagedRun()
+	run.ID, run.Repository = id, repo
+	run.StartedAt = run.StartedAt.Add(offset)
+	run.Egress = domain.EgressReport{Denied: []domain.EgressDenial{{At: run.StartedAt, Kind: domain.EgressHTTP, Destination: "example.com:80"}}, Count: 1}
+	return run
+}
+
+func listIDs(runs []domain.Run) []string {
+	ids := make([]string, 0, len(runs))
+	for _, r := range runs {
+		ids = append(ids, r.ID)
+	}
+	return ids
+}
+
+// List returns the runs the filter matches, newest start first and, on the
+// same start, highest id first; and what it returns is a copy.
+func TestMemory_list_filtersSortsAndReturnsCopies(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	for _, r := range []domain.Run{
+		listedRun("run-a", "acme/api", 0),
+		listedRun("run-c", "acme/api", time.Hour),
+		listedRun("run-b", "acme/api", time.Hour),
+		listedRun("run-d", "acme/web", 2*time.Hour),
+	} {
+		if err := store.Put(ctx, r); err != nil {
+			t.Fatalf("Put %s: %v", r.ID, err)
+		}
+	}
+
+	got, err := store.List(ctx, domain.RunFilter{Repository: "acme/api"})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if want := []string{"run-c", "run-b", "run-a"}; !reflect.DeepEqual(listIDs(got), want) {
+		t.Fatalf("List = %v, want %v", listIDs(got), want)
+	}
+	all, err := store.List(ctx, domain.RunFilter{})
+	if err != nil || len(all) != 4 || all[0].ID != "run-d" {
+		t.Fatalf("List(zero filter) = %v, %v; want all four, run-d first", listIDs(all), err)
+	}
+
+	scribble(got[0])
+	got[0].Egress.Denied[0].Destination = "changed:80"
+	again, err := store.Get(ctx, "run-c")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	assertStagedRun(t, "after a lister's change", again, listedRun("run-c", "acme/api", time.Hour))
+	if again.Egress.Denied[0].Destination != "example.com:80" {
+		t.Fatalf("a lister's change reached the store's egress list: %+v", again.Egress.Denied)
+	}
+}
+
+func TestMemory_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	var store runstore.Memory
+
+	got, err := store.List(ctx, domain.RunFilter{Repository: "acme/none"})
+	if err != nil || got == nil || len(got) != 0 {
+		t.Fatalf("List on the zero value = %#v, %v; want an empty slice", got, err)
+	}
+	if _, err := store.List(ctx, domain.RunFilter{State: "paused"}); err == nil || !strings.Contains(err.Error(), "paused") {
+		t.Fatalf("List(unknown state) = %v, want an error naming it", err)
+	}
+}
+
 func TestMemory_concurrentPutAndGet_noRace(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -415,6 +487,10 @@ func TestMemory_concurrentPutAndGet_noRace(t *testing.T) {
 				}
 				if _, err := store.Get(ctx, id); err != nil {
 					t.Errorf("Get %s: %v", id, err)
+					return
+				}
+				if _, err := store.List(ctx, domain.RunFilter{}); err != nil {
+					t.Errorf("List: %v", err)
 					return
 				}
 			}
