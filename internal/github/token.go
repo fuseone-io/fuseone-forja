@@ -32,12 +32,13 @@ func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 type Permissions map[string]string
 
 // The permission sets the control plane asks for: reading the contract and
-// cloning the base branch, reading the issue, writing the refs that
-// reserve an issue and pushing the run's branch, opening its pull request,
-// and publishing its commit status.
+// cloning the base branch, reading the issue, reading a pull request and
+// its files, writing the refs that reserve an issue and pushing the run's
+// branch, opening its pull request, and publishing its commit status.
 var (
 	ReadContents      = Permissions{"contents": "read"}
 	ReadIssues        = Permissions{"issues": "read"}
+	ReadPullRequests  = Permissions{"pull_requests": "read"}
 	WriteContents     = Permissions{"contents": "write"}
 	WritePullRequests = Permissions{"pull_requests": "write"}
 	WriteStatuses     = Permissions{"statuses": "write"}
