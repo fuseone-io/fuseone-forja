@@ -121,7 +121,9 @@ Local git 2.54.0 (Apple Git-157).
 
 ## Consequences
 
-- `GIT_ATTR_SOURCE` needs git 2.40 or later on the control plane.
+- `GIT_ATTR_SOURCE` needs git 2.40 or later on the control plane. An older
+  git ignores the variable without an error, and the agent's own
+  `.gitattributes` then decides what counts as binary.
 - A run that hits its wall clock while the pull request or the status call is
   in flight may leave a pushed branch or an open pull request without
   `forja/gates` (as ADR 0042 already notes for a failed call).

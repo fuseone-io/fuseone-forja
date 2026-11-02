@@ -50,9 +50,9 @@ type ImplementOutput struct {
 	MaxDiffLines     int          `json:"max_diff_lines,omitempty"`
 	DiffLines        *int         `json:"diff_lines,omitempty"`
 	TokensIn         int64        `json:"tokens_in"`
-	TokensOut int64        `json:"tokens_out"`
-	Setup     []StepReport `json:"setup"`
-	Gates     []StepReport `json:"gates"`
+	TokensOut        int64        `json:"tokens_out"`
+	Setup            []StepReport `json:"setup"`
+	Gates            []StepReport `json:"gates"`
 }
 
 // PullRequestRef is a pull request a run opened.
