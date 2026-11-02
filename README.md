@@ -149,6 +149,19 @@ agent_context:
 Gates are the repository's own commands. Forja reads the exit code and keeps
 the raw log; it never interprets test output.
 
+`limits` bounds each `forja.implement` run; an omitted limit takes its
+default. `wall_clock` (default `30m`) is how long the run may work, counted
+from the claim: agent, gates, push, pull request and status all run under it,
+and a run it ends is `failed` with reason `wall_clock`, its workspaces
+destroyed and its claim released. `max_diff_lines` (default `400`) is how many
+lines the agent's head may add and delete against the base commit, counted by
+the control plane on its own clone and checked once the gates passed: added plus deleted
+lines, a rename as a delete and an add, a binary file as zero, with the base
+commit's `.gitattributes` deciding what is binary. One line over the limit and
+nothing is pushed; the run is `failed` with reason `diff_too_large`. Both
+limits, and the measured lines, are in `forja.status` and in the evidence. See
+[ADR 0043](docs/adr/0043-run-limits.md).
+
 `registries` lists the private registries `setup` fetches from, each as
 `host[:port][/path]`. When the list is not empty, the run gets a registry
 proxy that holds the area's read credential, and the workspace gets

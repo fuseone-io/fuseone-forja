@@ -2,6 +2,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strconv"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -53,11 +54,32 @@ func (h implementer) gatesStage(ctx, done context.Context, f *flight) (bool, err
 }
 
 func (h implementer) evidenceOf(f *flight) evidence.Run {
-	return evidence.Run{
+	r := evidence.Run{
 		Issue: f.run.Issue, RunID: f.run.ID, BaseBranch: f.co.Branch(),
 		BaseSHA: f.run.BaseSHA, ContractSHA: f.run.ContractSHA, HeadSHA: f.run.HeadSHA,
 		Gates: f.run.Gates, Tokens: f.run.Tokens, Elapsed: h.deps.Now().Sub(f.run.StartedAt),
+		Limits: f.run.Limits,
 	}
+	if f.run.DiffLines != nil {
+		r.DiffLines = *f.run.DiffLines
+	}
+	return r
+}
+
+// diffStage holds back a head that changes more lines against the base
+// than the contract allows: nothing is pushed, opened or published, and
+// the run fails without an error. The limit itself passes.
+func (h implementer) diffStage(_, done context.Context, f *flight) (bool, error) {
+	return f.stage(done, domain.StageDiff, func() (bool, error) {
+		if f.run.DiffLines == nil {
+			return false, errors.New("diff of the head was never counted")
+		}
+		if *f.run.DiffLines > f.run.Limits.MaxDiffLines {
+			f.run.Reason = domain.ReasonDiffTooLarge
+			return false, nil
+		}
+		return true, nil
+	})
 }
 
 // pushStage sends the head to the run's branch from the control plane's
@@ -113,6 +135,7 @@ func implementOutput(run domain.Run, body string) ImplementOutput {
 		RunID: run.ID, State: string(run.State), FailureReason: string(run.Reason), FailedStep: run.Gates.FailedStep,
 		BaseSHA: run.BaseSHA, ContractSHA: run.ContractSHA, HeadSHA: run.HeadSHA, Branch: run.Branch,
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
+		WallClockSeconds: run.Limits.WallClock.Seconds(), MaxDiffLines: run.Limits.MaxDiffLines, DiffLines: run.DiffLines,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
 		Setup: stepReports(run.Gates.Setup), Gates: stepReports(run.Gates.Gates),
 	}

@@ -40,6 +40,10 @@ type Run struct {
 	Tokens  domain.TokenUsage
 	// Elapsed is the run's wall time so far, from the control plane's clock.
 	Elapsed time.Duration
+	// Limits are the limits the run worked under; DiffLines the lines the
+	// head adds and deletes against the base, as the control plane counted.
+	Limits    domain.Limits
+	DiffLines int
 }
 
 // Render is the pull request body for r. The same Run always renders the
@@ -77,6 +81,8 @@ func header(r Run) string {
 		{"Head", code(r.HeadSHA)},
 		{"Tokens in / out", fmt.Sprintf("%d / %d", r.Tokens.In(), r.Tokens.Output)},
 		{"Elapsed", r.Elapsed.Round(time.Second).String()},
+		{"Wall clock limit", r.Limits.WallClock.String()},
+		{"Diff lines (measured / limit)", fmt.Sprintf("%d / %d", r.DiffLines, r.Limits.MaxDiffLines)},
 	}
 	for _, row := range rows {
 		fmt.Fprintf(&b, "| %s | %s |\n", row[0], row[1])

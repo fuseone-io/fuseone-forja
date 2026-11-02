@@ -79,6 +79,12 @@ type Run struct {
 	Branch  string
 	// PullRequest is the pull request the run opened; zero when none.
 	PullRequest PullRequest
+	// Limits are the limits the run works under, its base contract's with
+	// the defaults filled; zero until the contract was read.
+	Limits Limits
+	// DiffLines is the lines the agent's head adds and deletes against the
+	// base, as the control plane counted them; nil until counted.
+	DiffLines *int
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known

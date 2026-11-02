@@ -42,4 +42,9 @@ const (
 	ReasonGateFailed FailureReason = "gate_failed"
 	// ReasonNoCommits is a run whose agent exited 0 without committing.
 	ReasonNoCommits FailureReason = "no_commits"
+	// ReasonWallClock is a run that its contract's limits.wall_clock ended.
+	ReasonWallClock FailureReason = "wall_clock"
+	// ReasonDiffTooLarge is a run whose diff against the base changed more
+	// lines than its contract's limits.max_diff_lines.
+	ReasonDiffTooLarge FailureReason = "diff_too_large"
 )
