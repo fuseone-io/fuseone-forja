@@ -256,6 +256,31 @@ func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
 	}
 }
 
+// The limits and the measured diff are values too: a reader changing its
+// copy, or the writer changing the run after Put, changes neither what the
+// store holds.
+func TestMemory_limitsAndDiffLines_notSharedWithCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	run := sampleRun("run-1")
+	lines := 120
+	run.Limits, run.DiffLines = domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, &lines
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	lines = 999
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil || got.DiffLines == nil || *got.DiffLines != 120 || got.Limits != run.Limits {
+		t.Fatalf("Get = diff lines %v limits %+v (%v), want 120 under %+v", got.DiffLines, got.Limits, err, run.Limits)
+	}
+	*got.DiffLines = 7
+	if again, _ := store.Get(ctx, "run-1"); again.DiffLines == nil || *again.DiffLines != 120 {
+		t.Fatalf("diff lines after a reader's change = %v, want 120", again.DiffLines)
+	}
+}
+
 // The registry accesses are evidence too, under the same rule as the
 // denials.
 func TestMemory_get_registryListNotShared(t *testing.T) {

@@ -15,6 +15,7 @@ const (
 	StageClone       StageName = "clone"
 	StageAgent       StageName = "agent"
 	StageGates       StageName = "gates"
+	StageDiff        StageName = "diff"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
 	StageStatus      StageName = "status"

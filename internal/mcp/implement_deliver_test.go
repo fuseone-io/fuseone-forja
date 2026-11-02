@@ -33,6 +33,7 @@ func greenEvidence() string {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
+		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 	})
 }
 
@@ -74,9 +75,14 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	t.Helper()
 	got := out
 	got.Setup, got.Gates = nil, nil
+	if got.DiffLines == nil || *got.DiffLines != agentDiffLines {
+		t.Fatalf("diff_lines = %v, want the %d the control plane counted", got.DiffLines, agentDiffLines)
+	}
+	got.DiffLines = nil
 	want := forja.ImplementOutput{
 		RunID: "run-1", State: "succeeded", BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead, Branch: runBranch,
 		PullRequest: &forja.PullRequestRef{Number: 41, URL: prURL}, Evidence: greenEvidence(), TokensIn: 1230, TokensOut: 400,
+		WallClockSeconds: 1200, MaxDiffLines: 400,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("output = %+v\nwant %+v", got, want)

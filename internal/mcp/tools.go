@@ -42,9 +42,15 @@ type ImplementOutput struct {
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
 	// Evidence is the report the pull request carries, rendered once the
 	// gates ran; absent before.
-	Evidence  string `json:"evidence,omitempty"`
-	TokensIn  int64  `json:"tokens_in"`
-	TokensOut int64  `json:"tokens_out"`
+	Evidence string `json:"evidence,omitempty"`
+	// WallClockSeconds and MaxDiffLines are the limits the run worked
+	// under, absent before it read its contract; DiffLines is what its head
+	// adds and deletes against the base, absent until counted.
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
 	// ComputeMinutes and EstimatedCostUSDMicros are as forja.status reports
 	// them.
 	ComputeMinutes         float64      `json:"compute_minutes"`

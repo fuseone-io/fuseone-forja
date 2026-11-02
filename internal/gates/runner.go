@@ -14,7 +14,7 @@ import (
 )
 
 // DefaultWallClock bounds a run whose contract sets no limits.wall_clock.
-const DefaultWallClock = 30 * time.Minute
+const DefaultWallClock = domain.DefaultWallClock
 
 // DefaultReadiness is how long a service has to become ready when the
 // Runner sets no Readiness.

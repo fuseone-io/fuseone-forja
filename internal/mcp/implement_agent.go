@@ -26,6 +26,10 @@ var errNoAgent = errors.New("not wired: no agent; set FORJA_MODEL_API_KEY, FORJA
 // branchPrefix is the namespace of the branches runs push.
 const branchPrefix = "forja/"
 
+// errWallClock is the cause of a run's deadline: the contract's wall
+// clock ran out.
+var errWallClock = errors.New("limits.wall_clock spent")
+
 // runStep is one stage after the clone, run under the run's deadline
 // with its records on done.
 type runStep func(ctx, done context.Context, f *flight) (bool, error)
@@ -40,7 +44,7 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	if ok, err := h.cloneStage(ctx, done, f); !ok || err != nil {
 		return false, err
 	}
-	runCtx, cancel := context.WithTimeout(ctx, f.left)
+	runCtx, cancel := context.WithTimeoutCause(ctx, f.left, errWallClock)
 	defer cancel()
 	dir, err := os.MkdirTemp("", "forja-bundle-*")
 	if err != nil {
@@ -50,12 +54,27 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	// be removed changes neither.
 	defer func() { _ = os.RemoveAll(dir) }()
 	f.bundle = filepath.Join(dir, "commits.bundle")
-	for _, step := range []runStep{h.agentStage, h.gatesStage, h.pushStage, h.pullRequestStage, h.statusStage} {
+	for _, step := range []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage} {
 		if ok, err := step(runCtx, done, f); !ok || err != nil {
-			return false, err
+			return false, stopped(runCtx, f, err)
 		}
 	}
 	return true, nil
+}
+
+// stopped is what a stage that ended the run leaves to return. When the
+// wall clock ran out, the run failed for it, a result whatever the stage
+// met on the way: it names the reason unless the cap or the run's own
+// terms already named a more specific one than a red gate. Otherwise it
+// is the stage's error.
+func stopped(runCtx context.Context, f *flight, err error) error {
+	if !errors.Is(context.Cause(runCtx), errWallClock) {
+		return err
+	}
+	if f.run.Reason == "" || f.run.Reason == domain.ReasonGateFailed {
+		f.run.Reason = domain.ReasonWallClock
+	}
+	return nil
 }
 
 // cloneStage clones the base branch and reads at that commit what the run
@@ -78,7 +97,7 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 	if err != nil {
 		return err
 	}
-	f.contract, f.run.ContractSHA = parsed, contractSHA
+	f.contract, f.run.ContractSHA, f.run.Limits = parsed, contractSHA, parsed.Limits.Effective()
 	if f.issue, err = h.deps.Issues.Read(ctx, f.run.Repository, f.run.Issue); err != nil {
 		return err
 	}
@@ -119,8 +138,9 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	})
 }
 
-// adopt brings the exported commits into the checkout; a head at the base
-// is no commit at all.
+// adopt brings the exported commits into the checkout and counts what the
+// head changes against the base on the control plane's own clone; a head
+// at the base is no commit at all.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) {
@@ -131,6 +151,11 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 		return false, err
 	}
 	f.run.HeadSHA = head
+	lines, err := f.co.DiffLines(ctx, head)
+	if err != nil {
+		return false, err
+	}
+	f.run.DiffLines = &lines
 	return true, nil
 }
 

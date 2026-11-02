@@ -69,6 +69,12 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// WallClockSeconds and MaxDiffLines are the limits an implement run
+	// works under, absent before it read its contract; DiffLines is what its
+	// head adds and deletes against the base, absent until counted.
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs.
@@ -150,6 +156,10 @@ func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
+
+		WallClockSeconds: run.Limits.WallClock.Seconds(),
+		MaxDiffLines:     run.Limits.MaxDiffLines,
+		DiffLines:        run.DiffLines,
 	}
 }
 
