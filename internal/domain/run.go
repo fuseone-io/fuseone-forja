@@ -62,6 +62,23 @@ type Run struct {
 	// Reason is why a failed run failed, when that is more than its
 	// outcome; empty otherwise.
 	Reason FailureReason
+	// Stages are the steps of an implement run in the order they started;
+	// the last one may still be running.
+	Stages []Stage
+	// Gates is the report of the gates an implement run ran on the agent's
+	// head; empty until they ran.
+	Gates GateReport
+	// BaseSHA is the commit of the base branch the run started from, and
+	// ContractSHA the blob of .forja.yaml at that commit, the contract that
+	// applied.
+	BaseSHA     string
+	ContractSHA string
+	// HeadSHA is the agent's last commit once the control plane imported
+	// it, and Branch the branch it is pushed to.
+	HeadSHA string
+	Branch  string
+	// PullRequest is the pull request the run opened; zero when none.
+	PullRequest PullRequest
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known

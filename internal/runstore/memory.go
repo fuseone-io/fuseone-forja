@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
@@ -49,14 +50,41 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 	return clone(run), nil
 }
 
-// clone copies the run so that neither the pointer field nor the denial
-// and access lists are shared between the store and its callers.
+// clone copies the run so that none of its pointers, lists or streams are
+// shared between the store and its callers.
 func clone(run domain.Run) domain.Run {
-	if run.FinishedAt != nil {
-		finished := *run.FinishedAt
-		run.FinishedAt = &finished
-	}
+	run.FinishedAt = cloneTime(run.FinishedAt)
 	run.Egress.Denied = slices.Clone(run.Egress.Denied)
 	run.Registry.Accesses = slices.Clone(run.Registry.Accesses)
+	run.Stages = slices.Clone(run.Stages)
+	for i := range run.Stages {
+		run.Stages[i].FinishedAt = cloneTime(run.Stages[i].FinishedAt)
+	}
+	run.Gates = cloneReport(run.Gates)
 	return run
+}
+
+func cloneReport(r domain.GateReport) domain.GateReport {
+	r.Setup = cloneResults(r.Setup)
+	r.Gates = cloneResults(r.Gates)
+	r.Egress.Denied = slices.Clone(r.Egress.Denied)
+	r.Registry.Accesses = slices.Clone(r.Registry.Accesses)
+	return r
+}
+
+func cloneResults(results []domain.GateResult) []domain.GateResult {
+	results = slices.Clone(results)
+	for i := range results {
+		results[i].Stdout = slices.Clone(results[i].Stdout)
+		results[i].Stderr = slices.Clone(results[i].Stderr)
+	}
+	return results
+}
+
+func cloneTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	return &c
 }

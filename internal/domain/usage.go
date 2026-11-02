@@ -33,5 +33,13 @@ func (u TokenUsage) Total() int64 {
 // a reason more specific than the run's own outcome.
 type FailureReason string
 
-// ReasonTokenCap is a run whose model proxy refused it more tokens.
-const ReasonTokenCap FailureReason = "token_cap"
+// The reasons the control plane gives for a failed run.
+const (
+	// ReasonTokenCap is a run whose model proxy refused it more tokens.
+	ReasonTokenCap FailureReason = "token_cap"
+	// ReasonGateFailed is a run whose gates did not all pass on the agent's
+	// head.
+	ReasonGateFailed FailureReason = "gate_failed"
+	// ReasonNoCommits is a run whose agent exited 0 without committing.
+	ReasonNoCommits FailureReason = "no_commits"
+)
