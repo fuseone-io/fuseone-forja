@@ -116,12 +116,20 @@ func (h implementer) pullRequestStage(ctx, done context.Context, f *flight) (boo
 			return false, err
 		}
 		f.run.PullRequest = pr
-		if !f.run.Proof.HumanMerge() {
-			return true, nil
-		}
-		err = h.deps.PullRequests.Label(ctx, github.LabelRequest{Repository: f.run.Repository, Number: pr.Number, Labels: []string{humanMergeLabel}})
-		return err == nil, err
+		return h.labelHumanMerge(ctx, f)
 	})
+}
+
+// labelHumanMerge marks the run's pull request when its head needs a human
+// merge; a failed label fails the stage that called it.
+func (h implementer) labelHumanMerge(ctx context.Context, f *flight) (bool, error) {
+	if !f.run.Proof.HumanMerge() {
+		return true, nil
+	}
+	err := h.deps.PullRequests.Label(ctx, github.LabelRequest{
+		Repository: f.run.Repository, Number: f.run.PullRequest.Number, Labels: []string{humanMergeLabel},
+	})
+	return err == nil, err
 }
 
 // statusStage publishes forja/gates success on the head, pointing at the

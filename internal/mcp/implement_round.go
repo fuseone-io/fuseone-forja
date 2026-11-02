@@ -131,12 +131,17 @@ func (f *flight) finding() string {
 	return f.round.finding
 }
 
-// commentStage posts the evidence on the round's pull request.
+// commentStage posts the evidence on the round's pull request and labels
+// it when the head needs a human merge, before forja/gates as on a first
+// run's pull request.
 func (h implementer) commentStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageComment, func() (bool, error) {
 		err := h.deps.PullRequests.Comment(ctx, github.CommentRequest{
 			Repository: f.run.Repository, Number: f.run.PullRequest.Number, Body: f.evidence,
 		})
-		return err == nil, err
+		if err != nil {
+			return false, err
+		}
+		return h.labelHumanMerge(ctx, f)
 	})
 }

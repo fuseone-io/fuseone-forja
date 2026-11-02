@@ -276,3 +276,59 @@ func TestImplement_gateRed_proofStillReported(t *testing.T) {
 		t.Fatalf("a red gate made %d delivery calls, want none", n)
 	}
 }
+
+// newRoundProofFixture is the correction round fixture whose base contract
+// carries the pilot's lists, and whose branch head changes the given paths
+// against the base.
+func newRoundProofFixture(t *testing.T, changes ...domain.FileChange) *implementFixture {
+	t.Helper()
+	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.branchCloner.co.files[".forja.yaml"] = proofContract
+	fx.branchCloner.co.changes = changes
+	return fx
+}
+
+// A round works on a pull request it did not open: when its head changes
+// the proof, that pull request is marked before forja/gates all the same.
+func TestImplement_correctionRound_proofChanged_labelBeforeStatus(t *testing.T) {
+	t.Parallel()
+	fx := newRoundProofFixture(t, makefileChanged)
+
+	out := decodeImplement(t, callRound(t, fx.cs, nil))
+	want := []github.LabelRequest{{Repository: doctorRepo, Number: 57, Labels: []string{"forja/human-merge"}}}
+	if got := fx.prs.labels.got(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %+v, want %+v", got, want)
+	}
+	assertDeliveryOrder(t, fx, "push", "label", "status")
+	if out.State != "succeeded" || !out.HumanMerge {
+		t.Fatalf("state %q human_merge %v, want succeeded and marked", out.State, out.HumanMerge)
+	}
+}
+
+func TestImplement_correctionRound_noProofChange_noLabel(t *testing.T) {
+	t.Parallel()
+	fx := newRoundProofFixture(t, productionChange)
+
+	decodeImplement(t, callRound(t, fx.cs, nil))
+	if got := fx.prs.labels.got(); len(got) != 0 {
+		t.Fatalf("labels = %+v, want none", got)
+	}
+	assertDeliveryOrder(t, fx, "push", "status")
+}
+
+// Fail closed in a round too: a refused label leaves the head without
+// forja/gates.
+func TestImplement_correctionRound_labelRefused_noStatus(t *testing.T) {
+	t.Parallel()
+	fx := newRoundProofFixture(t, codeownersAdded)
+	fx.prs.labels.err = errors.New("label down")
+
+	res := callRound(t, fx.cs, nil)
+	if !res.IsError || !strings.Contains(textOf(res), "label down") {
+		t.Fatalf("IsError %v text %q, want the label's failure as a tool error", res.IsError, textOf(res))
+	}
+	if got := fx.statuses.got(); len(got) != 0 {
+		t.Fatalf("statuses = %+v, want none", got)
+	}
+	assertFailedAt(t, fx, "comment")
+}

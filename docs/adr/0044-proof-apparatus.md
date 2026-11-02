@@ -75,6 +75,12 @@ published: a green `forja/gates` never sits on an unmarked pull request. This
 is fail-closed. The `forja/gates` context, state and description are
 unchanged; the status keeps reflecting only the gates.
 
+A correction round (ADR 0047) opens no pull request: it labels the one it
+found, right after its comment and before `forja/gates`, inside the `comment`
+stage, with the same fail-closed rule. Its diff is the whole branch against
+the base commit, so a proof change an earlier round made still marks it. The
+round never removes a label.
+
 ### 7. When the diff is computed
 
 At adoption, in the agent stage, right after `Checkout.Adopt` returns the
@@ -158,9 +164,9 @@ From the measurer, before any code; nothing was written to GitHub.
 - Until the label exists in the repository, or until it is measured that the
   add-labels call creates it, a run that needs a human merge may fail at the
   label with no status published. That is the fail-closed choice.
-- What happens to an existing label on a correction round on the same branch
-  is #20's. `max_diff_lines` counts with its own `Checkout.DiffLines`, which
-  reads text and binary from the base's attributes; `Checkout.Diff` does not.
+- A correction round adds the label when its head needs it and never removes
+  one. `max_diff_lines` counts with its own `Checkout.DiffLines`, which reads
+  text and binary from the base's attributes; `Checkout.Diff` does not.
 
 ## What only the human can do
 

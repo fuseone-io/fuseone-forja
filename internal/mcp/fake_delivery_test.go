@@ -90,12 +90,13 @@ func (f *fakePullRequests) Open(ctx context.Context, req github.PullRequestReque
 }
 
 // Label refuses, as the API and the client do, a pull request other than
-// the one it opened and an empty list.
+// the one it opened or the one Find answers, and an empty list.
 func (f *fakePullRequests) Label(ctx context.Context, req github.LabelRequest) error {
 	if err := f.labels.record(ctx, req); err != nil {
 		return err
 	}
-	if req.Number != 41 || len(req.Labels) == 0 {
+	known := req.Number == 41 || (f.found.Number != 0 && req.Number == f.found.Number)
+	if !known || len(req.Labels) == 0 {
 		return errLabelRefused
 	}
 	return nil
