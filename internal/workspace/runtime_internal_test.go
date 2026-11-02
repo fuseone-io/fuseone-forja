@@ -24,6 +24,7 @@ func TestRuntimeAvailable_configuredAgainstRegistered(t *testing.T) {
 		{name: "not registered", registered: map[string]system.RuntimeWithStatus{"runc": {}}, want: "runsc", refused: true},
 		{name: "daemon listing none", registered: nil, want: "runsc", refused: true},
 		{name: "case differs", registered: registered, want: "RUNSC", refused: true},
+		{name: "prefix of a registered name", registered: registered, want: "run", refused: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
