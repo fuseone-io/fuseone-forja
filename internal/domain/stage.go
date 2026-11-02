@@ -12,13 +12,17 @@ type StageName string
 // The stages of the implement and verify runs. An implement run goes
 // claim, clone, agent, gates, diff, push, pull_request, status, release;
 // a correction round comments on the pull request it found instead of
-// opening one. A verify run goes claim, clone, diff, status, release.
+// opening one. A verify run goes claim, clone, diff, status, release when
+// its diff is not verifiable, and claim, clone, diff, gates, agent, one
+// inversion per admitted candidate, status, release when it has
+// production code.
 const (
 	StageClaim       StageName = "claim"
 	StageClone       StageName = "clone"
 	StageAgent       StageName = "agent"
 	StageGates       StageName = "gates"
 	StageDiff        StageName = "diff"
+	StageInversion   StageName = "inversion"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
 	StageComment     StageName = "comment"
@@ -65,3 +69,6 @@ type PullRequest struct {
 
 // ErrNoCommits means the agent's branch holds no commit beyond the base.
 var ErrNoCommits = errors.New("no commits beyond the base")
+
+// ErrNoBranch means the branch asked for is not in the workspace's tree.
+var ErrNoBranch = errors.New("branch not in the tree")

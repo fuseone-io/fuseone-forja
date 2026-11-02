@@ -70,7 +70,8 @@ type Run struct {
 	// the last one may still be running.
 	Stages []Stage
 	// Gates is the report of the gates an implement run ran on the agent's
-	// head; empty until they ran.
+	// head, or a verify run on the pull request's head before any
+	// inversion; empty until they ran.
 	Gates GateReport
 	// BaseSHA is the commit of the base branch the run started from, and
 	// ContractSHA the blob of .forja.yaml at that commit, the contract that
@@ -94,6 +95,9 @@ type Run struct {
 	PullRequest PullRequest
 	// QA is the verdict of a verify run; zero for any other run.
 	QA QA
+	// Inversions are the candidates of a verify run's QA agent the control
+	// plane looked at, in the agent's order, admitted or not.
+	Inversions []Inversion
 	// Limits are the limits the run works under, its base contract's with
 	// the defaults filled; zero until the contract was read.
 	Limits Limits
