@@ -1,4 +1,4 @@
-# ADR 9999: from the agent's commits to a pull request with forja/gates
+# ADR 0042: from the agent's commits to a pull request with forja/gates
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #13
