@@ -15,6 +15,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/proxy/registry"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -133,6 +134,30 @@ func TestRegistry_undeclaredRegistry_deniedInReport(t *testing.T) {
 	got := report.Accesses[0]
 	if got.Registry != "example.com" || got.Path != "/x" || got.Outcome != domain.RegistryDenied || got.Status != 403 || got.At.IsZero() {
 		t.Fatalf("access = %+v, want example.com /x denied 403 with a time", got)
+	}
+}
+
+// Through the real runner, the way forja.doctor runs it: the contract's
+// registries get the run its proxy, and the report carries the access.
+func TestRegistry_gateThroughRunner_accessInGateReport(t *testing.T) {
+	d := newDockerWith(t, workspace.Options{RegistryCredentials: map[string]registry.Credential{
+		testRegistry: {Username: "forja-reader", Password: canary(t)},
+	}})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	runner := &gates.Runner{Launcher: pilotLauncher{d}, Now: time.Now}
+	c := domain.Contract{Image: testImage, Registries: []string{testRegistry},
+		Gates: []domain.Gate{{Name: "fetch", Run: `wget -Y off -T 5 -q -O- "$FORJA_REGISTRY_URL/example.com/x"`}}}
+
+	report, err := runner.Run(ctx, newRunID(t), c, treeWith(t))
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if fetch := report.Gates[0]; fetch.Status != domain.StepFailed || fetch.ExitCode == 0 {
+		t.Fatalf("gate = {%s exit %d}, want failed by its exit code", fetch.Status, fetch.ExitCode)
+	}
+	if report.Registry.Count != 1 || report.Registry.Accesses[0].Registry != "example.com" || report.Registry.Accesses[0].Outcome != domain.RegistryDenied {
+		t.Fatalf("report.Registry = %+v, want the one denied access of example.com", report.Registry)
 	}
 }
 

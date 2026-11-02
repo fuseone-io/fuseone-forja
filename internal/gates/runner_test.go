@@ -459,6 +459,84 @@ func TestRunner_egressUnreadable_errorAndWorkspaceClosed(t *testing.T) {
 	}
 }
 
+// registryAccesses is a proxy report with more requests counted than
+// listed, so a runner that rebuilt it from the list would be caught.
+func registryAccesses() domain.RegistryReport {
+	at := time.Date(2026, 11, 2, 9, 0, 3, 0, time.UTC)
+	return domain.RegistryReport{
+		Accesses: []domain.RegistryAccess{
+			{At: at, Registry: "ghcr.io/my-org", Path: "/pkg", Outcome: domain.RegistryAllowed, Status: 200},
+			{At: at, Registry: "example.com", Path: "/x", Outcome: domain.RegistryDenied, Status: 403},
+		},
+		Count: 9,
+	}
+}
+
+// The accesses are read after the last step, timed out or red ones
+// included, and before the workspace is removed with its proxy.
+func TestRunner_registryReport_carriedAfterSteps(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		script   func() map[string]scripted
+		deadline time.Duration
+	}{
+		{name: "green run", script: allGreen},
+		{name: "red gate", script: func() map[string]scripted {
+			s := allGreen()
+			s["make build"] = scripted{exit: 1}
+			return s
+		}},
+		{name: "timed out gate", script: func() map[string]scripted {
+			s := allGreen()
+			s["make build"] = scripted{block: true}
+			return s
+		}, deadline: 50 * time.Millisecond},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ws := &fakeWorkspace{script: tt.script(), registry: registryAccesses()}
+			runner, _ := newRunner(ws)
+			ctx := context.Background()
+			if tt.deadline > 0 {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, tt.deadline)
+				defer cancel()
+			}
+
+			report, err := runner.Run(ctx, testRunID, pilotContract(), "/tree")
+			if err != nil {
+				t.Fatalf("Run: %v", err)
+			}
+			if !reflect.DeepEqual(report.Registry, registryAccesses()) {
+				t.Fatalf("report.Registry = %+v, want the workspace's %+v", report.Registry, registryAccesses())
+			}
+			events := ws.log()
+			reads, at := ws.registryRead()
+			if reads != 1 || at != len(events)-1 || events[at] != "close" {
+				t.Fatalf("registry read %d times after %d of events %q, want once, after the last step and before close", reads, at, events)
+			}
+		})
+	}
+}
+
+// A run whose accesses could not be read has no evidence of what it
+// fetched: the runner says so, and still removes the workspace.
+func TestRunner_registryReadFails_runErrors(t *testing.T) {
+	t.Parallel()
+	ws := &fakeWorkspace{script: allGreen(), registryErr: errors.New("registry proxy log: no such container")}
+	runner, _ := newRunner(ws)
+
+	_, err := runner.Run(context.Background(), testRunID, pilotContract(), "/tree")
+	if err == nil || !strings.Contains(err.Error(), "no such container") || !strings.Contains(err.Error(), "registry") {
+		t.Fatalf("Run = %v, want the registry read failure", err)
+	}
+	if ws.closes() != 1 {
+		t.Fatalf("Close called %d times, want exactly once", ws.closes())
+	}
+}
+
 // A run that ended in an error has no report to carry the denials in; the
 // runner does not read them, and still removes the workspace.
 func TestRunner_execFailsToRun_egressNotRead(t *testing.T) {

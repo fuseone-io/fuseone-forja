@@ -44,6 +44,10 @@ type Workspace interface {
 	// Egress is what the workspace's gateway refused so far, read from the
 	// gateway's own log. It fails once the workspace is closed.
 	Egress(ctx context.Context) (domain.EgressReport, error)
+	// Registry is every request the workspace made to its registry proxy
+	// so far, read from the proxy's own log; empty when the run declares no
+	// registry. It fails once the workspace is closed.
+	Registry(ctx context.Context) (domain.RegistryReport, error)
 	// StartService starts svc as a sidecar the tree reaches by name and
 	// waits up to readiness for it to be ready. err is only for a failure
 	// to start at all (pull, daemon error, ctx); a service that is not
@@ -89,12 +93,13 @@ type step struct {
 }
 
 // Run launches c.Image as the workspace of runID, runs c.Setup then
-// c.Gates and returns a report listing every declared step and what the
-// workspace's gateway refused meanwhile. A gate's needs are started from
+// c.Gates and returns a report listing every declared step, what the
+// workspace's gateway refused meanwhile and what it asked its registry
+// proxy for. A gate's needs are started from
 // c.Services right before it, once per run. A failed or timed out step, or
 // a service that is not ready, stops the run and the rest is skipped. The
 // run's own deadline is a result; a cancellation is an error. Close is
-// always called, after the egress was read, and takes the services down
+// always called, after both logs were read, and takes the services down
 // with the workspace.
 func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree string) (report domain.GateReport, err error) {
 	if r.Now == nil {
@@ -119,12 +124,25 @@ func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree 
 	if err != nil {
 		return domain.GateReport{}, err
 	}
-	egressCtx, cancel := context.WithTimeout(detached, closeTimeout)
-	defer cancel()
-	if report.Egress, err = ws.Egress(egressCtx); err != nil {
-		return domain.GateReport{}, fmt.Errorf("gates: read egress: %w", err)
+	if err := collect(detached, ws, &report); err != nil {
+		return domain.GateReport{}, err
 	}
 	return report, nil
+}
+
+// collect reads what the run's proxies logged while the steps ran into
+// report, on a context of its own: the run's may be past its deadline.
+func collect(detached context.Context, ws Workspace, report *domain.GateReport) error {
+	ctx, cancel := context.WithTimeout(detached, closeTimeout)
+	defer cancel()
+	var err error
+	if report.Egress, err = ws.Egress(ctx); err != nil {
+		return fmt.Errorf("gates: read egress: %w", err)
+	}
+	if report.Registry, err = ws.Registry(ctx); err != nil {
+		return fmt.Errorf("gates: read registry access: %w", err)
+	}
+	return nil
 }
 
 func setupSteps(c domain.Contract) []step {
