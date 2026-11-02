@@ -320,8 +320,8 @@ func TestRunner_gateWithNeeds_durationCoversServiceStart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if got := report.Gates[1].Duration; got != 11*time.Second {
-		t.Fatalf("integration Duration = %v, want 11s: the 10s start plus the clock's one second", got)
+	if got := report.Gates[1].Duration; got != 12*time.Second {
+		t.Fatalf("integration Duration = %v, want 12s: the 10s start plus a second for each of the clock's two readings after the step's start, the sidecar's and the step's end", got)
 	}
 	if got := report.Gates[0].Duration; got != time.Second {
 		t.Errorf("build Duration = %v, want 1s: no service of its own", got)

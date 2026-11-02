@@ -6,11 +6,15 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// ImplementInput is the argument of forja.implement.
+// ImplementInput is the argument of forja.implement. Branch and Finding
+// together make a correction round on the pull request Forja opened from
+// forja/<issue>; both empty is a first run.
 type ImplementInput struct {
 	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
 	Issue      int    `json:"issue" jsonschema:"issue number to implement"`
 	BaseBranch string `json:"base_branch" jsonschema:"branch the PR targets"`
+	Branch     string `json:"branch,omitempty" jsonschema:"for a correction round: forja/<issue>, the branch of the pull request Forja opened; set together with finding"`
+	Finding    string `json:"finding,omitempty" jsonschema:"for a correction round: the review finding to address, at most 64 KiB; set together with branch"`
 }
 
 // ImplementOutput is the result of forja.implement: how the run ended,
@@ -34,11 +38,21 @@ type ImplementOutput struct {
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
 	// Evidence is the report the pull request carries, rendered once the
 	// gates ran; absent before.
-	Evidence  string       `json:"evidence,omitempty"`
-	TokensIn  int64        `json:"tokens_in"`
-	TokensOut int64        `json:"tokens_out"`
-	Setup     []StepReport `json:"setup"`
-	Gates     []StepReport `json:"gates"`
+	Evidence string `json:"evidence,omitempty"`
+	// WallClockSeconds and MaxDiffLines are the limits the run worked
+	// under, absent before it read its contract; DiffLines is what its head
+	// adds and deletes against the base, absent until counted.
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
+	// ComputeMinutes and EstimatedCostUSDMicros are as forja.status reports
+	// them.
+	ComputeMinutes         float64      `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
+	Setup                  []StepReport `json:"setup"`
+	Gates                  []StepReport `json:"gates"`
 }
 
 // PullRequestRef is a pull request a run opened.

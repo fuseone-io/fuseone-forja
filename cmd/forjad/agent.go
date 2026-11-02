@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
@@ -65,7 +66,7 @@ func agentRunner(docker *workspace.Docker, on bool) mcp.AgentRunner {
 	if !on {
 		return nil
 	}
-	return &agent.Runner{Launcher: agentLauncher{docker}}
+	return &agent.Runner{Launcher: agentLauncher{docker}, Now: time.Now}
 }
 
 // agentLauncher adapts workspace.Docker, which returns its own types, to

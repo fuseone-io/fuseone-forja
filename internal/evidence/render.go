@@ -35,12 +35,19 @@ type Run struct {
 	// .forja.yaml there, the contract the gates ran under.
 	BaseSHA     string
 	ContractSHA string
+	// StartSHA is the branch tip a correction round started from; empty for
+	// a first run, which starts at BaseSHA.
+	StartSHA string
 	// HeadSHA is the agent's commit the gates ran on.
 	HeadSHA string
 	Gates   domain.GateReport
 	Tokens  domain.TokenUsage
 	// Elapsed is the run's wall time so far, from the control plane's clock.
 	Elapsed time.Duration
+	// Limits are the limits the run worked under; DiffLines the lines the
+	// head adds and deletes against the base, as the control plane counted.
+	Limits    domain.Limits
+	DiffLines int
 }
 
 // Render is the pull request body for r. The same Run always renders the
@@ -70,16 +77,7 @@ func header(r Run) string {
 	fmt.Fprintf(&b, "Refs #%d\n\n", r.Issue)
 	b.WriteString("Forja ran the gates of the base commit's contract on the agent's head.\n\n")
 	b.WriteString("| | |\n|---|---|\n")
-	rows := [][2]string{
-		{"Run", code(r.RunID)},
-		{"Base branch", code(r.BaseBranch)},
-		{"Base commit", code(r.BaseSHA)},
-		{"Contract (`.forja.yaml` blob at the base)", code(r.ContractSHA)},
-		{"Head", code(r.HeadSHA)},
-		{"Tokens in / out", fmt.Sprintf("%d / %d", r.Tokens.In(), r.Tokens.Output)},
-		{"Elapsed", r.Elapsed.Round(time.Second).String()},
-	}
-	for _, row := range rows {
+	for _, row := range headerRows(r) {
 		fmt.Fprintf(&b, "| %s | %s |\n", row[0], row[1])
 	}
 	b.WriteString("\n## Steps\n\n| Step | Command | Status | Exit code | Duration |\n|---|---|---|---|---|\n")
@@ -88,6 +86,27 @@ func header(r Run) string {
 	}
 	b.WriteString("\n## Logs\n\n")
 	return b.String()
+}
+
+// headerRows are the identifiers of the run; the branch tip only for a
+// correction round.
+func headerRows(r Run) [][2]string {
+	rows := [][2]string{
+		{"Run", code(r.RunID)},
+		{"Base branch", code(r.BaseBranch)},
+		{"Base commit", code(r.BaseSHA)},
+		{"Contract (`.forja.yaml` blob at the base)", code(r.ContractSHA)},
+	}
+	if r.StartSHA != "" {
+		rows = append(rows, [2]string{"Branch tip before this round", code(r.StartSHA)})
+	}
+	return append(rows,
+		[2]string{"Head", code(r.HeadSHA)},
+		[2]string{"Tokens in / out", fmt.Sprintf("%d / %d", r.Tokens.In(), r.Tokens.Output)},
+		[2]string{"Elapsed", r.Elapsed.Round(time.Second).String()},
+		[2]string{"Wall clock limit", r.Limits.WallClock.String()},
+		[2]string{"Diff lines (measured / limit)", fmt.Sprintf("%d / %d", r.DiffLines, r.Limits.MaxDiffLines)},
+	)
 }
 
 func footer(runID string) string {

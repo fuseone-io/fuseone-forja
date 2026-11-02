@@ -45,4 +45,9 @@ const (
 	// ReasonInversionUnavailable is a verify run whose diff has production
 	// code, which only an inversion can verify.
 	ReasonInversionUnavailable FailureReason = "inversion_unavailable"
+	// ReasonWallClock is a run that its contract's limits.wall_clock ended.
+	ReasonWallClock FailureReason = "wall_clock"
+	// ReasonDiffTooLarge is a run whose diff against the base changed more
+	// lines than its contract's limits.max_diff_lines.
+	ReasonDiffTooLarge FailureReason = "diff_too_large"
 )

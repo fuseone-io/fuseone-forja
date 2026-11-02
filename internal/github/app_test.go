@@ -74,6 +74,7 @@ func newFakeApp(t *testing.T, pub *rsa.PublicKey, status int, body string) (*fak
 	f := &fakeApp{t: t, pub: pub, status: status, body: body}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /app/installations/{id}/access_tokens", f.mint)
+	mux.HandleFunc("GET /app", f.app)
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return f, server

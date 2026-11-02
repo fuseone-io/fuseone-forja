@@ -118,6 +118,39 @@ func TestPusher_branchExistsElsewhere_refusedRemoteUnchanged(t *testing.T) {
 	}
 }
 
+// A correction round's head lands on the branch the earlier run pushed as
+// a plain fast-forward from the clone of the base plus the tip, with the
+// earlier commits kept and nothing forced.
+func TestPusher_roundHead_fastForwardsExistingBranch(t *testing.T) {
+	t.Parallel()
+	repo, co, _, tip := roundCheckout(t)
+	mainBefore := repo.revParse("refs/heads/main")
+	ws := workspaceCopy(t, co)
+	agentCommit(t, ws, map[string]string{"proof.txt": "second round\n"}, "address the finding")
+	head, err := co.Adopt(context.Background(), exportBundle(t, ws, co.Start(), agentBranch), agentBranch)
+	if err != nil {
+		t.Fatalf("Adopt: %v", err)
+	}
+	bin, argsFile, _ := recordingGit(t)
+	pusher := &github.Pusher{Tokens: &countingTokens{value: pushToken}, Remote: repo.remote(), Git: bin}
+
+	if err := pusher.Push(context.Background(), github.PushRequest{Repository: fakeRepo, Dir: co.Dir(), Head: head, Branch: agentBranch}); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	if got := repo.revParse("refs/heads/" + agentBranch); got != head {
+		t.Fatalf("remote %s = %s, want the new head %s", agentBranch, got, head)
+	}
+	if parent := repo.revParse(head + "^"); parent != tip {
+		t.Fatalf("the new head's parent on the remote is %s, want the earlier tip %s", parent, tip)
+	}
+	if got := repo.revParse("refs/heads/main"); got != mainBefore {
+		t.Fatalf("remote main moved from %s to %s", mainBefore, got)
+	}
+	if args := readFile(t, argsFile); strings.Contains(args, "--force") || strings.Contains(args, "\n+") {
+		t.Errorf("the push is forced:\n%s", args)
+	}
+}
+
 func TestPusher_gitEchoesTheHeader_errorWithheld(t *testing.T) {
 	t.Parallel()
 	bin := filepath.Join(t.TempDir(), "git")

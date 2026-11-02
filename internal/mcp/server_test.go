@@ -48,8 +48,10 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 		Agent:  &fakeAgent{err: errors.New("no agent in this test")},
 		NewID:  ids.next, Now: startedAt, Version: "test",
 		Pusher:            &fakePusher{deliveryLog[github.PushRequest]{err: errors.New("no pusher in this test")}},
-		PullRequests:      &fakePullRequests{deliveryLog[github.PullRequestRequest]{err: errors.New("no pull requests in this test")}},
+		PullRequests:      &fakePullRequests{deliveryLog: deliveryLog[github.PullRequestRequest]{err: errors.New("no pull requests in this test")}},
 		Statuses:          &fakeStatuses{deliveryLog[github.StatusRequest]{err: errors.New("no statuses in this test")}},
+		BranchCloner:      &fakeBranchCloner{err: errors.New("no branch cloner in this test")},
+		Identity:          &fakeIdentity{err: errors.New("no identity in this test")},
 		PullRequestReader: &fakePullReader{err: errors.New("no pull request reader in this test")},
 	}
 }
@@ -339,7 +341,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "stages", "setup", "gates", "excluded"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "compute_minutes", "stages", "setup", "gates", "excluded"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)

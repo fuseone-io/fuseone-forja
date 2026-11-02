@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"time"
 )
 
@@ -32,14 +33,16 @@ func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 type Permissions map[string]string
 
 // The permission sets the control plane asks for: reading the contract and
-// cloning the base branch, reading the issue, reading a pull request and
-// its files, writing the refs that reserve an issue and pushing the run's
-// branch, opening its pull request, and publishing its commit status.
+// cloning the base branch, reading the issue, writing the refs that
+// reserve an issue and pushing the run's branch, finding the pull request
+// a correction round works on or reading the one a verify run verifies
+// with its files, opening a pull request or commenting on one, and
+// publishing its commit status.
 var (
 	ReadContents      = Permissions{"contents": "read"}
 	ReadIssues        = Permissions{"issues": "read"}
-	ReadPullRequests  = Permissions{"pull_requests": "read"}
 	WriteContents     = Permissions{"contents": "write"}
+	ReadPullRequests  = Permissions{"pull_requests": "read"}
 	WritePullRequests = Permissions{"pull_requests": "write"}
 	WriteStatuses     = Permissions{"statuses": "write"}
 )
@@ -57,6 +60,11 @@ type TokenSource interface {
 // permissions asked for are ignored.
 type StaticTokenSource struct {
 	Value string
+	// HTTP is the client Login uses against BaseURL; nil means a client
+	// with a default timeout.
+	HTTP *http.Client
+	// BaseURL is the API root; empty means DefaultBaseURL.
+	BaseURL string
 }
 
 // Token returns the PAT for any repository and any permissions.

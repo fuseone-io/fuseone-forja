@@ -10,8 +10,9 @@ import (
 type StageName string
 
 // The stages of the implement and verify runs. An implement run goes
-// claim, clone, agent, gates, push, pull_request, status, release; a
-// verify run claim, clone, diff, status, release.
+// claim, clone, agent, gates, diff, push, pull_request, status, release;
+// a correction round comments on the pull request it found instead of
+// opening one. A verify run goes claim, clone, diff, status, release.
 const (
 	StageClaim       StageName = "claim"
 	StageClone       StageName = "clone"
@@ -20,6 +21,7 @@ const (
 	StageDiff        StageName = "diff"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
+	StageComment     StageName = "comment"
 	StageStatus      StageName = "status"
 	StageRelease     StageName = "release"
 )
@@ -43,12 +45,22 @@ type Stage struct {
 	// FinishedAt is nil while the stage runs.
 	FinishedAt *time.Time
 	Outcome    StageOutcome
+	// Compute and Tokens are what the stage consumed, recorded when it
+	// ends; zero while it runs and for a stage that uses neither.
+	Compute time.Duration
+	Tokens  TokenUsage
 }
 
-// PullRequest is the pull request a run opened. The zero value is none.
+// PullRequest is the pull request a run opened or a correction round works
+// on. The zero value is none. Author is the login that opened it, Base the
+// branch it targets and HeadRepository the owner/name its head lives in;
+// they are known only for a pull request read back from GitHub.
 type PullRequest struct {
-	Number int
-	URL    string
+	Number         int
+	URL            string
+	Author         string
+	Base           string
+	HeadRepository string
 }
 
 // ErrNoCommits means the agent's branch holds no commit beyond the base.

@@ -73,6 +73,25 @@ func TestRender_green_citesShasStepsTokensAndElapsed(t *testing.T) {
 	)
 }
 
+// A correction round names the branch tip it started from, next to the
+// base whose contract applied; a first run has no such line.
+func TestRender_startSHA_namedInHeader(t *testing.T) {
+	t.Parallel()
+	const tip = "5f814f9aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+	run := greenRun()
+	run.StartSHA = tip
+
+	body := evidence.Render(run)
+	assertLines(t, body,
+		"| Base commit | `"+baseSHA+"` |",
+		"| Branch tip before this round | `"+tip+"` |",
+		"| Head | `"+headSHA+"` |",
+	)
+	if first := evidence.Render(greenRun()); strings.Contains(first, "Branch tip before this round") {
+		t.Fatalf("a first run's evidence names a branch tip:\n%s", first)
+	}
+}
+
 func TestRender_redGate_exitCodesAsTheyWereSkippedHasNone(t *testing.T) {
 	t.Parallel()
 	run := greenRun()
@@ -163,6 +182,38 @@ func TestRender_underBodyCap_noNote(t *testing.T) {
 	t.Parallel()
 	if body := evidence.Render(greenRun()); strings.Contains(body, "truncated to stay under") {
 		t.Fatalf("a small report carries the truncation note:\n%s", body)
+	}
+}
+
+// The limits the run worked under are cited next to what it measured: the
+// wall clock, and the diff's lines against their cap, whichever side of it
+// they fell.
+func TestRender_limits_wallClockAndDiffLinesAgainstLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		wallClock time.Duration
+		measured  int
+		limit     int
+		want      []string
+	}{
+		{name: "under the limit", wallClock: 20 * time.Minute, measured: 120, limit: 400,
+			want: []string{"| Wall clock limit | 20m0s |", "| Diff lines (measured / limit) | 120 / 400 |"}},
+		{name: "over the limit", wallClock: 90 * time.Second, measured: 401, limit: 400,
+			want: []string{"| Wall clock limit | 1m30s |", "| Diff lines (measured / limit) | 401 / 400 |"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run := greenRun()
+			run.Limits, run.DiffLines = domain.Limits{WallClock: tt.wallClock, MaxDiffLines: tt.limit}, tt.measured
+
+			body := evidence.Render(run)
+			assertLines(t, body, tt.want...)
+			if again := evidence.Render(run); again != body {
+				t.Fatalf("two renders of the same limits differ:\n%s\n---\n%s", body, again)
+			}
+		})
 	}
 }
 

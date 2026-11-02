@@ -19,6 +19,8 @@ type flight struct {
 	runs  RunStore
 	now   func() time.Time
 	run   domain.Run
+	// round is the correction round the run is; nil for a first run.
+	round *round
 
 	// co and what was read from it at the base commit; set by the clone
 	// stage.
@@ -80,6 +82,14 @@ func (f *flight) finish(ok bool) {
 	}
 }
 
+// charge records on the stage in flight what it consumed and adds it to
+// the run's totals, which are therefore the sum of its stages'.
+func (f *flight) charge(compute time.Duration, tokens domain.TokenUsage) {
+	s := &f.run.Stages[len(f.run.Stages)-1]
+	s.Compute, s.Tokens = s.Compute+compute, s.Tokens.Add(tokens)
+	f.run.Compute, f.run.Tokens = f.run.Compute+compute, f.run.Tokens.Add(tokens)
+}
+
 func (f *flight) put(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
 	defer cancel()
@@ -106,7 +116,10 @@ func claimStage(started, finished time.Time) domain.Stage {
 func stageReports(stages []domain.Stage) []StageReport {
 	out := make([]StageReport, 0, len(stages))
 	for _, s := range stages {
-		out = append(out, StageReport{Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome)})
+		out = append(out, StageReport{
+			Name: string(s.Name), StartedAt: s.StartedAt, FinishedAt: s.FinishedAt, Outcome: string(s.Outcome),
+			ComputeMinutes: computeMinutes(s.Compute), TokensIn: s.Tokens.In(), TokensOut: s.Tokens.Output,
+		})
 	}
 	return out
 }

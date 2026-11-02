@@ -73,8 +73,11 @@ type File struct {
 
 // Task is one agent run: the contract and the context come from the base
 // commit, the tree is the checkout the agent commits on, on Branch,
-// started at BaseSHA. Bundle is the path on the control plane the agent's
-// commits are exported to.
+// started at BaseSHA, which is the branch tip in a correction round.
+// Bundle is the path on the control plane the agent's commits are
+// exported to. Finding is the review finding a correction round answers,
+// empty for a first run; it is untrusted text that reaches only the
+// prompt.
 type Task struct {
 	RunID    string
 	Contract domain.Contract
@@ -84,12 +87,14 @@ type Task struct {
 	Branch   string
 	BaseSHA  string
 	Bundle   string
+	Finding  string
 }
 
 // Result is how the agent run ended and what the proxies recorded for it.
 // ExitCode is domain.NoExitCode when the agent was stopped, by the
 // deadline (TimedOut) or by the cap (Capped). Exported says the agent's
-// commits are in the task's Bundle.
+// commits are in the task's Bundle. Compute is the time the workspace was
+// up, on every path, a failed launch included.
 type Result struct {
 	ExitCode int
 	TimedOut bool
@@ -97,11 +102,15 @@ type Result struct {
 	Exported bool
 	Tokens   domain.TokenUsage
 	Egress   domain.EgressReport
+	Compute  time.Duration
 }
 
 // Runner runs the agent once per Task.
 type Runner struct {
 	Launcher Launcher
+	// Now is the clock the workspace's compute is measured with; a nil
+	// clock is a configuration error.
+	Now func() time.Time
 }
 
 // Run launches the workspace, writes the prompt to PromptPath and runs the
@@ -109,14 +118,19 @@ type Runner struct {
 // that exited 0 on its own has its commits exported to the task's Bundle
 // while the workspace still runs. Then it halts the workspace, reads the
 // usage and the egress, and closes it, on every path. The deadline is a
-// result; a cancellation is an error.
+// result; a cancellation is an error. The compute runs from just before
+// the launch until Close returned, or until a failed launch returned.
 func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 	if r.Launcher == nil {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
 	}
+	if r.Now == nil {
+		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a clock")
+	}
+	launched := r.Now()
 	ws, err := r.Launcher.LaunchAgent(ctx, t.RunID, t.Contract.Image, t.Tree)
 	if err != nil {
-		return Result{ExitCode: domain.NoExitCode}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
+		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
 	}
 	detached := context.WithoutCancel(ctx)
 	defer func() {
@@ -125,6 +139,7 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 		if closeErr := ws.Close(closeCtx); closeErr != nil {
 			err = errors.Join(err, fmt.Errorf("agent: close workspace: %w", closeErr))
 		}
+		res.Compute = r.Now().Sub(launched)
 	}()
 	res, err = execute(ctx, ws, t)
 	if err == nil {

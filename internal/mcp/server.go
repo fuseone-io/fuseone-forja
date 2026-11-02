@@ -6,6 +6,8 @@ import (
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // Deps is everything the tools need from the edge: the stores, the
@@ -26,6 +28,10 @@ type Deps struct {
 	Pusher       Pusher
 	PullRequests PullRequests
 	Statuses     CommitStatuses
+	// BranchCloner and Identity serve a correction round: the run's branch
+	// at its tip, and the login a pull request Forja opened is authored by.
+	BranchCloner BranchCloner
+	Identity     Identity
 	// PullRequestReader reads the pull request a forja.verify run verifies.
 	PullRequestReader PullRequestReader
 	// NewID yields the id of a new run.
@@ -33,7 +39,10 @@ type Deps struct {
 	Now   func() time.Time
 	// Lease overrides the lease a run holds its issue for; zero means the
 	// contract's wall clock plus a margin.
-	Lease   time.Duration
+	Lease time.Duration
+	// Prices is the operator's price table the run's cost is estimated
+	// with when it is answered; nil means no estimate.
+	Prices  *domain.PriceTable
 	Version string
 }
 
@@ -45,6 +54,6 @@ func New(deps Deps) *sdk.Server {
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
 	sdk.AddTool(server, verifyTool(), verifyHandler(deps))
-	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs))
+	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs, deps.Prices))
 	return server
 }
