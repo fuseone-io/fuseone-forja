@@ -1,4 +1,4 @@
-# ADR 9999: correction round, forja.implement on Forja's own branch
+# ADR 0047: correction round, forja.implement on Forja's own branch
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #20
