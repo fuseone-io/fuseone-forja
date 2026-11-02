@@ -70,28 +70,36 @@ func (d *Docker) Ping(ctx context.Context) error {
 	return nil
 }
 
-// Launch creates run runID's internal network and its gateway, then starts
-// a container from image that idles at workDir on that network alone, with
-// the image's own environment plus the gateway's address as its proxy and
-// nothing of the control plane's, and copies tree into workDir. The tree is
-// copied, not mounted: the daemon may run in a VM that does not share this
-// filesystem. Launch returns once the gateway said it is ready; any failure
-// removes whatever it had created.
-func (d *Docker) Launch(ctx context.Context, runID, image, tree string) (*Container, error) {
-	if err := validRunID(runID); err != nil {
+// LaunchSpec is one workspace to create: run RunID's, from Image, with a
+// copy of Tree, a directory on the control plane, at workDir.
+type LaunchSpec struct {
+	RunID string
+	Image string
+	Tree  string
+}
+
+// Launch creates the run's internal network and its gateway, then starts a
+// container from the image that idles at workDir on that network alone,
+// with the image's own environment plus the gateway's address as its proxy
+// and nothing of the control plane's, and copies the tree into workDir.
+// The tree is copied, not mounted: the daemon may run in a VM that does
+// not share this filesystem. Launch returns once the gateway said it is
+// ready; any failure removes whatever it had created.
+func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error) {
+	if err := validRunID(spec.RunID); err != nil {
 		return nil, err
 	}
 	binary, err := resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
 	if err != nil {
 		return nil, err
 	}
-	for _, img := range []string{image, gatewayImage} {
+	for _, img := range []string{spec.Image, gatewayImage} {
 		if err := ensureImage(ctx, d.cli, img); err != nil {
 			return nil, fmt.Errorf("workspace: image %s: %w", img, err)
 		}
 	}
-	c := &Container{cli: d.cli, runID: runID}
-	if err := d.assemble(ctx, c, binary, image, tree); err != nil {
+	c := &Container{cli: d.cli, runID: spec.RunID}
+	if err := d.assemble(ctx, c, binary, spec); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
 		// The launch failure is the error; what could not be removed on top
@@ -104,7 +112,7 @@ func (d *Docker) Launch(ctx context.Context, runID, image, tree string) (*Contai
 
 // assemble builds the run's pieces in order, recording each in c as soon
 // as it exists so that Close removes it whatever fails next.
-func (d *Docker) assemble(ctx context.Context, c *Container, binary, image, tree string) error {
+func (d *Docker) assemble(ctx context.Context, c *Container, binary string, spec LaunchSpec) error {
 	var err error
 	if c.network, err = createNetwork(ctx, d.cli, c.runID); err != nil {
 		return err
@@ -115,10 +123,10 @@ func (d *Docker) assemble(ctx context.Context, c *Container, binary, image, tree
 	if err := startGateway(ctx, d.cli, gatewaySpec{id: c.gateway, runID: c.runID, binary: binary, allow: d.opts.EgressAllow}); err != nil {
 		return err
 	}
-	if c.id, err = d.createWorkspace(ctx, c.runID, image); err != nil {
+	if c.id, err = d.createWorkspace(ctx, c.runID, spec.Image); err != nil {
 		return err
 	}
-	return c.startWithTree(ctx, tree)
+	return c.startWithTree(ctx, spec.Tree)
 }
 
 // createWorkspace creates the workspace container on the run's network

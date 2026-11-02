@@ -54,10 +54,17 @@ type Workspace interface {
 	Close(ctx context.Context) error
 }
 
-// Launcher creates the workspace of run runID from an image with a copy of
-// tree, a directory on the control plane, at its root.
+// LaunchSpec is one workspace to create: run RunID's, from Image, with a
+// copy of Tree, a directory on the control plane, at its root.
+type LaunchSpec struct {
+	RunID string
+	Image string
+	Tree  string
+}
+
+// Launcher creates the workspace a LaunchSpec describes.
 type Launcher interface {
-	Launch(ctx context.Context, runID, image, tree string) (Workspace, error)
+	Launch(ctx context.Context, spec LaunchSpec) (Workspace, error)
 }
 
 // Runner runs a contract's steps in order and stops at the first one that
@@ -90,7 +97,7 @@ func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree 
 	if r.Now == nil {
 		return domain.GateReport{}, errors.New("gates: Runner needs a clock")
 	}
-	ws, err := r.Launcher.Launch(ctx, runID, c.Image, tree)
+	ws, err := r.Launcher.Launch(ctx, LaunchSpec{RunID: runID, Image: c.Image, Tree: tree})
 	if err != nil {
 		return domain.GateReport{}, fmt.Errorf("gates: launch %s: %w", c.Image, err)
 	}

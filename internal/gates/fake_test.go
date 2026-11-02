@@ -221,9 +221,9 @@ type fakeLauncher struct {
 	calls int
 }
 
-func (l *fakeLauncher) Launch(_ context.Context, runID, image, tree string) (gates.Workspace, error) {
+func (l *fakeLauncher) Launch(_ context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
 	l.calls++
-	l.runID, l.image, l.tree = runID, image, tree
+	l.runID, l.image, l.tree = spec.RunID, spec.Image, spec.Tree
 	if l.err != nil {
 		return nil, l.err
 	}

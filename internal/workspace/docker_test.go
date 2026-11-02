@@ -134,7 +134,7 @@ func launch(t *testing.T, d *workspace.Docker, runID, tree string) *workspace.Co
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	c, err := d.Launch(ctx, runID, testImage, tree)
+	c, err := d.Launch(ctx, workspace.LaunchSpec{RunID: runID, Image: testImage, Tree: tree})
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", testImage, err)
 	}
@@ -353,7 +353,7 @@ func TestDocker_launch_imageUnknown_errorNamesIt(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	_, err := d.Launch(ctx, newRunID(t), "forja-no-such-image-0000:none", treeWith(t))
+	_, err := d.Launch(ctx, workspace.LaunchSpec{RunID: newRunID(t), Image: "forja-no-such-image-0000:none", Tree: treeWith(t)})
 	if err == nil || !strings.Contains(err.Error(), "forja-no-such-image-0000") {
 		t.Fatalf("Launch(unknown image) = %v, want an error naming the image", err)
 	}

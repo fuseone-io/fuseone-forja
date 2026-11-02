@@ -13,6 +13,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
@@ -56,7 +57,7 @@ func TestContainer_startService_readinessReachesTheContainer(t *testing.T) {
 	}
 	var id [8]byte
 	_, _ = rand.Read(id[:])
-	ws, err := launcher{d}.Launch(ctx, "deps-test-"+hex.EncodeToString(id[:]), "alpine:3.20", t.TempDir())
+	ws, err := launcher{d}.Launch(ctx, gates.LaunchSpec{RunID: "deps-test-" + hex.EncodeToString(id[:]), Image: "alpine:3.20", Tree: t.TempDir()})
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}

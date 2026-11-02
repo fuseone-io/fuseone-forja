@@ -158,8 +158,9 @@ type launcher struct {
 	*workspace.Docker
 }
 
-func (l launcher) Launch(ctx context.Context, runID, image, tree string) (gates.Workspace, error) {
-	c, err := l.Docker.Launch(ctx, runID, image, tree)
+func (l launcher) Launch(ctx context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
+	// Field for field the same, like the exec result.
+	c, err := l.Docker.Launch(ctx, workspace.LaunchSpec(spec))
 	if err != nil {
 		return nil, err
 	}
