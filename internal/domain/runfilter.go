@@ -41,12 +41,15 @@ func (f RunFilter) Match(r Run) bool {
 		return false
 	case f.State != "" && r.State != f.State:
 		return false
-	case !f.Since.IsZero() && r.StartedAt.Before(f.Since):
-		return false
-	case !f.Until.IsZero() && !r.StartedAt.Before(f.Until):
+	}
+	return f.inWindow(r.StartedAt)
+}
+
+func (f RunFilter) inWindow(t time.Time) bool {
+	if !f.Since.IsZero() && t.Before(f.Since) {
 		return false
 	}
-	return true
+	return f.Until.IsZero() || t.Before(f.Until)
 }
 
 // CompareNewestFirst orders runs by StartedAt, latest first, and runs that
