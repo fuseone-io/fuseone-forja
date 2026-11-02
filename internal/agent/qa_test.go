@@ -138,6 +138,29 @@ func TestRunQA_deadline_timedOutComputeClosed(t *testing.T) {
 	}
 }
 
+// The deadline ending an export is a timed-out result, not an error: no
+// later candidate is exported and the workspace still closes.
+func TestRunQA_deadlineDuringExport_timedOutNoErrorClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.exec = func(ctx context.Context) (agent.ExecResult, error) {
+		<-ctx.Done()
+		return agent.ExecResult{ExitCode: 0}, nil
+	}
+	ws.exportErrs = map[string]error{"forja-qa/1": fmt.Errorf("workspace: export forja-qa/1: %w", context.DeadlineExceeded)}
+	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}, Now: newClock().now}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	res, err := r.RunQA(ctx, qaTask())
+	if err != nil || !res.TimedOut || !reflect.DeepEqual(res.Exported, []bool{false, false}) {
+		t.Fatalf("RunQA = %+v, %v; want timed out with nothing exported and no error", res, err)
+	}
+	if len(ws.exports()) != 1 || ws.closeCount() != 1 {
+		t.Fatalf("exports %q, closed %d; want the first only and one close", ws.exports(), ws.closeCount())
+	}
+}
+
 // A launch that fails is an error that names no candidate and runs
 // nothing; the run is still the launch's runID, image and tree.
 func TestRunQA_launchFails_errorNothingRun(t *testing.T) {

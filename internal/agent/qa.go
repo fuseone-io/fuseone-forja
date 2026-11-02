@@ -58,7 +58,9 @@ func (r *Runner) RunQA(ctx context.Context, t QATask) (QAResult, error) {
 	exported := make([]bool, len(t.Candidates))
 	l := launch{Launch: Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree}, prompt: RenderQA(t)}
 	res, err := r.session(ctx, l,
-		func(ctx context.Context, ws Workspace, res *Result) error { return exportCandidates(ctx, ws, t, exported, res) })
+		func(ctx context.Context, ws Workspace, res *Result) error {
+			return exportCandidates(ctx, ws, t, exported, res)
+		})
 	if res.Capped {
 		clear(exported)
 	}

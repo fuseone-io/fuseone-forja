@@ -15,10 +15,10 @@ const (
 
 func qaTask() agent.QATask {
 	return agent.QATask{
-		RunID:    "run-qa",
-		Contract: domain.Contract{Image: "golang:1.26", Gates: []domain.Gate{{Name: "build", Run: "make build"}, {Name: "test", Run: "make test"}}},
-		Tree:     "/tmp/forja-verify",
-		Issue:    domain.Issue{Number: 14, Title: "Run cost", Body: "## What to build\n\nCompute minutes.\n"},
+		RunID:           "run-qa",
+		Contract:        domain.Contract{Image: "golang:1.26", Gates: []domain.Gate{{Name: "build", Run: "make build"}, {Name: "test", Run: "make test"}}},
+		Tree:            "/tmp/forja-verify",
+		Issue:           domain.Issue{Number: 14, Title: "Run cost", Body: "## What to build\n\nCompute minutes.\n"},
 		PullRequestBody: "Tested the estimate with a table.\n",
 		BaseSHA:         qaBase, HeadSHA: qaHead,
 		Production: []string{"internal/domain/cost.go", "internal/mcp/cost.go"},
