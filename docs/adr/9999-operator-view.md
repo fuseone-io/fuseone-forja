@@ -120,14 +120,15 @@ or destination becomes a label.
 The listener has no authentication and no TLS in this decision. It hands out
 totals per repository and no credential, and nothing a workspace could use
 to write a status. The operator binds it to the loopback interface, or to a
-private interface of the control plane that their Prometheus reaches, never
-to the wildcard address. A workspace sits on its `--internal` network
+private interface of the control plane that their Prometheus reaches. A
+workspace sits on its `--internal` network
 ([ADR 0026](0026-workspace-isolation.md), [ADR 0035](0035-egress-gateway.md)),
 which has no route out, and its gateway dials public addresses only. On a
 Linux host that runs workspaces, however, the host holds an address on each
 run's bridge, and a listener on the wildcard address would answer there. That
-reachability was not measured for this decision, so the rule is to never bind
-the wildcard address.
+reachability was not measured for this decision, so on a host that runs
+workspaces the listener never binds the wildcard address. forjad does not
+enforce this.
 
 ### 6. History
 
