@@ -127,7 +127,7 @@ func (l lifecycle) timeLeft(c domain.Claim, parsed domain.Contract) (time.Durati
 	}
 	left := end.Sub(l.deps.Now())
 	if left <= 0 {
-		return 0, fmt.Errorf("wall clock %v spent before the agent started, within the claim's lease of %v", wallClock(parsed), held)
+		return 0, fmt.Errorf("wall clock %v spent before the work started, within the claim's lease of %v", wallClock(parsed), held)
 	}
 	return left, nil
 }
