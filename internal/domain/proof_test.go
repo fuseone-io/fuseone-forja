@@ -11,7 +11,7 @@ import (
 func pilotLists() domain.Contract {
 	return domain.Contract{
 		ProofPaths:      []string{".forja.yaml", "Makefile", ".golangci.yml", "**/testdata/**", "**/*_test.go"},
-		HumanMergePaths: []string{".github/**"},
+		HumanMergePaths: []string{".github/**", "GNUmakefile", "makefile"},
 	}
 }
 

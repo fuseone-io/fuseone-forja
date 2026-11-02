@@ -18,7 +18,7 @@ import (
 // proofContract is the base checkout's contract with the pilot's lists.
 const proofContract = checkoutContract +
 	"proof_paths:\n  - .forja.yaml\n  - Makefile\n  - .golangci.yml\n  - \"**/testdata/**\"\n  - \"**/*_test.go\"\n" +
-	"human_merge_paths:\n  - \".github/**\"\n"
+	"human_merge_paths:\n  - \".github/**\"\n  - GNUmakefile\n  - makefile\n"
 
 var (
 	makefileChanged  = domain.FileChange{Path: "Makefile", Kind: domain.ChangeModified, Added: 3, Deleted: 1}
