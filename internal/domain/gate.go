@@ -55,6 +55,11 @@ type GateReport struct {
 	// control plane read it from the proxy's own log; empty when the
 	// contract declares no registry.
 	Registry RegistryReport
+	// Compute is the container time of the gates workspace and of each
+	// service sidecar started in it, from just before each was launched
+	// until the workspace was closed. A run that ended in an error still
+	// carries it.
+	Compute time.Duration
 }
 
 // OK reports whether the run may be trusted: no step failed or timed out,
