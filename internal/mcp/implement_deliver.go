@@ -56,7 +56,7 @@ func (h implementer) evidenceOf(f *flight) evidence.Run {
 	return evidence.Run{
 		Issue: f.run.Issue, RunID: f.run.ID, BaseBranch: f.co.Branch(),
 		BaseSHA: f.run.BaseSHA, ContractSHA: f.run.ContractSHA, HeadSHA: f.run.HeadSHA,
-		Gates: f.run.Gates, Tokens: f.run.Tokens, Elapsed: h.deps.Now().Sub(f.run.StartedAt),
+		Gates: f.run.Gates, Tokens: f.run.Tokens, Elapsed: h.deps.Now().Sub(f.run.StartedAt), Proof: f.run.Proof,
 	}
 }
 
@@ -115,6 +115,7 @@ func implementOutput(run domain.Run, body string) ImplementOutput {
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
 		Setup: stepReports(run.Gates.Setup), Gates: stepReports(run.Gates.Gates),
+		HumanMerge: run.Proof.HumanMerge(), ProofApparatus: changedPaths(run.Proof.ProofPaths), HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
 	}
 }
 

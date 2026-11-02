@@ -23,7 +23,8 @@ type Cloner interface {
 // discards the clone. StartBranch checks a new branch out at the commit;
 // Adopt imports that branch from a bundle the agent's workspace exported
 // and checks its head out in Dir, while every read still answers for the
-// pinned commit.
+// pinned commit. Diff lists every path a head changes against the pinned
+// commit.
 type Checkout interface {
 	SHA() string
 	Branch() string
@@ -33,6 +34,7 @@ type Checkout interface {
 	BlobSHA(ctx context.Context, path string) (string, error)
 	StartBranch(ctx context.Context, name string) error
 	Adopt(ctx context.Context, bundle, branch string) (string, error)
+	Diff(ctx context.Context, head string) ([]domain.FileChange, error)
 	Close() error
 }
 

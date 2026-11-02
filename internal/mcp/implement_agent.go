@@ -118,8 +118,9 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	})
 }
 
-// adopt brings the exported commits into the checkout; a head at the base
-// is no commit at all.
+// adopt brings the exported commits into the checkout, a head at the base
+// being no commit at all, and classifies what the head changes against
+// the base by the base contract's lists.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) {
@@ -130,6 +131,11 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 		return false, err
 	}
 	f.run.HeadSHA = head
+	changes, err := f.co.Diff(ctx, head)
+	if err != nil {
+		return false, err
+	}
+	f.run.Proof = domain.ClassifyProof(f.contract, changes)
 	return true, nil
 }
 

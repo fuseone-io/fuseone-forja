@@ -62,6 +62,12 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// HumanMerge, ProofApparatus and HumanMergePaths are what of the agent's
+	// head asks for a human merge, as forja.implement reports them; always
+	// on the wire, false and empty before the head is adopted.
+	HumanMerge      bool          `json:"human_merge"`
+	ProofApparatus  []ChangedPath `json:"proof_apparatus"`
+	HumanMergePaths []ChangedPath `json:"human_merge_paths"`
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs.
@@ -136,6 +142,10 @@ func statusOutput(run domain.Run) StatusOutput {
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
+
+		HumanMerge:      run.Proof.HumanMerge(),
+		ProofApparatus:  changedPaths(run.Proof.ProofPaths),
+		HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
 	}
 }
 

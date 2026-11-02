@@ -68,6 +68,7 @@ func (oneFileCheckout) StartBranch(context.Context, string) error           { re
 func (oneFileCheckout) Adopt(context.Context, string, string) (string, error) {
 	return "04915d552e6e507929c4c734b4f4a3a31ae05820", nil
 }
+func (oneFileCheckout) Diff(context.Context, string) ([]domain.FileChange, error) { return nil, nil }
 
 // greenGates passes every step.
 type greenGates struct{}

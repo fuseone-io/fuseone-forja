@@ -51,6 +51,11 @@ type fakeCheckout struct {
 	adoptedDir string
 	adoptErr   error
 	adopted    []string
+	// changes is what Diff reports between the base and head; diffErr fails
+	// it; diffed the heads it was asked for.
+	changes []domain.FileChange
+	diffErr error
+	diffed  []string
 }
 
 func (f *fakeCheckout) SHA() string    { return f.sha }
@@ -90,6 +95,19 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
 	}
 	return f.head, nil
+}
+
+// Diff answers, as the real one, only for a head it holds: the one Adopt
+// imported.
+func (f *fakeCheckout) Diff(_ context.Context, head string) ([]domain.FileChange, error) {
+	f.diffed = append(f.diffed, head)
+	if len(f.adopted) == 0 || head != f.head {
+		return nil, fmt.Errorf("fake: diff against %q, adopted %q", head, f.head)
+	}
+	if f.diffErr != nil {
+		return nil, f.diffErr
+	}
+	return append([]domain.FileChange(nil), f.changes...), nil
 }
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {
