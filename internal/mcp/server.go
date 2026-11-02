@@ -28,6 +28,10 @@ type Deps struct {
 	Pusher       Pusher
 	PullRequests PullRequests
 	Statuses     CommitStatuses
+	// BranchCloner and Identity serve a correction round: the run's branch
+	// at its tip, and the login a pull request Forja opened is authored by.
+	BranchCloner BranchCloner
+	Identity     Identity
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time

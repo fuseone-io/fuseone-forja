@@ -191,6 +191,58 @@ func TestWire_delivery_controlPlaneClientsOrTheMissingCredential(t *testing.T) {
 	}
 }
 
+// With a credential, a correction round clones the branch with the same
+// cloner as forja.plan and knows Forja's login from that credential;
+// without one, each of its calls answers with the missing credential.
+func TestWire_round_branchClonerAndIdentityOrTheMissingCredential(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	if c, ok := deps.BranchCloner.(cloner); !ok || c.Cloner == nil {
+		t.Errorf("BranchCloner = %T, want the cloner adapter over *github.Cloner", deps.BranchCloner)
+	}
+	if id, ok := deps.Identity.(*github.StaticTokenSource); !ok || id.Value != "github_pat_dev" {
+		t.Errorf("Identity = %T, want the PAT's own token source", deps.Identity)
+	}
+	bare, _, err := wire(func(string) string { return "" }, io.Discard)
+	if err != nil {
+		t.Fatalf("wire without credentials: %v", err)
+	}
+	ctx := context.Background()
+	errs := map[string]error{
+		"clone branch": func() error { _, err := bare.BranchCloner.CloneBranch(ctx, "o/r", "main", "forja/1"); return err }(),
+		"login":        func() error { _, err := bare.Identity.Login(ctx); return err }(),
+		"find":         func() error { _, err := bare.PullRequests.Find(ctx, "o/r", "forja/1"); return err }(),
+		"comment":      bare.PullRequests.Comment(ctx, github.CommentRequest{}),
+	}
+	for name, err := range errs {
+		if !errors.Is(err, github.ErrNoCredentials) {
+			t.Errorf("%s without credentials = %v, want ErrNoCredentials", name, err)
+		}
+	}
+}
+
+// opaqueTokens is a token source that cannot say whose login it acts as.
+type opaqueTokens struct{}
+
+func (opaqueTokens) Token(context.Context, string, github.Permissions) (github.Token, error) {
+	return github.Token{}, nil
+}
+
+// A credential whose login cannot be read would serve rounds that refuse
+// every branch: forjad does not start.
+func TestIdentityOf_tokenSourceWithoutLogin_startupError(t *testing.T) {
+	t.Parallel()
+	if _, err := identityOf(opaqueTokens{}); err == nil {
+		t.Fatal("identityOf a token source without Login = nil error, want a startup failure")
+	}
+	if id, err := identityOf(&github.StaticTokenSource{Value: "x"}); err != nil || id == nil {
+		t.Fatalf("identityOf the PAT source = %v, %v; want it", id, err)
+	}
+}
+
 // Postgres runs for seconds before it listens, so a readiness the adapter
 // did not hand on to the container would leave it not ready.
 func TestContainer_startService_readinessReachesTheContainer(t *testing.T) {

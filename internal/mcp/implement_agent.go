@@ -54,7 +54,7 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	// be removed changes neither.
 	defer func() { _ = os.RemoveAll(dir) }()
 	f.bundle = filepath.Join(dir, "commits.bundle")
-	for _, step := range []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage} {
+	for _, step := range h.steps(f) {
 		if ok, err := step(runCtx, done, f); !ok || err != nil {
 			return false, stopped(runCtx, f, err)
 		}
@@ -77,21 +77,26 @@ func stopped(runCtx context.Context, f *flight, err error) error {
 	return nil
 }
 
-// cloneStage clones the base branch and reads at that commit what the run
-// needs, then starts the run's branch.
+// cloneStage clones the base branch, with the run's branch at its tip in a
+// correction round, and reads at the base commit what the run needs, then
+// starts the run's branch.
 func (h implementer) cloneStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageClone, func() (bool, error) {
-		co, err := h.deps.Cloner.Clone(ctx, f.run.Repository, f.base)
+		co, err := h.clone(ctx, f)
 		if err != nil {
 			return false, err
 		}
 		f.co, f.run.BaseSHA = co, co.SHA()
+		if f.round != nil {
+			f.run.StartSHA = co.Start()
+		}
 		return true, h.prepare(ctx, f)
 	})
 }
 
 // prepare reads the contract, the issue and the agent_context of the base
-// checkout, sizes what is left of the wall clock and starts the branch.
+// checkout, sizes what is left of the wall clock and starts the branch; a
+// correction round's clone has it checked out already.
 func (h implementer) prepare(ctx context.Context, f *flight) error {
 	parsed, contractSHA, err := readContract(ctx, f.co, f.run.Repository)
 	if err != nil {
@@ -108,6 +113,9 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 		return fmt.Errorf("contract at %s: %w", f.co.SHA(), err)
 	}
 	f.run.Branch = branchPrefix + strconv.Itoa(f.run.Issue)
+	if f.round != nil {
+		return nil
+	}
 	return f.co.StartBranch(ctx, f.run.Branch)
 }
 
@@ -118,7 +126,7 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	return f.stage(done, domain.StageAgent, func() (bool, error) {
 		res, err := h.deps.Agent.Run(ctx, agent.Task{
 			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),
-			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle,
+			Branch: f.run.Branch, BaseSHA: f.co.Start(), Bundle: f.bundle, Finding: f.finding(),
 		})
 		f.charge(res.Compute, res.Tokens)
 		f.run.Egress = res.Egress
@@ -140,7 +148,7 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 
 // adopt brings the exported commits into the checkout and counts what the
 // head changes against the base on the control plane's own clone; a head
-// at the base is no commit at all.
+// at the branch's start is no commit at all.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) {

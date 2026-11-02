@@ -73,6 +73,25 @@ func TestRender_green_citesShasStepsTokensAndElapsed(t *testing.T) {
 	)
 }
 
+// A correction round names the branch tip it started from, next to the
+// base whose contract applied; a first run has no such line.
+func TestRender_startSHA_namedInHeader(t *testing.T) {
+	t.Parallel()
+	const tip = "5f814f9aa0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5"
+	run := greenRun()
+	run.StartSHA = tip
+
+	body := evidence.Render(run)
+	assertLines(t, body,
+		"| Base commit | `"+baseSHA+"` |",
+		"| Branch tip before this round | `"+tip+"` |",
+		"| Head | `"+headSHA+"` |",
+	)
+	if first := evidence.Render(greenRun()); strings.Contains(first, "Branch tip before this round") {
+		t.Fatalf("a first run's evidence names a branch tip:\n%s", first)
+	}
+}
+
 func TestRender_redGate_exitCodesAsTheyWereSkippedHasNone(t *testing.T) {
 	t.Parallel()
 	run := greenRun()

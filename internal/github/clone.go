@@ -41,6 +41,15 @@ type Cloner struct {
 // empty, as a shallow single-branch clone. A failure after the directory
 // was created removes it.
 func (c *Cloner) Clone(ctx context.Context, repo, branch string) (*Checkout, error) {
+	return c.cloneWith(ctx, repo, describeBranch(branch), func(dir, url, token string) (*Checkout, error) {
+		return c.cloneInto(ctx, dir, url, branch, token)
+	})
+}
+
+// cloneWith mints the read token for repo, creates the clone directory and
+// has fill clone into it; what names the branches in the error. A failure
+// after the directory was created removes it.
+func (c *Cloner) cloneWith(ctx context.Context, repo, what string, fill func(dir, url, token string) (*Checkout, error)) (*Checkout, error) {
 	url, err := c.cloneURL(repo)
 	if err != nil {
 		return nil, err
@@ -56,12 +65,12 @@ func (c *Cloner) Clone(ctx context.Context, repo, branch string) (*Checkout, err
 	if err != nil {
 		return nil, fmt.Errorf("github: clone %s: %w", repo, err)
 	}
-	co, err := c.cloneInto(ctx, dir, url, branch, tok.Value)
+	co, err := fill(dir, url, tok.Value)
 	if err != nil {
 		// The clone failure is the error; a directory that could not be
 		// removed on top of it adds nothing the caller can act on.
 		_ = os.RemoveAll(dir)
-		return nil, fmt.Errorf("github: clone %s (%s): %w", repo, describeBranch(branch), err)
+		return nil, fmt.Errorf("github: clone %s (%s): %w", repo, what, err)
 	}
 	return co, nil
 }

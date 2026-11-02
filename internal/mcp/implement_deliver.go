@@ -17,9 +17,12 @@ type Pusher interface {
 }
 
 // PullRequests is what forja.implement needs to open the run's pull
-// request.
+// request, and for a correction round to find the one open pull request
+// of the run's branch and comment on it.
 type PullRequests interface {
 	Open(ctx context.Context, req github.PullRequestRequest) (domain.PullRequest, error)
+	Find(ctx context.Context, repo, branch string) (domain.PullRequest, error)
+	Comment(ctx context.Context, req github.CommentRequest) error
 }
 
 // CommitStatuses is what forja.implement needs to publish forja/gates.
@@ -58,7 +61,7 @@ func (h implementer) gatesStage(ctx, done context.Context, f *flight) (bool, err
 func (h implementer) evidenceOf(f *flight) evidence.Run {
 	r := evidence.Run{
 		Issue: f.run.Issue, RunID: f.run.ID, BaseBranch: f.co.Branch(),
-		BaseSHA: f.run.BaseSHA, ContractSHA: f.run.ContractSHA, HeadSHA: f.run.HeadSHA,
+		BaseSHA: f.run.BaseSHA, ContractSHA: f.run.ContractSHA, StartSHA: f.run.StartSHA, HeadSHA: f.run.HeadSHA,
 		Gates: f.run.Gates, Tokens: f.run.Tokens, Elapsed: h.deps.Now().Sub(f.run.StartedAt),
 		Limits: f.run.Limits,
 	}

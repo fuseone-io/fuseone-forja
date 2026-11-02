@@ -20,10 +20,12 @@ var (
 
 // Checkout is a clone pinned at one commit. Every read goes through git
 // against that commit, never through the working tree, so what it returns
-// is what the commit holds.
+// is what the commit holds. start is the commit the agent's branch starts
+// from: the pinned commit, or the tip of a branch CloneBranch checked out.
 type Checkout struct {
 	dir    string
 	sha    string
+	start  string
 	branch string
 	git    gitCmd
 	env    []string
@@ -44,6 +46,7 @@ func openCheckout(ctx context.Context, git gitCmd, dir string) (*Checkout, error
 	if co.sha == "" {
 		return nil, errors.New("clone has no HEAD")
 	}
+	co.start = co.sha
 	return co, nil
 }
 
@@ -52,6 +55,10 @@ func (c *Checkout) Dir() string { return c.dir }
 
 // SHA is the commit the checkout is pinned at.
 func (c *Checkout) SHA() string { return c.sha }
+
+// Start is the commit the agent's branch starts from: SHA after Clone, the
+// branch tip after CloneBranch.
+func (c *Checkout) Start() string { return c.start }
 
 // Branch is the name of the branch checked out.
 func (c *Checkout) Branch() string { return c.branch }
