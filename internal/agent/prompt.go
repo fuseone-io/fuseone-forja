@@ -36,11 +36,18 @@ func Command() string {
 	}, " ")
 }
 
-// Render is the agent's prompt: the issue, the agent_context files in
-// order, the gates its commits will face, and how to deliver.
+// Render is the agent's prompt: the issue, the review finding of a
+// correction round, the agent_context files in order, the gates its
+// commits will face, and how to deliver.
 func Render(t Task) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# Issue #%d: %s\n\n%s\n\n", t.Issue.Number, t.Issue.Title, strings.TrimRight(t.Issue.Body, "\n"))
+	if t.Finding != "" {
+		fmt.Fprintf(&b, "## Review finding to address\n\nA reviewer left this finding on the pull request of %s. "+
+			"The branch already holds the earlier commits for this issue: keep them and add your new commits on top of its current tip. "+
+			"A history that does not descend from the current tip, such as an amend, a rebase or a reset, is refused.\n\n", t.Branch)
+		quote(&b, t.Finding)
+	}
 	if len(t.Context) > 0 {
 		b.WriteString("## Repository context\n\nThese files are the repository's own guidance, read from the base commit.\n\n")
 		for _, f := range t.Context {

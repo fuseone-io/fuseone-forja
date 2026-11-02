@@ -28,6 +28,12 @@ type Deps struct {
 	Pusher       Pusher
 	PullRequests PullRequests
 	Statuses     CommitStatuses
+	// BranchCloner and Identity serve a correction round: the run's branch
+	// at its tip, and the login a pull request Forja opened is authored by.
+	BranchCloner BranchCloner
+	Identity     Identity
+	// PullRequestReader reads the pull request a forja.verify run verifies.
+	PullRequestReader PullRequestReader
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time
@@ -40,15 +46,14 @@ type Deps struct {
 	Version string
 }
 
-// New builds the server with every tool registered. forja.status,
-// forja.doctor, forja.plan and forja.implement are backed by behaviour;
-// forja.verify answers ErrNotImplemented.
+// New builds the server with the five tools registered, each backed by
+// its handler.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
 	sdk.AddTool(server, doctorTool(), doctorHandler(deps))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))
-	sdk.AddTool(server, verifyTool(), notImplemented[VerifyInput, VerifyOutput](domain.ToolVerify))
+	sdk.AddTool(server, verifyTool(), verifyHandler(deps))
 	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs, deps.Prices))
 	return server
 }

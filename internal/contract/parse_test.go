@@ -121,6 +121,24 @@ func TestParse_pilotContract_accepted(t *testing.T) {
 	}
 }
 
+// The pilot's gates are `make <target>` with no -f, and GNU make reads
+// GNUmakefile, then makefile, before Makefile. An agent that adds either one
+// replaces every gate without touching an existing proof_paths file, so the
+// pilot contract must send that addition to a human merge.
+func TestParse_pilotContract_addedMakefileOverrideMarksHumanMerge(t *testing.T) {
+	t.Parallel()
+	c := mustParse(t, string(mustReadFile(t, "../../.forja.yaml")))
+
+	for _, name := range []string{"GNUmakefile", "makefile"} {
+		added := domain.FileChange{Path: name, Kind: domain.ChangeAdded, Added: 6}
+		got := domain.ClassifyProof(c, []domain.FileChange{added})
+		want := domain.Proof{HumanMergePaths: []domain.FileChange{added}}
+		if !reflect.DeepEqual(got, want) || !got.HumanMerge() {
+			t.Errorf("added %s: ClassifyProof = %+v (human merge %v), want %+v", name, got, got.HumanMerge(), want)
+		}
+	}
+}
+
 func TestParse_omittedSections_emptyNotNil(t *testing.T) {
 	t.Parallel()
 	c := mustParse(t, minimal)

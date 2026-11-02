@@ -49,8 +49,12 @@ proof_paths:
   - "**/testdata/**"
   - "**/*_test.go"
 
+# Additions count here, unlike proof_paths. GNU make reads GNUmakefile, then
+# makefile, before Makefile: adding either one replaces every gate above.
 human_merge_paths:
   - .github/**
+  - GNUmakefile
+  - makefile
 
 limits:
   wall_clock: 30m

@@ -53,6 +53,7 @@ func (c *cancellingClaims) Release(ctx context.Context, _ domain.Claim) error {
 type oneFileCheckout struct{ contract []byte }
 
 func (oneFileCheckout) SHA() string    { return "3d5656a3e223a7bc54b8e8f13086f562b84dc90c" }
+func (oneFileCheckout) Start() string  { return "3d5656a3e223a7bc54b8e8f13086f562b84dc90c" }
 func (oneFileCheckout) Branch() string { return "main" }
 func (oneFileCheckout) Dir() string    { return "/tmp/forja-plan-internal" }
 func (oneFileCheckout) Close() error   { return nil }
@@ -68,7 +69,8 @@ func (oneFileCheckout) StartBranch(context.Context, string) error           { re
 func (oneFileCheckout) Adopt(context.Context, string, string) (string, error) {
 	return "04915d552e6e507929c4c734b4f4a3a31ae05820", nil
 }
-func (oneFileCheckout) DiffLines(context.Context, string) (int, error) { return 1, nil }
+func (oneFileCheckout) DiffLines(context.Context, string) (int, error)            { return 1, nil }
+func (oneFileCheckout) Diff(context.Context, string) ([]domain.FileChange, error) { return nil, nil }
 
 // greenGates passes every step.
 type greenGates struct{}
@@ -84,11 +86,20 @@ func (acceptingGitHub) Push(context.Context, github.PushRequest) error { return 
 func (acceptingGitHub) Open(context.Context, github.PullRequestRequest) (domain.PullRequest, error) {
 	return domain.PullRequest{Number: 1, URL: "https://github.com/fuseone-io/fuseone-forja/pull/1"}, nil
 }
+func (acceptingGitHub) Label(context.Context, github.LabelRequest) error    { return nil }
 func (acceptingGitHub) Publish(context.Context, github.StatusRequest) error { return nil }
+func (acceptingGitHub) Find(context.Context, string, string) (domain.PullRequest, error) {
+	return domain.PullRequest{}, github.ErrNoPullRequest
+}
+func (acceptingGitHub) Comment(context.Context, github.CommentRequest) error { return nil }
+func (acceptingGitHub) Login(context.Context) (string, error)                { return "forja[bot]", nil }
 
 type checkoutCloner struct{ co Checkout }
 
 func (c checkoutCloner) Clone(context.Context, string, string) (Checkout, error) { return c.co, nil }
+func (c checkoutCloner) CloneBranch(context.Context, string, string, string) (Checkout, error) {
+	return c.co, nil
+}
 
 type staticIssues struct{}
 
@@ -126,6 +137,7 @@ func TestImplement_callerCancels_toolErrorNoWallClockReason(t *testing.T) {
 	deps := Deps{
 		Runs: runs, Claims: claims, Contracts: fixedContracts{body: body},
 		Cloner: checkoutCloner{co: oneFileCheckout{contract: body}}, Issues: staticIssues{},
+		BranchCloner: checkoutCloner{co: oneFileCheckout{contract: body}}, Identity: acceptingGitHub{},
 		Agent: cancelledAgent{}, Gates: greenGates{},
 		Pusher: acceptingGitHub{}, PullRequests: acceptingGitHub{}, Statuses: acceptingGitHub{},
 		NewID: func() string { return "run-cancelled" }, Now: func() time.Time { return now },
@@ -159,12 +171,14 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 	body := []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\n")
 	deps := Deps{
 		Runs: runs, Claims: claims,
-		Contracts: fixedContracts{body: body},
-		Cloner:    checkoutCloner{co: oneFileCheckout{contract: body}},
-		Issues:    staticIssues{},
-		Agent:     exitingAgent{},
-		Gates:     greenGates{},
-		Pusher:    acceptingGitHub{}, PullRequests: acceptingGitHub{}, Statuses: acceptingGitHub{},
+		Contracts:    fixedContracts{body: body},
+		Cloner:       checkoutCloner{co: oneFileCheckout{contract: body}},
+		BranchCloner: checkoutCloner{co: oneFileCheckout{contract: body}},
+		Identity:     acceptingGitHub{},
+		Issues:       staticIssues{},
+		Agent:        exitingAgent{},
+		Gates:        greenGates{},
+		Pusher:       acceptingGitHub{}, PullRequests: acceptingGitHub{}, Statuses: acceptingGitHub{},
 		NewID: func() string { return "run-cancelled" },
 		Now:   func() time.Time { return now },
 	}

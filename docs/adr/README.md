@@ -15,5 +15,8 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
 | [0043](0043-run-limits.md) | The run's limits, wall_clock and max_diff_lines | proposed |
+| [0044](0044-proof-apparatus.md) | The proof apparatus and the human-merge label | proposed |
 | [0045](0045-run-cost.md) | Compute minutes, tokens and estimated cost per run | proposed |
+| [0047](0047-correction-round.md) | Correction round: forja.implement on Forja's own branch | proposed |
+| [0048](0048-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |
 | [0049](0049-operator-view.md) | The platform owner's view of runs per repository | proposed |
