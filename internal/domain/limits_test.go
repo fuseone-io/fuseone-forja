@@ -7,7 +7,7 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// What a contract omits takes the PRD's default; what it sets is kept,
+// What a contract omits takes its default; what it sets is kept,
 // each limit on its own.
 func TestLimits_effective_omittedFilledSetKept(t *testing.T) {
 	t.Parallel()
