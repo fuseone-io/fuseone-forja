@@ -61,6 +61,10 @@ func clone(run domain.Run) domain.Run {
 		run.Stages[i].FinishedAt = cloneTime(run.Stages[i].FinishedAt)
 	}
 	run.Gates = cloneReport(run.Gates)
+	run.Attempts = slices.Clone(run.Attempts)
+	for i := range run.Attempts {
+		run.Attempts[i].Gates = cloneReport(run.Attempts[i].Gates)
+	}
 	return run
 }
 
