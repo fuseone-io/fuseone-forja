@@ -20,4 +20,5 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0046](0046-gate-retry.md) | A red gate goes back to the agent up to the attempt limit | proposed |
 | [0047](0047-correction-round.md) | Correction round: forja.implement on Forja's own branch | proposed |
 | [0048](0048-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |
+| [0049](0049-operator-view.md) | The platform owner's view of runs per repository | proposed |
 | [0050](0050-verify-inversions.md) | forja.verify inversions, the QA agent and the verdict "bites / does not bite" | proposed |

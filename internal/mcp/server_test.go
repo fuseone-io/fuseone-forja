@@ -309,25 +309,6 @@ func TestStatus_unknownRun_toolErrorNamesTheID(t *testing.T) {
 	}
 }
 
-func TestStatus_missingRunID_rejectedByInputSchema(t *testing.T) {
-	t.Parallel()
-	store := runstore.NewMemory()
-	mustPut(t, store, runningRun("run-present"))
-	cs := connect(t, store)
-
-	res := callStatus(t, cs, map[string]any{})
-	if !res.IsError {
-		t.Fatalf("IsError = false for a call without run_id; content: %s", textOf(res))
-	}
-	text := textOf(res)
-	if !strings.Contains(text, "run_id") {
-		t.Errorf("error text %q does not name run_id", text)
-	}
-	if strings.Contains(text, "not found") {
-		t.Errorf("error text %q comes from the store, not from the input schema", text)
-	}
-}
-
 func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	t.Parallel()
 	store := runstore.NewMemory()

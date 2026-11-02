@@ -50,6 +50,25 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 	return clone(run), nil
 }
 
+// List returns a copy of every run the filter matches, sorted with
+// domain.CompareNewestFirst; empty, never nil, when none does. An invalid
+// filter is an error.
+func (m *Memory) List(_ context.Context, f domain.RunFilter) ([]domain.Run, error) {
+	if err := f.Validate(); err != nil {
+		return nil, fmt.Errorf("list runs: %w", err)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]domain.Run, 0)
+	for _, run := range m.runs {
+		if f.Match(run) {
+			out = append(out, clone(run))
+		}
+	}
+	slices.SortFunc(out, domain.CompareNewestFirst)
+	return out, nil
+}
+
 // clone copies the run so that none of its pointers, lists or streams are
 // shared between the store and its callers.
 func clone(run domain.Run) domain.Run {
