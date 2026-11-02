@@ -105,20 +105,26 @@ func TestStatus_listRepositories_wireKeysAndFailureOrder(t *testing.T) {
 		t.Fatalf("failures = %v\nwant %v", got, wantFailures)
 	}
 
-	// No run of acme/web finished: no average, and every rate is 0.
-	if raw, ok := repos[1]["average_duration_seconds"]; ok {
-		t.Fatalf("average_duration_seconds = %s with no finished run, want absent", raw)
-	}
 	if string(repos[1]["tokens_in"]) != "5" || string(repos[1]["tokens_out"]) != "6" || string(repos[1]["in_flight"]) != "1" {
 		t.Fatalf("acme/web = %v, want 5 tokens in, 6 out, 1 in flight", flat(repos[1]))
 	}
-	var webFailures []struct{ Rate float64 }
-	if err := json.Unmarshal(repos[1]["failures"], &webFailures); err != nil || len(webFailures) != 6 {
-		t.Fatalf("acme/web failures = %s, want six rows", repos[1]["failures"])
+	assertNothingFinished(t, repos[1])
+}
+
+// assertNothingFinished checks a repository none of whose runs finished:
+// no average, and six failure rows all at rate 0.
+func assertNothingFinished(t *testing.T, repo map[string]json.RawMessage) {
+	t.Helper()
+	if raw, ok := repo["average_duration_seconds"]; ok {
+		t.Fatalf("average_duration_seconds = %s with no finished run, want absent", raw)
 	}
-	for _, f := range webFailures {
-		if f.Rate != 0 {
-			t.Fatalf("acme/web failures = %s, want every rate 0", repos[1]["failures"])
+	rows := flatList(t, repo["failures"])
+	if len(rows) != 6 {
+		t.Fatalf("failures = %s, want six rows", repo["failures"])
+	}
+	for _, row := range rows {
+		if row["rate"] != "0" {
+			t.Fatalf("failures = %s, want every rate 0", repo["failures"])
 		}
 	}
 }
@@ -175,24 +181,37 @@ func TestStatus_listRepositories_spanEveryPage(t *testing.T) {
 	cs := connect(t, store)
 
 	args := map[string]any{"state": "failed", "limit": 1}
-	for page := 0; ; page++ {
+	pages := 0
+	for args != nil {
 		list := listWire(t, cs, args)
+		pages++
 		var repos []map[string]json.RawMessage
 		if err := json.Unmarshal(list["repositories"], &repos); err != nil || len(repos) != 1 {
-			t.Fatalf("page %d repositories = %s, %v", page, list["repositories"], err)
+			t.Fatalf("page %d repositories = %s, %v", pages, list["repositories"], err)
 		}
 		if string(repos[0]["runs"]) != "3" || string(repos[0]["failed"]) != "3" || string(repos[0]["succeeded"]) != "0" {
-			t.Fatalf("page %d repository = %v, want the 3 failed runs the filter matches", page, flat(repos[0]))
+			t.Fatalf("page %d repository = %v, want the 3 failed runs the filter matches", pages, flat(repos[0]))
 		}
-		var cursor string
-		if raw, ok := list["next_cursor"]; !ok || json.Unmarshal(raw, &cursor) != nil {
-			if page != 2 {
-				t.Fatalf("walk ended on page %d, want 3 pages", page)
-			}
-			return
-		}
-		args = map[string]any{"state": "failed", "limit": 1, "cursor": cursor}
+		args = nextPage(t, list, map[string]any{"state": "failed", "limit": 1})
 	}
+	if pages != 3 {
+		t.Fatalf("walk took %d pages, want 3", pages)
+	}
+}
+
+// nextPage is args with the list's cursor, or nil on the last page.
+func nextPage(t *testing.T, list map[string]json.RawMessage, args map[string]any) map[string]any {
+	t.Helper()
+	raw, ok := list["next_cursor"]
+	if !ok {
+		return nil
+	}
+	var cursor string
+	if err := json.Unmarshal(raw, &cursor); err != nil {
+		t.Fatalf("next_cursor = %s: %v", raw, err)
+	}
+	args["cursor"] = cursor
+	return args
 }
 
 // deniedTo is a failed run started offset after startedAt whose gateway
