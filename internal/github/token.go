@@ -32,12 +32,15 @@ func (t Token) MarshalJSON() ([]byte, error) { return json.Marshal(t.String()) }
 type Permissions map[string]string
 
 // The permission sets the control plane asks for: reading the contract and
-// cloning the base branch, reading the issue, and writing the refs that
-// reserve an issue.
+// cloning the base branch, reading the issue, writing the refs that
+// reserve an issue and pushing the run's branch, opening its pull request,
+// and publishing its commit status.
 var (
-	ReadContents  = Permissions{"contents": "read"}
-	ReadIssues    = Permissions{"issues": "read"}
-	WriteContents = Permissions{"contents": "write"}
+	ReadContents      = Permissions{"contents": "read"}
+	ReadIssues        = Permissions{"issues": "read"}
+	WriteContents     = Permissions{"contents": "write"}
+	WritePullRequests = Permissions{"pull_requests": "write"}
+	WriteStatuses     = Permissions{"statuses": "write"}
 )
 
 // TokenSource yields a GitHub token scoped to one repository and to the
