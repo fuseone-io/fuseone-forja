@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -91,13 +92,15 @@ func TestAgent_realClaudeAgainstFake_commitsAndTokensMetered(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
+	co := controlPlaneClone(t)
 	res, err := runner.Run(ctx, agent.Task{
-		RunID: newRunID(t), Tree: gitTree(t),
+		RunID: newRunID(t), Tree: co.Dir(),
 		Contract: domain.Contract{Image: agentImage, Gates: []domain.Gate{{Name: "build", Run: "go build ./..."}}},
 		Issue:    domain.Issue{Number: 1, Title: "Write a proof file", Body: "Commit proof.txt."},
+		Branch:   exportBranch, BaseSHA: co.SHA(), Bundle: filepath.Join(t.TempDir(), "commits.bundle"),
 	})
-	if err != nil || res.ExitCode != 0 || res.TimedOut || res.Capped {
-		t.Fatalf("Run = %+v, %v; want exit 0", res, err)
+	if err != nil || res.ExitCode != 0 || res.TimedOut || res.Capped || !res.Exported {
+		t.Fatalf("Run = %+v, %v; want exit 0 with the commits exported", res, err)
 	}
 	if !strings.HasPrefix(gitLog, "Forja agent <agent@forja.invalid> forja proof\n") || !strings.Contains(gitLog, "base") {
 		t.Fatalf("git log in the workspace =\n%s\nwant the agent's commit on top of the base", gitLog)

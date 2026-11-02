@@ -48,6 +48,11 @@ type Workspace interface {
 	AwaitCap(ctx context.Context) error
 	// Egress is what the gateway refused so far.
 	Egress(ctx context.Context) (domain.EgressReport, error)
+	// ExportCommits writes to dst, a path on the control plane, a git
+	// bundle of branch beyond the commit base, as the tree holds it. An
+	// agent that committed nothing wraps domain.ErrNoCommits. It needs the
+	// workspace still running.
+	ExportCommits(ctx context.Context, base, branch, dst string) error
 	// Halt stops the tree's processes and leaves the proxies' logs to read.
 	Halt(ctx context.Context) error
 	// Close destroys the workspace and its proxies. It is idempotent.
@@ -67,22 +72,29 @@ type File struct {
 }
 
 // Task is one agent run: the contract and the context come from the base
-// commit, the tree is the checkout the agent commits on.
+// commit, the tree is the checkout the agent commits on, on Branch,
+// started at BaseSHA. Bundle is the path on the control plane the agent's
+// commits are exported to.
 type Task struct {
 	RunID    string
 	Contract domain.Contract
 	Tree     string
 	Issue    domain.Issue
 	Context  []File
+	Branch   string
+	BaseSHA  string
+	Bundle   string
 }
 
 // Result is how the agent run ended and what the proxies recorded for it.
 // ExitCode is domain.NoExitCode when the agent was stopped, by the
-// deadline (TimedOut) or by the cap (Capped).
+// deadline (TimedOut) or by the cap (Capped). Exported says the agent's
+// commits are in the task's Bundle.
 type Result struct {
 	ExitCode int
 	TimedOut bool
 	Capped   bool
+	Exported bool
 	Tokens   domain.TokenUsage
 	Egress   domain.EgressReport
 }
@@ -93,9 +105,11 @@ type Runner struct {
 }
 
 // Run launches the workspace, writes the prompt to PromptPath and runs the
-// agent until it exits, ctx ends or the proxy reaches the cap. Then it
-// halts the workspace, reads the usage and the egress, and closes it, on
-// every path. The deadline is a result; a cancellation is an error.
+// agent until it exits, ctx ends or the proxy reaches the cap. An agent
+// that exited 0 on its own has its commits exported to the task's Bundle
+// while the workspace still runs. Then it halts the workspace, reads the
+// usage and the egress, and closes it, on every path. The deadline is a
+// result; a cancellation is an error.
 func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 	if r.Launcher == nil {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
@@ -113,7 +127,30 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 		}
 	}()
 	res, err = execute(ctx, ws, t)
+	if err == nil {
+		err = export(ctx, ws, t, &res)
+	}
 	return res, errors.Join(err, collect(detached, ws, &res))
+}
+
+// export brings the commits of an agent that exited 0 on its own out to
+// the task's Bundle. Nothing to export is a result; so is the deadline
+// ending the export.
+func export(ctx context.Context, ws Workspace, t Task, res *Result) error {
+	if res.ExitCode != 0 || res.Capped {
+		return nil
+	}
+	err := ws.ExportCommits(ctx, t.BaseSHA, t.Branch, t.Bundle)
+	switch {
+	case err == nil:
+		res.Exported = true
+	case errors.Is(err, domain.ErrNoCommits):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		res.TimedOut = true
+	default:
+		return fmt.Errorf("agent: export commits: %w", err)
+	}
+	return nil
 }
 
 // execute writes the prompt and runs the agent, classifying how it ended.

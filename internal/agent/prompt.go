@@ -55,9 +55,9 @@ func Render(t Task) []byte {
 			quote(&b, g.Run)
 		}
 	}
-	b.WriteString("## How to deliver\n\nWork in /workspace, on the branch that is checked out. " +
-		"Commit your changes with git as you go; do not push, and do not change the remotes. " +
-		"Only your commits are kept.\n")
+	fmt.Fprintf(&b, "## How to deliver\n\nWork in /workspace, on the branch %s, which is checked out. "+
+		"Commit your changes with git on that branch as you go; do not push, and do not change the remotes. "+
+		"Only your commits on that branch are kept.\n", t.Branch)
 	return []byte(b.String())
 }
 

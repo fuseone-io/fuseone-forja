@@ -19,6 +19,8 @@ type fakeWorkspace struct {
 	egress domain.EgressReport
 	// modelErr fails the usage read.
 	modelErr error
+	// exportErr fails the export of the agent's commits.
+	exportErr error
 	// capReached is closed to say the proxy reached the cap.
 	capReached chan struct{}
 
@@ -29,6 +31,8 @@ type fakeWorkspace struct {
 	halted    bool
 	closes    int
 	watchDone chan struct{}
+	// exported is the base, branch and destination of each export.
+	exported [][3]string
 }
 
 func newFakeWorkspace() *fakeWorkspace {
@@ -60,6 +64,27 @@ func (f *fakeWorkspace) Exec(ctx context.Context, command string) (agent.ExecRes
 		return agent.ExecResult{}, nil
 	}
 	return f.exec(ctx)
+}
+
+// ExportCommits records what it was asked, and, like Docker, has nothing
+// to export from once the workspace is halted or closed.
+func (f *fakeWorkspace) ExportCommits(_ context.Context, base, branch, dst string) error {
+	if err := f.log("export"); err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.halted {
+		return errors.New("fake: workspace halted")
+	}
+	f.exported = append(f.exported, [3]string{base, branch, dst})
+	return f.exportErr
+}
+
+func (f *fakeWorkspace) exports() [][3]string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([][3]string(nil), f.exported...)
 }
 
 func (f *fakeWorkspace) WriteFile(_ context.Context, path string, data []byte) error {

@@ -3,6 +3,7 @@ package agent_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -18,6 +19,9 @@ var task = agent.Task{
 	Tree:     "/tmp/forja-plan-11",
 	Issue:    domain.Issue{Number: 11, Title: "Model proxy", Body: "Meter the tokens."},
 	Context:  []agent.File{{Path: "CLAUDE.md", Content: "# Forja\n"}},
+	Branch:   "forja/11",
+	BaseSHA:  "5ceb0229fc86eec9a6367c9809a1cc3b0c8e6c27",
+	Bundle:   "/tmp/forja-bundle-11/commits.bundle",
 }
 
 var (
@@ -49,7 +53,7 @@ func TestRunner_exitCode_resultWithTokensAndEgress(t *testing.T) {
 		if err != nil {
 			t.Fatalf("exit %d: Run = %v, want a result: a non-zero exit is not an error", code, err)
 		}
-		want := agent.Result{ExitCode: code, Tokens: metered.Tokens, Egress: denied}
+		want := agent.Result{ExitCode: code, Tokens: metered.Tokens, Egress: denied, Exported: code == 0}
 		if !reflect.DeepEqual(res, want) {
 			t.Fatalf("exit %d: Result = %+v, want %+v", code, res, want)
 		}
@@ -57,18 +61,23 @@ func TestRunner_exitCode_resultWithTokensAndEgress(t *testing.T) {
 }
 
 // The prompt goes in first, as a file outside the tree; the agent is then
-// started; once it is done the workspace is stopped before the proxies'
-// logs are read, and closed last.
-func TestRunner_order_promptExecHaltReadsClose(t *testing.T) {
+// started; once it exited 0 its commits are exported while the workspace
+// still runs, then the workspace is stopped before the proxies' logs are
+// read, and closed last.
+func TestRunner_cleanExit_exportBeforeHaltThenClose(t *testing.T) {
 	t.Parallel()
 	ws := newFakeWorkspace()
 
-	if _, err := run(t, context.Background(), ws); err != nil {
-		t.Fatal(err)
+	res, err := run(t, context.Background(), ws)
+	if err != nil || !res.Exported {
+		t.Fatalf("Run = %+v, %v; want exported", res, err)
 	}
-	want := []string{"write " + agent.PromptPath, "exec", "halt", "model", "egress", "close"}
+	want := []string{"write " + agent.PromptPath, "exec", "export", "halt", "model", "egress", "close"}
 	if got := ws.callList(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if got := ws.exports(); len(got) != 1 || got[0] != [3]string{task.BaseSHA, task.Branch, task.Bundle} {
+		t.Fatalf("exports = %q, want the task's base, branch and bundle", got)
 	}
 	if string(ws.files[agent.PromptPath]) != string(agent.Render(task)) {
 		t.Fatalf("prompt written = %q, want Render(task)", ws.files[agent.PromptPath])
@@ -212,6 +221,92 @@ func TestRunner_usageUnreadable_errorStillClosed(t *testing.T) {
 	}
 	if ws.closeCount() != 1 {
 		t.Fatalf("Close called %d times, want 1", ws.closeCount())
+	}
+}
+
+// An export that fails is an error, and the workspace is still halted,
+// read and closed.
+func TestRunner_exportFails_errorStillHaltedAndClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.report = metered
+	ws.exportErr = errors.New("bundle over the cap")
+
+	res, err := run(t, context.Background(), ws)
+	if err == nil || !strings.Contains(err.Error(), "bundle over the cap") || res.Exported {
+		t.Fatalf("Run = %+v, %v; want the export failure, nothing exported", res, err)
+	}
+	want := []string{"write " + agent.PromptPath, "exec", "export", "halt", "model", "egress", "close"}
+	if got := ws.callList(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if res.Tokens != metered.Tokens {
+		t.Fatalf("tokens = %+v, want them read after the failed export", res.Tokens)
+	}
+}
+
+// An agent that exited 0 without committing has nothing to export: that
+// is a result, not an error.
+func TestRunner_noCommits_resultNotExported(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.exportErr = fmt.Errorf("workspace: %w", domain.ErrNoCommits)
+
+	res, err := run(t, context.Background(), ws)
+	if err != nil || res.Exported || res.ExitCode != 0 {
+		t.Fatalf("Run = %+v, %v; want exit 0, nothing exported, no error", res, err)
+	}
+}
+
+// Only an agent that exited 0 on its own is exported: not one the cap
+// stopped, the deadline stopped, or that exited non-zero.
+func TestRunner_capped_noExport(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*fakeWorkspace) (context.Context, context.CancelFunc){
+		"capped mid-exec": func(ws *fakeWorkspace) (context.Context, context.CancelFunc) {
+			started := make(chan struct{})
+			ws.exec = func(ctx context.Context) (agent.ExecResult, error) {
+				close(started)
+				return blockUntilDone(ctx)
+			}
+			go func() {
+				<-started
+				close(ws.capReached)
+			}()
+			return context.WithTimeout(context.Background(), time.Minute)
+		},
+		"capped, then exited 0": func(ws *fakeWorkspace) (context.Context, context.CancelFunc) {
+			close(ws.capReached)
+			ws.exec = func(context.Context) (agent.ExecResult, error) {
+				<-ws.watchDone
+				return agent.ExecResult{ExitCode: 0}, nil
+			}
+			return context.WithTimeout(context.Background(), time.Minute)
+		},
+		"deadline": func(ws *fakeWorkspace) (context.Context, context.CancelFunc) {
+			ws.exec = blockUntilDone
+			return context.WithTimeout(context.Background(), 50*time.Millisecond)
+		},
+		"exit 1": func(ws *fakeWorkspace) (context.Context, context.CancelFunc) {
+			ws.exec = func(context.Context) (agent.ExecResult, error) { return agent.ExecResult{ExitCode: 1}, nil }
+			return context.WithCancel(context.Background())
+		},
+	}
+	for name, setUp := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			ws := newFakeWorkspace()
+			ctx, cancel := setUp(ws)
+			defer cancel()
+
+			res, err := run(t, ctx, ws)
+			if err != nil || res.Exported {
+				t.Fatalf("Run = %+v, %v; want a result with nothing exported", res, err)
+			}
+			if n := len(ws.exports()); n != 0 {
+				t.Fatalf("exported %d times, want never", n)
+			}
+		})
 	}
 }
 
