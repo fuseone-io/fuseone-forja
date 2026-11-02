@@ -66,15 +66,19 @@ type Run struct {
 	// the last one may still be running.
 	Stages []Stage
 	// Gates is the report of the gates an implement run ran on the agent's
-	// head; empty until they ran.
+	// head, of its latest attempt; empty until they ran.
 	Gates GateReport
+	// Attempts are the attempts whose gates ran, in order; MaxAttempts is
+	// how many the base commit's contract allows, zero until it was read.
+	Attempts    []Attempt
+	MaxAttempts int
 	// BaseSHA is the commit of the base branch the run started from, and
 	// ContractSHA the blob of .forja.yaml at that commit, the contract that
 	// applied.
 	BaseSHA     string
 	ContractSHA string
 	// HeadSHA is the agent's last commit once the control plane imported
-	// it, and Branch the branch it is pushed to.
+	// it, of its latest attempt, and Branch the branch it is pushed to.
 	HeadSHA string
 	Branch  string
 	// PullRequest is the pull request the run opened; zero when none.

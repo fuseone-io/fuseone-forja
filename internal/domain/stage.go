@@ -40,6 +40,9 @@ type Stage struct {
 	// FinishedAt is nil while the stage runs.
 	FinishedAt *time.Time
 	Outcome    StageOutcome
+	// Attempt is the number of the attempt an agent or gates stage belongs
+	// to; zero for the stages outside every attempt.
+	Attempt int
 }
 
 // PullRequest is the pull request a run opened. The zero value is none.

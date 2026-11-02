@@ -42,6 +42,9 @@ type Verify struct {
 type Limits struct {
 	WallClock    time.Duration `json:"wall_clock"`
 	MaxDiffLines int           `json:"max_diff_lines"`
+	// MaxAttempts is how many times the agent may try to turn the gates
+	// green; zero when omitted, which Attempts reads as the default.
+	MaxAttempts int `json:"max_attempts"`
 }
 
 // ContractSource is the raw contract as read from the base commit: the
