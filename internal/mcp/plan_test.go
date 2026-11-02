@@ -44,9 +44,12 @@ type fakeCheckout struct {
 	failPath string
 	failErr  error
 	closed   int
-	// started is the branch StartBranch created. head is the commit Adopt
-	// imports; adoptedDir the tree Dir holds once it did; adoptErr fails it.
+	// started is the branch StartBranch created, or the one CloneBranch
+	// checked out. start is the commit that branch starts from, the base
+	// when empty. head is the commit Adopt imports; adoptedDir the tree Dir
+	// holds once it did; adoptErr fails it.
 	started    string
+	start      string
 	head       string
 	adoptedDir string
 	adoptErr   error
@@ -56,6 +59,13 @@ type fakeCheckout struct {
 func (f *fakeCheckout) SHA() string    { return f.sha }
 func (f *fakeCheckout) Branch() string { return f.branch }
 func (f *fakeCheckout) Close() error   { f.closed++; return nil }
+
+func (f *fakeCheckout) Start() string {
+	if f.start != "" {
+		return f.start
+	}
+	return f.sha
+}
 
 func (f *fakeCheckout) Dir() string {
 	if len(f.adopted) > 0 {
@@ -73,7 +83,7 @@ func (f *fakeCheckout) StartBranch(_ context.Context, name string) error {
 }
 
 // Adopt enforces what the real import does: the bundle exists, it is the
-// started branch, and a head at the base is no commit at all. Reads keep
+// started branch, and a head at the start is no commit at all. Reads keep
 // answering for the base.
 func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, error) {
 	f.adopted = append(f.adopted, bundle)
@@ -86,7 +96,7 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	if branch != f.started {
 		return "", fmt.Errorf("fake: adopt %s, started %s", branch, f.started)
 	}
-	if f.head == f.sha {
+	if f.head == f.Start() {
 		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
 	}
 	return f.head, nil

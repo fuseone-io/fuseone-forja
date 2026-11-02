@@ -19,6 +19,8 @@ type flight struct {
 	runs  RunStore
 	now   func() time.Time
 	run   domain.Run
+	// round is the correction round the run is; nil for a first run.
+	round *round
 
 	// co and what was read from it at the base commit; set by the clone
 	// stage.

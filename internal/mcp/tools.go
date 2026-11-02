@@ -14,11 +14,15 @@ import (
 // yet. It travels as a tool error, never as a protocol error.
 var ErrNotImplemented = errors.New("not implemented")
 
-// ImplementInput is the argument of forja.implement.
+// ImplementInput is the argument of forja.implement. Branch and Finding
+// together make a correction round on the pull request Forja opened from
+// forja/<issue>; both empty is a first run.
 type ImplementInput struct {
 	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
 	Issue      int    `json:"issue" jsonschema:"issue number to implement"`
 	BaseBranch string `json:"base_branch" jsonschema:"branch the PR targets"`
+	Branch     string `json:"branch,omitempty" jsonschema:"for a correction round: forja/<issue>, the branch of the pull request Forja opened; set together with finding"`
+	Finding    string `json:"finding,omitempty" jsonschema:"for a correction round: the review finding to address, at most 64 KiB; set together with branch"`
 }
 
 // ImplementOutput is the result of forja.implement: how the run ended,

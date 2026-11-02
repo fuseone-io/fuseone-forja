@@ -42,8 +42,9 @@ type implementer struct {
 
 // implementHandler reserves the issue, records the run, runs the agent,
 // gates its head and delivers it, and releases the reservation. A refused
-// claim is a tool error naming the holder and records no run; a run that
-// failed on its own terms, such as a red gate, is a result.
+// claim, or a correction round on a branch Forja did not open, is a tool
+// error and records no run; a run that failed on its own terms, such as a
+// red gate, is a result.
 func implementHandler(deps Deps) sdk.ToolHandlerFor[ImplementInput, ImplementOutput] {
 	h := implementer{deps: deps}
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in ImplementInput) (*sdk.CallToolResult, ImplementOutput, error) {
@@ -62,6 +63,10 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 	if in.Issue <= 0 {
 		return ImplementOutput{}, fmt.Errorf("issue %d is not positive", in.Issue)
 	}
+	rd, err := h.openRound(ctx, in)
+	if err != nil {
+		return ImplementOutput{}, err
+	}
 	lease, err := h.lease(ctx, in.Repository)
 	if err != nil {
 		return ImplementOutput{}, err
@@ -74,6 +79,7 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 		return ImplementOutput{}, err
 	}
 	f := newFlight(h.deps, c, in.BaseBranch, claimStage(started, h.deps.Now()))
+	f.withRound(rd)
 	if err := h.run(ctx, f); err != nil {
 		return ImplementOutput{}, fmt.Errorf("run %s: %w", c.RunID, err)
 	}
@@ -91,6 +97,7 @@ func (h implementer) wired() error {
 		{"runs", d.Runs != nil}, {"contracts", d.Contracts != nil}, {"claims", d.Claims != nil},
 		{"cloner", d.Cloner != nil}, {"issues", d.Issues != nil}, {"gates", d.Gates != nil},
 		{"pusher", d.Pusher != nil}, {"pull requests", d.PullRequests != nil}, {"statuses", d.Statuses != nil},
+		{"branch cloner", d.BranchCloner != nil}, {"identity", d.Identity != nil},
 		{"NewID", d.NewID != nil}, {"Now", d.Now != nil},
 	}
 	var missing []string

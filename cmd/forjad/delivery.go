@@ -36,4 +36,10 @@ func (u unavailableDelivery) Open(context.Context, github.PullRequestRequest) (d
 	return domain.PullRequest{}, u.err
 }
 
+func (u unavailableDelivery) Find(context.Context, string, string) (domain.PullRequest, error) {
+	return domain.PullRequest{}, u.err
+}
+
+func (u unavailableDelivery) Comment(context.Context, github.CommentRequest) error { return u.err }
+
 func (u unavailableDelivery) Publish(context.Context, github.StatusRequest) error { return u.err }
