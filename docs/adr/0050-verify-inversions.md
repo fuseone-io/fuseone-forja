@@ -1,4 +1,4 @@
-# ADR 9999: forja.verify inversions, the QA agent and the verdict "bites / does not bite"
+# ADR 0050: forja.verify inversions, the QA agent and the verdict "bites / does not bite"
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #22
