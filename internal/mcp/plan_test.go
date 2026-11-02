@@ -64,6 +64,48 @@ type fakeCheckout struct {
 	diffLines   int
 	diffErr     error
 	adoptedHead string
+	// candidates maps a QA candidate's branch to the commit Adopt imports
+	// for it, which Dir then holds as dir@branch. changeSets is what
+	// Changes answers from one commit to another; changed the pairs it was
+	// asked for.
+	candidates     map[string]string
+	adoptedBranch  string
+	changeSets     map[[2]string]domain.Change
+	changed        [][2]string
+	candidateHeads map[string]bool
+}
+
+// Changes answers, as the real one, only for commits the clone holds: the
+// base, the start and a candidate's head once adopted.
+func (f *fakeCheckout) Changes(_ context.Context, from, to string) (domain.Change, error) {
+	f.changed = append(f.changed, [2]string{from, to})
+	for _, end := range []string{from, to} {
+		if end != f.sha && end != f.Start() && !f.candidateHeads[end] {
+			return domain.Change{}, fmt.Errorf("fake: changes to %q, a commit the clone does not hold", end)
+		}
+	}
+	c, ok := f.changeSets[[2]string{from, to}]
+	if !ok {
+		return domain.Change{}, fmt.Errorf("fake: no change scripted from %s to %s", from, to)
+	}
+	c.Paths = append([]string(nil), c.Paths...)
+	return c, nil
+}
+
+// adoptCandidate imports a QA candidate's head and checks it out, as the
+// real Adopt does for any branch; a head at the start is no commit.
+func (f *fakeCheckout) adoptCandidate(bundle, branch, head string) (string, error) {
+	if _, err := os.Stat(bundle); err != nil {
+		return "", fmt.Errorf("fake: bundle: %w", err)
+	}
+	if head == f.Start() {
+		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
+	}
+	if f.candidateHeads == nil {
+		f.candidateHeads = map[string]bool{}
+	}
+	f.candidateHeads[head], f.adoptedBranch, f.adoptedHead = true, branch, head
+	return head, nil
 }
 
 // DiffLines answers, as the real count does, only for the head Adopt
@@ -90,6 +132,9 @@ func (f *fakeCheckout) Start() string {
 }
 
 func (f *fakeCheckout) Dir() string {
+	if f.adoptedBranch != "" {
+		return f.dir + "@" + f.adoptedBranch
+	}
 	if len(f.adopted) > 0 {
 		return f.adoptedDir
 	}
@@ -111,6 +156,9 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	f.adopted = append(f.adopted, bundle)
 	if f.adoptErr != nil {
 		return "", f.adoptErr
+	}
+	if head, ok := f.candidates[branch]; ok {
+		return f.adoptCandidate(bundle, branch, head)
 	}
 	if _, err := os.Stat(bundle); err != nil {
 		return "", fmt.Errorf("fake: bundle: %w", err)

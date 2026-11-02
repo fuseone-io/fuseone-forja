@@ -36,8 +36,8 @@ func TestVerify_free_readsClaimsClonesPublishesReleases(t *testing.T) {
 	if released := fx.claims.releasedClaims(); len(released) != 1 || released[0].RunID != out.RunID {
 		t.Fatalf("released = %+v, want the claim of %s", released, out.RunID)
 	}
-	if fx.cloner.repo != doctorRepo || fx.cloner.branch != "main" || fx.cloner.co.closed != 1 {
-		t.Fatalf("cloned %s@%s, closed %d times; want %s@main closed once", fx.cloner.repo, fx.cloner.branch, fx.cloner.co.closed, doctorRepo)
+	if fx.cloner.repo != doctorRepo || fx.cloner.base != "main" || fx.cloner.branch != "forja/12" || fx.cloner.co.closed != 1 {
+		t.Fatalf("cloned %s %s on %s, closed %d times; want %s forja/12 on main closed once", fx.cloner.repo, fx.cloner.branch, fx.cloner.base, fx.cloner.co.closed, doctorRepo)
 	}
 }
 
@@ -61,7 +61,15 @@ func TestVerify_eachFailure_claimReleasedRunFailed(t *testing.T) {
 			delete(fx.cloner.co.files, ".forja.yaml")
 		}, wantError: "contract missing"},
 		{name: "status", stage: "status", pr: markdownPull(), breakIt: func(fx *verifyFixture) { fx.statuses.err = down }, wantError: "stage down"},
-		{name: "production diff", stage: "diff", pr: verifyPull(changed("internal/verify/classify.go")...), breakIt: func(*verifyFixture) {}},
+		{name: "production diff, no candidate", stage: "agent", pr: verifyPull(changed("internal/verify/classify.go")...), breakIt: func(*verifyFixture) {}},
+		{name: "gates", stage: "gates", pr: coveredPull(), breakIt: func(fx *verifyFixture) { fx.gates.err = down }, wantError: "stage down"},
+		{name: "head red", stage: "gates", pr: coveredPull(), breakIt: func(fx *verifyFixture) { fx.gates.report = redReport() }},
+		{name: "agent", stage: "agent", pr: coveredPull(), breakIt: func(fx *verifyFixture) { fx.qa.err = down }, wantError: "stage down"},
+		{name: "issue", stage: "agent", pr: coveredPull(), breakIt: func(fx *verifyFixture) { fx.issues.err = down }, wantError: "stage down"},
+		{name: "inversion", stage: "inversion", pr: coveredPull(), breakIt: func(fx *verifyFixture) {
+			invert(fx, bitAt("test"), bitAt("test"))
+			fx.gates.errByTree = map[string]error{candidateTree(1): down}
+		}, wantError: "stage down"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -198,8 +206,8 @@ func TestVerify_contractFromBaseCheckout_notFromTheLeaseRead(t *testing.T) {
 	if string(wire["failure_reason"]) != `"inversion_unavailable"` || string(wire["contract_sha"]) != `"`+gitBlobSHA(verifyContract)+`"` {
 		t.Fatalf("failure_reason %s contract_sha %s, want the checkout's contract applied", wire["failure_reason"], wire["contract_sha"])
 	}
-	if fx.cloner.branch != "release/1" {
-		t.Fatalf("cloned branch %q, want the pull request's base release/1", fx.cloner.branch)
+	if fx.cloner.base != "release/1" {
+		t.Fatalf("cloned base %q, want the pull request's base release/1", fx.cloner.base)
 	}
 }
 
@@ -317,7 +325,7 @@ func TestVerify_notWired_namesTheMissingAndCallsNothing(t *testing.T) {
 			t.Errorf("IsError %v text %q, want a tool error naming %q", res.IsError, textOf(res), want)
 		}
 	}
-	if strings.Contains(textOf(res), "agent") || strings.Contains(textOf(res), "gates") || strings.Contains(textOf(res), "pusher") {
+	if strings.Contains(textOf(res), "pusher") || strings.Contains(textOf(res), "pull requests,") || strings.Contains(textOf(res), "identity") {
 		t.Errorf("text %q names a dependency forja.verify does not reach", textOf(res))
 	}
 	if got := fx.calls.list(); len(got) != 0 {

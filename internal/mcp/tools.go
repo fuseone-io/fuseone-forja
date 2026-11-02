@@ -75,9 +75,10 @@ type VerifyInput struct {
 }
 
 // VerifyOutput is the result of forja.verify: how the run ended, what the
-// verdict was reached on, and the verdict. A diff that only an inversion
-// can verify is a result, not a tool error. Excluded is always on the
-// wire, empty when no changed path matched verify.exclude.
+// verdict was reached on, and the verdict. A verdict that does not bite,
+// and a run no inversion could decide, are results, not tool errors.
+// Excluded and Inversions are always on the wire, empty when no changed
+// path matched verify.exclude or no candidate was looked at.
 type VerifyOutput struct {
 	RunID string `json:"run_id"`
 	State string `json:"state"`
@@ -99,6 +100,25 @@ type VerifyOutput struct {
 	Evidence  string `json:"evidence,omitempty"`
 	TokensIn  int64  `json:"tokens_in"`
 	TokensOut int64  `json:"tokens_out"`
+	// ComputeMinutes and EstimatedCostUSDMicros are this verify run's own,
+	// its QA agent's and its gates', as forja.status reports them.
+	ComputeMinutes         float64           `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64            `json:"estimated_cost_usd_micros,omitempty"`
+	Inversions             []InversionReport `json:"inversions"`
+}
+
+// InversionReport is one QA candidate as forja.verify answers it. Paths is
+// always on the wire; Commit is absent for a candidate with no commit,
+// Rejected for an admitted one, Outcome for one whose gates showed
+// neither, and FailedStep when every step passed.
+type InversionReport struct {
+	Branch     string   `json:"branch"`
+	Commit     string   `json:"commit,omitempty"`
+	Paths      []string `json:"paths"`
+	Admitted   bool     `json:"admitted"`
+	Rejected   string   `json:"rejected,omitempty"`
+	Outcome    string   `json:"outcome,omitempty"`
+	FailedStep string   `json:"failed_step,omitempty"`
 }
 
 // readClass marks a tool as read in FuseOne's Gate.

@@ -27,6 +27,8 @@ type Cloner interface {
 // from Start, and checks it out in Dir, while every read still answers for
 // the pinned commit. DiffLines counts the lines an adopted head adds and
 // deletes against the pinned commit; Diff lists every path it changes.
+// Changes is what one commit the clone holds changes against another,
+// paths and a bounded patch.
 type Checkout interface {
 	SHA() string
 	Start() string
@@ -39,6 +41,7 @@ type Checkout interface {
 	Adopt(ctx context.Context, bundle, branch string) (string, error)
 	DiffLines(ctx context.Context, head string) (int, error)
 	Diff(ctx context.Context, head string) ([]domain.FileChange, error)
+	Changes(ctx context.Context, from, to string) (domain.Change, error)
 	Close() error
 }
 

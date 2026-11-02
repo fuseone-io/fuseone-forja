@@ -69,6 +69,9 @@ func (oneFileCheckout) StartBranch(context.Context, string) error           { re
 func (oneFileCheckout) Adopt(context.Context, string, string) (string, error) {
 	return "04915d552e6e507929c4c734b4f4a3a31ae05820", nil
 }
+func (oneFileCheckout) Changes(context.Context, string, string) (domain.Change, error) {
+	return domain.Change{}, nil
+}
 func (oneFileCheckout) DiffLines(context.Context, string) (int, error)            { return 1, nil }
 func (oneFileCheckout) Diff(context.Context, string) ([]domain.FileChange, error) { return nil, nil }
 

@@ -53,6 +53,7 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 		BranchCloner:      &fakeBranchCloner{err: errors.New("no branch cloner in this test")},
 		Identity:          &fakeIdentity{err: errors.New("no identity in this test")},
 		PullRequestReader: &fakePullReader{err: errors.New("no pull request reader in this test")},
+		QA:                &fakeQA{err: errors.New("no QA agent in this test")},
 	}
 }
 
