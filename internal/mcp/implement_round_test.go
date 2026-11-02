@@ -325,6 +325,29 @@ func assertNothingReserved(t *testing.T, fx *implementFixture) {
 	}
 }
 
+// A lookup that fails on its own terms, not a refusal, is still a tool
+// error before the claim.
+func TestImplement_correctionRound_findOrLoginFails_toolErrorNoClaim(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*implementFixture){
+		"find":  func(fx *implementFixture) { fx.prs.finds.err = errors.New("lookup down") },
+		"login": func(fx *implementFixture) { fx.identity.err = errors.New("lookup down") },
+	}
+	for name, breakIt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fx := newImplementFixture(t, contractWithWallClock, nil)
+			breakIt(fx)
+
+			res := callRound(t, fx.cs, nil)
+			if !res.IsError || !strings.Contains(textOf(res), "lookup down") {
+				t.Fatalf("IsError %v text %q, want the lookup's failure as a tool error", res.IsError, textOf(res))
+			}
+			assertNothingReserved(t, fx)
+		})
+	}
+}
+
 // A branch and a finding come together, and a finding over 64 KiB is
 // refused, all before any call.
 func TestImplement_correctionRound_branchWithoutFinding_refusedBeforeAnyCall(t *testing.T) {
@@ -351,6 +374,19 @@ func TestImplement_correctionRound_branchWithoutFinding_refusedBeforeAnyCall(t *
 				t.Fatalf("calls = %q, want none", got)
 			}
 		})
+	}
+}
+
+// A base branch named by the caller is accepted when it is the pull
+// request's, and the round works on that base.
+func TestImplement_correctionRound_baseBranchOfThePullRequest_accepted(t *testing.T) {
+	t.Parallel()
+	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.prs.found.Base = "release"
+
+	out := decodeImplement(t, callRound(t, fx.cs, map[string]any{"base_branch": "release"}))
+	if out.State != "succeeded" || fx.branchCloner.base != "release" {
+		t.Fatalf("state %q, cloned on %q; want a succeeded round on release", out.State, fx.branchCloner.base)
 	}
 }
 
