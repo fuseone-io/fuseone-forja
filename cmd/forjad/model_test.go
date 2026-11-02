@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 const (
@@ -130,8 +131,13 @@ func TestModelCommand_readyForwardsWithKeyFileThenCleanStop(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, res.Body)
 	_ = res.Body.Close()
-	if line := <-next; !strings.Contains(line, `"event":"usage"`) || !strings.Contains(line, `"input":3`) {
-		t.Fatalf("line after the request = %q, want its usage", line)
+	select {
+	case line := <-next:
+		if !strings.Contains(line, `"event":"usage"`) || !strings.Contains(line, `"input":3`) {
+			t.Fatalf("line after the request = %q, want its usage", line)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no line after the request answered %d, want its usage", res.StatusCode)
 	}
 	mu.Lock()
 	if gotKey != testModelKey {
