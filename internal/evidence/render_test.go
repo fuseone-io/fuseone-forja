@@ -178,13 +178,14 @@ func TestRender_sameRun_sameBody(t *testing.T) {
 const firstHead = "9b1e3c0f6d2a4b5c8e7f1a2b3c4d5e6f7a8b9c0d"
 
 // twoAttemptRun is greenRun reached on attempt 2 of 3: attempt 1's lint
-// failed on another head, with its own streams and tokens.
+// failed on another head, with its own streams and tokens, cached input
+// among them.
 func twoAttemptRun() evidence.Run {
 	run := greenRun()
 	lint := step("lint", "make lint", domain.StepFailed, 1, 900*time.Millisecond)
 	lint.Stdout, lint.Stderr = []byte("lint report of attempt one\n"), []byte("main.go:3:2: x declared and not used\n")
 	first := domain.Attempt{
-		Number: 1, HeadSHA: firstHead, Tokens: domain.TokenUsage{Input: 500, Output: 100},
+		Number: 1, HeadSHA: firstHead, Tokens: domain.TokenUsage{Input: 400, CacheCreation: 60, CacheRead: 40, Output: 100},
 		Gates: domain.GateReport{Setup: run.Gates.Setup, Gates: []domain.GateResult{lint}, FailedStep: "lint"},
 	}
 	last := domain.Attempt{Number: 2, HeadSHA: headSHA, Gates: run.Gates, Tokens: domain.TokenUsage{Input: 500, Output: 300}}
