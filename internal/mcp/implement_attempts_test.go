@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -372,6 +373,27 @@ func TestImplement_deadlinePassedAfterRedGate_noNewAttempt(t *testing.T) {
 	}
 	if out.State != "failed" || out.FailureReason != "gate_failed" || out.FailedStep != "lint" {
 		t.Fatalf("state %q reason %q failed_step %q, want failed gate_failed at lint", out.State, out.FailureReason, out.FailedStep)
+	}
+}
+
+// Every attempt's agent and gates run under the one deadline of the run:
+// a later attempt gets what is left of the wall clock, never a fresh one
+// nor none.
+func TestImplement_laterAttempt_underTheRunsOneDeadline(t *testing.T) {
+	t.Parallel()
+	fx := retryFixture(t)
+
+	decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	fx.agent.mu.Lock()
+	agents := append([]time.Time(nil), fx.agent.deadlines...)
+	fx.agent.mu.Unlock()
+	if len(agents) != 2 || len(fx.gates.deadlines) != 2 || agents[0].IsZero() {
+		t.Fatalf("agent deadlines %v, gates %v; want two of each, set", agents, fx.gates.deadlines)
+	}
+	for i, dl := range append(agents[1:], fx.gates.deadlines...) {
+		if !dl.Equal(agents[0]) {
+			t.Fatalf("deadline %d = %v, want the run's %v", i+1, dl, agents[0])
+		}
 	}
 }
 

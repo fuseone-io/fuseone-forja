@@ -20,8 +20,9 @@ type fakeGates struct {
 	contract domain.Contract
 	tree     string
 	trees    []string
-	deadline time.Time
-	hasDL    bool
+	deadline  time.Time
+	hasDL     bool
+	deadlines []time.Time
 	// waitDeadline makes every call return only once its context ended, as
 	// gates that ran past the run's wall clock do.
 	waitDeadline bool
@@ -45,6 +46,7 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 	f.runID, f.contract, f.tree = runID, c, tree
 	f.trees = append(f.trees, tree)
 	f.deadline, f.hasDL = ctx.Deadline()
+	f.deadlines = append(f.deadlines, f.deadline)
 	if f.err != nil {
 		return domain.GateReport{}, f.err
 	}

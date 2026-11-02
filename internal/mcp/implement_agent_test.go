@@ -27,9 +27,10 @@ type fakeAgent struct {
 	err     error
 	failOn  int
 
-	mu       sync.Mutex
-	tasks    []agent.Task
-	deadline time.Time
+	mu        sync.Mutex
+	tasks     []agent.Task
+	deadline  time.Time
+	deadlines []time.Time
 }
 
 // Run exports, as the real runner does, only into the bundle path the task
@@ -43,6 +44,7 @@ func (f *fakeAgent) Run(ctx context.Context, t agent.Task) (agent.Result, error)
 	defer f.mu.Unlock()
 	f.tasks = append(f.tasks, t)
 	f.deadline, _ = ctx.Deadline()
+	f.deadlines = append(f.deadlines, f.deadline)
 	res := f.result
 	if len(f.results) > 0 {
 		res = f.results[min(len(f.tasks), len(f.results))-1]
