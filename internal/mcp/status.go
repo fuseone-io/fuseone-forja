@@ -10,14 +10,24 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// RunReader is what forja.status needs from a run store.
+// RunReader is what forja.status needs from a run store: one run by id,
+// and every run a filter matches, sorted with domain.CompareNewestFirst.
 type RunReader interface {
 	Get(ctx context.Context, id string) (domain.Run, error)
+	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
 }
 
-// StatusInput is the argument of forja.status.
+// StatusInput is the argument of forja.status: a run id, or none and the
+// filters and page of a list. Every field is optional.
 type StatusInput struct {
-	RunID string `json:"run_id" jsonschema:"identifier of the run"`
+	RunID      string `json:"run_id,omitempty" jsonschema:"identifier of one run; omit it to list runs"`
+	Repository string `json:"repository,omitempty" jsonschema:"list only the runs of this repository, in owner/name form"`
+	Tool       string `json:"tool,omitempty" jsonschema:"list only the runs of this tool, such as forja.implement"`
+	State      string `json:"state,omitempty" jsonschema:"list only the runs in this state: queued, running, succeeded or failed"`
+	Since      string `json:"since,omitempty" jsonschema:"RFC3339 instant; list only the runs started at or after it"`
+	Until      string `json:"until,omitempty" jsonschema:"RFC3339 instant; list only the runs started before it"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"runs per page, 1 to 200; 50 when omitted"`
+	Cursor     string `json:"cursor,omitempty" jsonschema:"next_cursor of the previous page"`
 }
 
 // StatusOutput is the wire form of a run as forja.status reports it.
@@ -75,6 +85,9 @@ type StatusOutput struct {
 	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
 	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
 	DiffLines        *int    `json:"diff_lines,omitempty"`
+	// List is the answer to a call without a run id, and absent on one
+	// with an id. When it is present every field above is its zero value.
+	List *RunList `json:"list,omitempty"`
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs.
@@ -111,19 +124,40 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy.",
+		Description: "With run_id: state, start and end of a run, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy. " +
+			"Without run_id: the runs that match the filters, newest first, one page at a time, under list, with the per-repository totals of every matching run; the run fields outside list are then empty.",
 		Annotations: readClass(),
 	}
 }
 
 func statusHandler(runs RunReader, prices *domain.PriceTable) sdk.ToolHandlerFor[StatusInput, StatusOutput] {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in StatusInput) (*sdk.CallToolResult, StatusOutput, error) {
-		run, err := runs.Get(ctx, in.RunID)
+		out, err := status(ctx, runs, prices, in)
 		if err != nil {
 			return nil, StatusOutput{}, fmt.Errorf("%s: %w", domain.ToolStatus, err)
 		}
-		return nil, statusOutput(run, prices), nil
+		return nil, out, nil
 	}
+}
+
+// status answers one run by id, or the list when no id is given; an id
+// with any argument of the list is refused, naming that argument.
+func status(ctx context.Context, runs RunReader, prices *domain.PriceTable, in StatusInput) (StatusOutput, error) {
+	if in.RunID == "" {
+		list, err := listRuns(ctx, runs, prices, in)
+		if err != nil {
+			return StatusOutput{}, err
+		}
+		return StatusOutput{List: &list}, nil
+	}
+	if arg := listArgument(in); arg != "" {
+		return StatusOutput{}, fmt.Errorf("run_id cannot be combined with %s", arg)
+	}
+	run, err := runs.Get(ctx, in.RunID)
+	if err != nil {
+		return StatusOutput{}, err
+	}
+	return statusOutput(run, prices), nil
 }
 
 func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
