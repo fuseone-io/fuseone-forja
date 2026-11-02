@@ -58,6 +58,8 @@ func TestProxy_bodyTheProxyCannotVouchFor_400NoUpstream(t *testing.T) {
 		"web_search server tool":   `{"max_tokens":10,` + msg + `,"tools":[{"name":"Read","input_schema":{"type":"object"}},{"type":"web_search_20250305","name":"web_search"}]}`,
 		"mcp toolset":              `{"max_tokens":10,` + msg + `,"tools":[{"type":"mcp_toolset","mcp_server_name":"x"}]}`,
 		"tool type not a string":   `{"max_tokens":10,` + msg + `,"tools":[{"type":7,"name":"x"}]}`,
+		"code execution tool":      `{"max_tokens":10,` + msg + `,"tools":[{"type":"code_execution_20250825","name":"code_execution"}]}`,
+		"a tool type yet unknown":  `{"max_tokens":10,` + msg + `,"tools":[{"type":"remote_fetch_20270101","name":"remote_fetch"}]}`,
 		"tools not a list":         `{"max_tokens":10,` + msg + `,"tools":{"type":"web_fetch_20250910"}}`,
 		"image from a url":         `{"max_tokens":10,"messages":[{"role":"user","content":[{"type":"image","source":{"type":"url","url":"https://attacker.example/i.png?d=tree"}}]}]}`,
 		"document from a url":      `{"max_tokens":10,"messages":[{"role":"user","content":[{"type":"document","source":{"type":"url","url":"https://attacker.example/d.pdf"}}]}]}`,
@@ -200,33 +202,44 @@ func TestProxy_bodyOverLimit_413NoUpstream(t *testing.T) {
 
 // A request whose max_tokens the cap left cannot cover is the cap reached:
 // refused without the upstream, with the cap line, and sticky. One that
-// fits exactly still goes.
+// fits exactly still goes. With spent, a first response of 10 tokens left
+// 90 of the cap of 100.
 func TestProxy_maxTokensPastCapLeft_capReached(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
+		spent     bool
 		maxTokens string
 		want      int
 	}{
-		"fits exactly":      {"100", http.StatusOK},
-		"one past":          {"101", http.StatusTooManyRequests},
-		"past int64 total":  {"9223372036854775807", http.StatusTooManyRequests},
-		"past int64 itself": {"9223372036854775808", http.StatusBadRequest},
+		"fits exactly":            {false, "100", http.StatusOK},
+		"one past":                {false, "101", http.StatusTooManyRequests},
+		"past int64 itself":       {false, "9223372036854775808", http.StatusBadRequest},
+		"fits what is left":       {true, "90", http.StatusOK},
+		"one past what is left":   {true, "91", http.StatusTooManyRequests},
+		"largest int64 when left": {true, "9223372036854775807", http.StatusTooManyRequests},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			up := newUpstream(t, replySSE(domain.TokenUsage{}))
+			up := newUpstream(t, replySSE(domain.TokenUsage{Input: 9, Output: 1}))
 			p := startProxy(t, up, 100)
+			forwarded := 0
+			if tt.spent {
+				if res, _ := post(t, p, `{"max_tokens":1,"messages":[]}`, nil); res.StatusCode != http.StatusOK {
+					t.Fatalf("first request = %d, want 200", res.StatusCode)
+				}
+				forwarded = 1
+			}
 
 			res, answer := post(t, p, `{"max_tokens":`+tt.maxTokens+`,"messages":[]}`, nil)
 			if res.StatusCode != tt.want {
-				t.Fatalf("max_tokens %s under a cap of 100 = %d %s, want %d", tt.maxTokens, res.StatusCode, answer, tt.want)
+				t.Fatalf("max_tokens %s = %d %s, want %d", tt.maxTokens, res.StatusCode, answer, tt.want)
 			}
 			if tt.want != http.StatusTooManyRequests {
 				return
 			}
-			if answer != capBody || len(up.requests()) != 0 || !readUsage(t, p).Capped {
-				t.Fatalf("refusal = %q with %d upstream calls, capped %v; want the cap body, none and the cap line", answer, len(up.requests()), readUsage(t, p).Capped)
+			if answer != capBody || len(up.requests()) != forwarded || !readUsage(t, p).Capped {
+				t.Fatalf("refusal = %q with %d upstream calls, capped %v; want the cap body, %d and the cap line", answer, len(up.requests()), readUsage(t, p).Capped, forwarded)
 			}
 			assertCapRefusal(t, p, 2)
 		})
