@@ -35,8 +35,9 @@ type Permissions map[string]string
 // The permission sets the control plane asks for: reading the contract and
 // cloning the base branch, reading the issue, writing the refs that
 // reserve an issue and pushing the run's branch, finding the pull request
-// a correction round works on, opening a pull request or commenting on
-// one, and publishing its commit status.
+// a correction round works on or reading the one a verify run verifies
+// with its files, opening a pull request or commenting on one, and
+// publishing its commit status.
 var (
 	ReadContents      = Permissions{"contents": "read"}
 	ReadIssues        = Permissions{"issues": "read"}

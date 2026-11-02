@@ -257,8 +257,11 @@ the read/write annotation FuseOne's Gate reads. `forja.status` and
 commit SHA it read it from; running the gates is a later slice).
 `forja.implement` reserves the issue under `refs/forja/claims/<n>`, records
 the run and releases the reservation; the work between the two steps is a
-later slice. `forja.plan` and `forja.verify` return "not implemented" until
-their slices land.
+later slice. `forja.plan` returns "not implemented" until its slice lands.
+`forja.verify` reads a pull request a run opened and, when its diff only
+touches `verify.exclude` or has no production code, publishes `forja/qa`
+pending on its head, never success; a diff with production code waits for the
+inversions slice.
 
 ## Layout
 

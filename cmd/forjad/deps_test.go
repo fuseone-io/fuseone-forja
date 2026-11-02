@@ -191,6 +191,31 @@ func TestWire_delivery_controlPlaneClientsOrTheMissingCredential(t *testing.T) {
 	}
 }
 
+// With a credential, forja.verify reads the pull request with the control
+// plane's own client; without one, the read answers with the missing
+// credential.
+func TestWire_pullRequestReader_controlPlaneClientOrTheMissingCredential(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	reader, ok := deps.PullRequestReader.(*github.PullRequests)
+	if !ok || reader.Tokens == nil {
+		t.Fatalf("PullRequestReader = %T %+v, want *github.PullRequests with a token source", deps.PullRequestReader, deps.PullRequestReader)
+	}
+	bare, _, err := wire(func(string) string { return "" }, io.Discard)
+	if err != nil {
+		t.Fatalf("wire without credentials: %v", err)
+	}
+	if bare.PullRequestReader == nil {
+		t.Fatal("PullRequestReader is nil without credentials, want one that names the missing credential")
+	}
+	if _, err := bare.PullRequestReader.Read(context.Background(), "fuseone-io/fuseone-forja", 57); !errors.Is(err, github.ErrNoCredentials) {
+		t.Fatalf("Read without credentials = %v, want ErrNoCredentials", err)
+	}
+}
+
 // With a credential, a correction round clones the branch with the same
 // cloner as forja.plan and knows Forja's login from that credential;
 // without one, each of its calls answers with the missing credential.

@@ -69,6 +69,12 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// Verdict and VerdictReason are a verify run's, absent until it reached
+	// one; Excluded the changed paths verify.exclude matched, always on the
+	// wire, empty for any other run.
+	Verdict       string   `json:"verdict,omitempty"`
+	VerdictReason string   `json:"verdict_reason,omitempty"`
+	Excluded      []string `json:"excluded"`
 	// WallClockSeconds and MaxDiffLines are the limits an implement run
 	// works under, absent before it read its contract; DiffLines is what its
 	// head adds and deletes against the base, absent until counted.
@@ -156,6 +162,10 @@ func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
+
+		Verdict:       string(run.QA.Verdict),
+		VerdictReason: string(run.QA.Reason),
+		Excluded:      excludedOf(run.QA),
 
 		WallClockSeconds: run.Limits.WallClock.Seconds(),
 		MaxDiffLines:     run.Limits.MaxDiffLines,

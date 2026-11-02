@@ -81,12 +81,15 @@ type Run struct {
 	// empty for a first run, which starts at BaseSHA.
 	StartSHA string
 	// HeadSHA is the agent's last commit once the control plane imported
-	// it, and Branch the branch it is pushed to.
+	// it, or the head of the pull request a verify run reads; Branch the
+	// branch an implement run pushes to.
 	HeadSHA string
 	Branch  string
-	// PullRequest is the pull request the run opened, or the one a
-	// correction round works on; zero when none.
+	// PullRequest is the pull request the run opened, the one a correction
+	// round works on, or the one a verify run verifies; zero when none.
 	PullRequest PullRequest
+	// QA is the verdict of a verify run; zero for any other run.
+	QA QA
 	// Limits are the limits the run works under, its base contract's with
 	// the defaults filled; zero until the contract was read.
 	Limits Limits

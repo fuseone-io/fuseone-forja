@@ -12,8 +12,9 @@ import (
 // withDelivery gives forja.implement what delivers a green run: the push,
 // the pull request or the comment on it, and the status, each minting its
 // own token from the control plane's source, and the login that source
-// acts as. Nothing of it reaches a workspace. A source that cannot name
-// its login is a startup failure.
+// acts as; and forja.verify what reads the pull request it verifies.
+// Nothing of it reaches a workspace. A source that cannot name its login
+// is a startup failure.
 func withDelivery(deps *mcp.Deps, tokens github.TokenSource) error {
 	id, err := identityOf(tokens)
 	if err != nil {
@@ -23,6 +24,7 @@ func withDelivery(deps *mcp.Deps, tokens github.TokenSource) error {
 	deps.Pusher = &github.Pusher{Tokens: tokens}
 	deps.PullRequests = &github.PullRequests{Tokens: tokens}
 	deps.Statuses = &github.CommitStatuses{Tokens: tokens}
+	deps.PullRequestReader = &github.PullRequests{Tokens: tokens}
 	return nil
 }
 
@@ -40,11 +42,11 @@ func identityOf(tokens github.TokenSource) (mcp.Identity, error) {
 // answers with err.
 func withoutDelivery(deps *mcp.Deps, err error) {
 	u := unavailableDelivery{err: err}
-	deps.Pusher, deps.PullRequests, deps.Statuses, deps.Identity = u, u, u, u
+	deps.Pusher, deps.PullRequests, deps.Statuses, deps.Identity, deps.PullRequestReader = u, u, u, u, u
 }
 
-// unavailableDelivery is the pusher, pull requests, statuses and identity
-// served when no credential is set.
+// unavailableDelivery is the pusher, pull requests, statuses, identity and
+// pull request reader served when no credential is set.
 type unavailableDelivery struct {
 	err error
 }
@@ -64,3 +66,7 @@ func (u unavailableDelivery) Find(context.Context, string, string) (domain.PullR
 func (u unavailableDelivery) Comment(context.Context, github.CommentRequest) error { return u.err }
 
 func (u unavailableDelivery) Publish(context.Context, github.StatusRequest) error { return u.err }
+
+func (u unavailableDelivery) Read(context.Context, string, int) (domain.PullRequestDiff, error) {
+	return domain.PullRequestDiff{}, u.err
+}
