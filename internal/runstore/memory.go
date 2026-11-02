@@ -61,6 +61,8 @@ func clone(run domain.Run) domain.Run {
 		run.Stages[i].FinishedAt = cloneTime(run.Stages[i].FinishedAt)
 	}
 	run.Gates = cloneReport(run.Gates)
+	run.Proof.ProofPaths = slices.Clone(run.Proof.ProofPaths)
+	run.Proof.HumanMergePaths = slices.Clone(run.Proof.HumanMergePaths)
 	return run
 }
 
