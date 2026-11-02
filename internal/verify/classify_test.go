@@ -117,7 +117,7 @@ func pick[T any](pool []T, picks []uint8) []T {
 	return out
 }
 
-// Whatever the files and the contract, this slice never concludes bites
+// Whatever the files and the contract, Classify never concludes bites
 // nor does not bite: a diff is production with no verdict, or not
 // verifiable with one of the two reasons, and the excluded list is sorted,
 // without repeats, and made of changed paths only.

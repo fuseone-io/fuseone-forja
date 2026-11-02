@@ -100,8 +100,8 @@ func (v verifier) statusStage(ctx, done context.Context, f *verifyFlight) (bool,
 	})
 }
 
-// qaDescription is forja/qa's line for a verdict this slice publishes; any
-// other verdict publishes nothing.
+// qaDescription is forja/qa's line for a not-verifiable verdict; any other
+// verdict publishes nothing.
 func qaDescription(qa domain.QA) (string, error) {
 	if qa.Verdict == domain.VerdictNotVerifiable {
 		switch qa.Reason {

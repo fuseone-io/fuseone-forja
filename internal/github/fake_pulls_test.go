@@ -10,18 +10,16 @@ import (
 	"testing"
 )
 
-// The shapes below copy what the measurer read on the pilot and on public
-// repositories:
+// The fake answers in the API's shapes:
 //   - GET /pulls/{n} answers number, html_url, state, head {ref, sha, repo},
-//     base {ref} and changed_files (`gh api repos/fuseone-io/fuseone-forja/pulls/42`);
-//     head.repo is null, not an object without full_name, once the head's
-//     repository is gone (kubernetes/kubernetes#135596, golang/go#9299).
+//     base {ref} and changed_files; head.repo is null, not an object without
+//     full_name, once the head's repository is gone.
 //   - GET /pulls/{n}/files answers an array of diff entries with additions,
 //     blob_url, changes, contents_url, deletions, filename, patch, raw_url,
-//     sha and status; a rename adds previous_filename (pilot PR 32).
+//     sha and status; a rename adds previous_filename.
 //   - per_page is capped at 100 without an error, and no more than 3000
-//     files are ever listed whatever changed_files says: page 31 of
-//     DefinitelyTyped#68529 (8559 changed) is an empty array.
+//     files are ever listed whatever changed_files says: the page past the
+//     cap is an empty array.
 //   - An unknown number is 404 "Not Found".
 
 // maxListedFiles is the API's cap on what the files endpoint lists.

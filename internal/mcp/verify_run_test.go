@@ -17,7 +17,7 @@ func markdownPull() domain.PullRequestDiff {
 	return verifyPull(changed("README.md", "docs/x.md")...)
 }
 
-// AC3: the pull request is read, the issue its branch names is claimed
+// The pull request is read, the issue its branch names is claimed
 // with the lease the contract sizes, the base is cloned, forja/qa is
 // published and the claim released, in that order, around the records.
 func TestVerify_free_readsClaimsClonesPublishesReleases(t *testing.T) {

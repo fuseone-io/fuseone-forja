@@ -129,7 +129,7 @@ func decodeVerify(t *testing.T, res *sdk.CallToolResult) forja.VerifyOutput {
 	return out
 }
 
-// AC1: a pull request that only changes markdown gets forja/qa neutral on
+// A pull request that only changes markdown gets forja/qa neutral on
 // its head and the verdict not verifiable with the excluded paths.
 func TestVerify_onlyMarkdownChanged_qaPendingWithExcludedPaths(t *testing.T) {
 	t.Parallel()
@@ -179,7 +179,7 @@ func assertEvidencePins(t *testing.T, evidence, contractSHA string) {
 	}
 }
 
-// AC2: whatever the diff, this slice never publishes forja/qa success. A
+// Whatever the diff, verify never publishes forja/qa success. A
 // diff that is not verifiable gets one pending status with its reason's
 // description; a diff with production code gets none, and the run fails
 // with no verdict.
