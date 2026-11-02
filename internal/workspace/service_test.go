@@ -92,7 +92,7 @@ func contains(list []string, s string) bool {
 
 func TestDocker_service_resolvesByNameFromTheWorkspace(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, c, "cache", cache)
 
 	res, err := c.Exec(context.Background(), "printf 'PING\\r\\nQUIT\\r\\n' | nc -w 2 cache 6379")
@@ -108,7 +108,7 @@ func TestDocker_service_resolvesByNameFromTheWorkspace(t *testing.T) {
 // means listening: the first connect after it, with no retry, succeeds.
 func TestDocker_service_readyOnlyWhenListening(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, c, "postgres", postgres)
 
 	if code := reach(t, c, "postgres:5432"); code != 0 {
@@ -118,7 +118,7 @@ func TestDocker_service_readyOnlyWhenListening(t *testing.T) {
 
 func TestDocker_service_notReadyWithinReadiness_resultWithReasonNoError(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	// The server honours PGPORT: it runs and listens, but never on the port
 	// the image exposes.
 	elsewhere := domain.Service{Image: postgresImage, Env: map[string]string{"POSTGRES_HOST_AUTH_METHOD": "trust", "PGPORT": "5433"}}
@@ -146,7 +146,7 @@ func TestDocker_service_notReadyWithinReadiness_resultWithReasonNoError(t *testi
 // listens off its exposed port, so the sidecar is never ready.
 func TestDocker_service_logOverTheCap_tailKeptAndTruncated(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	verbose := domain.Service{Image: postgresImage, Env: map[string]string{
 		"POSTGRES_HOST_AUTH_METHOD": "trust", "PGPORT": "5433", "POSTGRES_INITDB_ARGS": "--debug",
 	}}
@@ -165,7 +165,7 @@ func TestDocker_service_logOverTheCap_tailKeptAndTruncated(t *testing.T) {
 
 func TestDocker_service_exits_resultWithExitCodeAndLog(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	// Without a password or trust the image refuses to initialise and exits.
 	refused := domain.Service{Image: postgresImage, Env: map[string]string{}}
 
@@ -180,7 +180,7 @@ func TestDocker_service_exits_resultWithExitCodeAndLog(t *testing.T) {
 
 func TestDocker_service_imageUnknown_errorNamesIt(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 
 	_, err := c.StartService(context.Background(), "ghost", domain.Service{Image: "forja-no-such-image-0000:none"}, time.Minute)
 	if err == nil || !strings.Contains(err.Error(), "forja-no-such-image-0000") {
@@ -190,7 +190,7 @@ func TestDocker_service_imageUnknown_errorNamesIt(t *testing.T) {
 
 func TestDocker_close_removesSidecarsAndNetwork(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, c, "cache", cache)
 	notReady := startService(t, c, "late", cache, time.Millisecond)
 	if notReady.Ready {
@@ -199,8 +199,8 @@ func TestDocker_close_removesSidecarsAndNetwork(t *testing.T) {
 	list, err := rawClient(t).ContainerList(context.Background(), client.ContainerListOptions{
 		Filters: client.Filters{}.Add("network", c.NetworkID()),
 	})
-	if err != nil || len(list.Items) != 3 {
-		t.Fatalf("containers on the run network = %d (%v), want the workspace and two sidecars", len(list.Items), err)
+	if err != nil || len(list.Items) != 4 {
+		t.Fatalf("containers on the run network = %d (%v), want the workspace, the gateway and two sidecars", len(list.Items), err)
 	}
 	// The label is how a container a crashed run left behind is found.
 	for _, item := range list.Items {
@@ -223,7 +223,7 @@ func TestDocker_close_removesSidecarsAndNetwork(t *testing.T) {
 
 func TestDocker_service_unreachableFromAnotherRun(t *testing.T) {
 	d := newDocker(t)
-	a, b := launch(t, d, treeWith(t)), launch(t, d, treeWith(t))
+	a, b := launch(t, d, newRunID(t), treeWith(t)), launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, a, "only-a", cache)
 	startReady(t, b, "only-b", cache)
 	ipA := sidecarIP(t, a.NetworkID(), "only-a")
@@ -277,15 +277,15 @@ func probeFrom(t *testing.T, networkMode, host, port string) int64 {
 // whatever the bridges isolate, so no container on it may have one.
 func TestDocker_service_noPortPublishedOnTheHost(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, c, "cache", cache)
 
 	cli := rawClient(t)
 	list, err := cli.ContainerList(context.Background(), client.ContainerListOptions{
 		Filters: client.Filters{}.Add("network", c.NetworkID()),
 	})
-	if err != nil || len(list.Items) != 2 {
-		t.Fatalf("containers on the run network = %d (%v), want the workspace and the sidecar", len(list.Items), err)
+	if err != nil || len(list.Items) != 3 {
+		t.Fatalf("containers on the run network = %d (%v), want the workspace, the gateway and the sidecar", len(list.Items), err)
 	}
 	for _, item := range list.Items {
 		inspect, err := cli.ContainerInspect(context.Background(), item.ID, client.ContainerInspectOptions{})
@@ -302,7 +302,7 @@ func TestDocker_service_noPortPublishedOnTheHost(t *testing.T) {
 
 func TestDocker_service_unreachableFromDefaultBridge(t *testing.T) {
 	d := newDocker(t)
-	c := launch(t, d, treeWith(t))
+	c := launch(t, d, newRunID(t), treeWith(t))
 	startReady(t, c, "cache", cache)
 	ip := sidecarIP(t, c.NetworkID(), "cache")
 

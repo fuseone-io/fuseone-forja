@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -332,7 +333,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)
@@ -340,6 +341,71 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	}
 	if len(wire) != len(want) {
 		t.Errorf("wire object has %d keys, want %d: %s", len(wire), len(want), structuredJSON(t, res))
+	}
+}
+
+// statusWire calls forja.status for id and returns the wire object.
+func statusWire(t *testing.T, cs *sdk.ClientSession, id string) map[string]json.RawMessage {
+	t.Helper()
+	res := callStatus(t, cs, map[string]any{"run_id": id})
+	if res.IsError {
+		t.Fatalf("IsError = true, content: %s", textOf(res))
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
+		t.Fatalf("decode wire object: %v", err)
+	}
+	return wire
+}
+
+// The denials a doctor run's gateway recorded reach forja.status as the
+// control plane read them: the exact count, and each listed attempt with
+// its time, kind and host:port.
+func TestStatus_doctorRunWithDenials_countAndEventsOnTheWire(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	report := greenReport()
+	report.Egress = deniedEgress()
+	cs := connectWith(t, store, &fakeCloner{co: doctorCheckout(doctorContract)}, &fakeGates{report: report})
+	runID := decodeDoctor(t, callDoctor(t, cs, doctorRepo)).RunID
+
+	wire := statusWire(t, cs, runID)
+	if string(wire["egress_denied_count"]) != "5" {
+		t.Fatalf("egress_denied_count = %s, want 5", wire["egress_denied_count"])
+	}
+	var events []map[string]json.RawMessage
+	if err := json.Unmarshal(wire["egress_denied"], &events); err != nil {
+		t.Fatalf("egress_denied = %s: %v", wire["egress_denied"], err)
+	}
+	want := []map[string]string{
+		{"at": `"2026-10-31T12:01:30Z"`, "kind": `"http"`, "destination": `"example.com:80"`},
+		{"at": `"2026-10-31T12:01:31Z"`, "kind": `"connect"`, "destination": `"example.com:443"`},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("egress_denied = %s, want %d events", wire["egress_denied"], len(want))
+	}
+	for i, ev := range events {
+		got := map[string]string{}
+		for k, v := range ev {
+			got[k] = string(v)
+		}
+		if !reflect.DeepEqual(got, want[i]) {
+			t.Errorf("egress_denied[%d] = %v, want %v", i, got, want[i])
+		}
+	}
+}
+
+// A run nothing was denied for says so with a zero and an empty list,
+// never a missing key or null.
+func TestStatus_noDenials_zeroAndEmptyListOnTheWire(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	mustPut(t, store, terminalRun("run-quiet"))
+	cs := connect(t, store)
+
+	wire := statusWire(t, cs, "run-quiet")
+	if string(wire["egress_denied_count"]) != "0" || string(wire["egress_denied"]) != "[]" {
+		t.Fatalf("egress_denied_count = %s, egress_denied = %s; want 0 and []", wire["egress_denied_count"], wire["egress_denied"])
 	}
 }
 

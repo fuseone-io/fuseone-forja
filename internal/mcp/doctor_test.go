@@ -146,6 +146,9 @@ func assertRunnerGiven(t *testing.T, gates *fakeGates, image, tree string) {
 	if gates.contract.Image != image || gates.tree != tree {
 		t.Errorf("runner given image %q on tree %q, want %q on %q", gates.contract.Image, gates.tree, image, tree)
 	}
+	if gates.runID != "run-1" {
+		t.Errorf("runner given run id %q, want the id the server generated, run-1", gates.runID)
+	}
 }
 
 func TestDoctor_gateRed_okFalseWithFailedStep(t *testing.T) {
@@ -396,7 +399,7 @@ func TestDoctor_wireKeys_snakeCase(t *testing.T) {
 		body []byte
 		keys []string
 	}{
-		{name: "accepted", body: validContract, keys: []string{"repository", "sha", "contract_sha", "ok", "errors", "contract", "setup", "gates", "warnings"}},
+		{name: "accepted", body: validContract, keys: []string{"repository", "sha", "contract_sha", "ok", "errors", "contract", "setup", "gates", "warnings", "run_id"}},
 		{name: "rejected", body: invalidContract, keys: []string{"repository", "sha", "contract_sha", "ok", "errors", "setup", "gates", "warnings"}},
 	}
 	for _, tt := range tests {
@@ -487,5 +490,161 @@ func TestDoctor_contractOnTheWire_snakeCaseFields(t *testing.T) {
 	}
 	if string(gates[0]["name"]) != `"build"` {
 		t.Fatalf("contract.gates[0].name = %s, want \"build\"", gates[0]["name"])
+	}
+}
+
+// deniedEgress is what a gateway reports for a run whose gate tried to get
+// out: more attempts counted than listed, so a reader that counted the
+// list would be caught.
+func deniedEgress() domain.EgressReport {
+	at := startedAt().Add(90 * time.Second)
+	return domain.EgressReport{
+		Denied: []domain.EgressDenial{
+			{At: at, Kind: domain.EgressHTTP, Destination: "example.com:80"},
+			{At: at.Add(time.Second), Kind: domain.EgressConnect, Destination: "example.com:443"},
+		},
+		Count: 5,
+	}
+}
+
+func withEgress(report domain.GateReport) domain.GateReport {
+	report.Egress = deniedEgress()
+	return report
+}
+
+func TestDoctor_gatesRan_runRecordedWithEgressAndRunIDReturned(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		report domain.GateReport
+		state  domain.RunState
+	}{
+		{name: "green", report: withEgress(greenReport()), state: domain.StateSucceeded},
+		{name: "red gate", report: withEgress(redReport()), state: domain.StateFailed},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := runstore.NewMemory()
+			gates := &fakeGates{report: tt.report}
+			cs := connectWith(t, store, &fakeCloner{co: doctorCheckout(doctorContract)}, gates)
+
+			got := decodeDoctor(t, callDoctor(t, cs, doctorRepo))
+			if got.RunID != "run-1" || gates.runID != got.RunID {
+				t.Fatalf("run_id = %q, runner given %q; want run-1 for both", got.RunID, gates.runID)
+			}
+			run, err := store.Get(context.Background(), got.RunID)
+			if err != nil {
+				t.Fatalf("Get(%s): %v", got.RunID, err)
+			}
+			assertDoctorRun(t, run, tt.state)
+			if !reflect.DeepEqual(run.Egress, deniedEgress()) {
+				t.Errorf("run.Egress = %+v, want the report's %+v", run.Egress, deniedEgress())
+			}
+		})
+	}
+}
+
+// assertDoctorRun checks the identity and terminal state of a doctor run.
+func assertDoctorRun(t *testing.T, run domain.Run, state domain.RunState) {
+	t.Helper()
+	if run.Tool != domain.ToolDoctor || run.Repository != doctorRepo || run.Issue != 0 || run.State != state {
+		t.Errorf("run = {%s %s issue %d %s}, want {forja.doctor %s issue 0 %s}", run.Tool, run.Repository, run.Issue, run.State, doctorRepo, state)
+	}
+	if !run.StartedAt.Equal(startedAt()) || run.FinishedAt == nil {
+		t.Errorf("run started %v finished %v, want started at the clock and finished", run.StartedAt, run.FinishedAt)
+	}
+}
+
+// A runner that fails to run at all still ends the run it was given: no
+// run is left in running.
+func TestDoctor_runnerFails_runRecordedFailed(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	cs := connectWith(t, store, &fakeCloner{co: doctorCheckout(doctorContract)}, &fakeGates{err: errors.New("docker: pull access denied")})
+
+	if res := callDoctor(t, cs, doctorRepo); !res.IsError {
+		t.Fatalf("IsError = false for a runner failure: %s", textOf(res))
+	}
+	run, err := store.Get(context.Background(), "run-1")
+	if err != nil {
+		t.Fatalf("Get(run-1): %v, want the run recorded", err)
+	}
+	assertDoctorRun(t, run, domain.StateFailed)
+}
+
+func TestDoctor_contractDefects_noRunRecorded(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	cs := connectWith(t, store, &fakeCloner{co: doctorCheckout(invalidContract)}, &fakeGates{report: greenReport()})
+
+	res := callDoctor(t, cs, doctorRepo)
+	if got := decodeDoctor(t, res); got.RunID != "" {
+		t.Fatalf("run_id = %q for a rejected contract, want none", got.RunID)
+	}
+	if _, present := wireOf(t, res)["run_id"]; present {
+		t.Errorf("run_id present on the wire for a rejected contract: %s", structuredJSON(t, res))
+	}
+	if _, err := store.Get(context.Background(), "run-1"); !errors.Is(err, domain.ErrRunNotFound) {
+		t.Fatalf("Get(run-1) = %v, want not found: a rejected contract runs nothing", err)
+	}
+}
+
+// strictRuns refuses a write on a context that already ended, as a real
+// store's driver does, and hands every terminal record to terminal.
+type strictRuns struct {
+	*runstore.Memory
+	terminal chan domain.Run
+}
+
+func (s *strictRuns) Put(ctx context.Context, run domain.Run) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := s.Memory.Put(ctx, run); err != nil {
+		return err
+	}
+	if run.FinishedAt != nil {
+		s.terminal <- run
+	}
+	return nil
+}
+
+// blockingGates waits for the run's context to end, the way a caller that
+// went away ends it, then reports what the gates did.
+type blockingGates struct {
+	started chan struct{}
+}
+
+func (b *blockingGates) Run(ctx context.Context, _ string, _ domain.Contract, _ string) (domain.GateReport, error) {
+	close(b.started)
+	<-ctx.Done()
+	return withEgress(redReport()), nil
+}
+
+// The caller going away while the gates run must not leave the run in
+// running: the terminal record is written on a context of its own.
+func TestDoctor_callerGone_terminalRecordStillWritten(t *testing.T) {
+	t.Parallel()
+	store := &strictRuns{Memory: runstore.NewMemory(), terminal: make(chan domain.Run, 1)}
+	deps := testDeps(store, &fakeContracts{err: errors.New("unused")}, &fakeClaims{calls: &callLog{}})
+	deps.Cloner = &fakeCloner{co: doctorCheckout(doctorContract)}
+	gates := &blockingGates{started: make(chan struct{})}
+	deps.Gates = gates
+	cs := connectDeps(t, deps)
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		<-gates.started
+		cancel()
+	}()
+
+	_, _ = cs.CallTool(ctx, &sdk.CallToolParams{Name: string(domain.ToolDoctor), Arguments: map[string]any{"repository": doctorRepo}})
+	select {
+	case run := <-store.terminal:
+		if run.State != domain.StateFailed || !reflect.DeepEqual(run.Egress, deniedEgress()) {
+			t.Fatalf("terminal run = {%s %+v}, want failed with the report's egress", run.State, run.Egress)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no terminal record after the caller went away")
 	}
 }

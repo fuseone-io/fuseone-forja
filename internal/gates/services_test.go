@@ -51,7 +51,7 @@ var setupEvents = []string{"go mod download", "go install lint@v2"}
 func run(t *testing.T, ws *fakeWorkspace, c domain.Contract) domain.GateReport {
 	t.Helper()
 	runner, _ := newRunner(ws)
-	report, err := runner.Run(context.Background(), c, "/tree")
+	report, err := runner.Run(context.Background(), testRunID, c, "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestRunner_runDeadlineDuringServiceStart_gateTimedOut(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	report, err := runner.Run(ctx, servicesContract(build, integration, test), "/tree")
+	report, err := runner.Run(ctx, testRunID, servicesContract(build, integration, test), "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v, want nil: the run's own deadline is a result", err)
 	}
@@ -223,7 +223,7 @@ func TestRunner_serviceStartFailsToRun_isAnError(t *testing.T) {
 	ws := &fakeWorkspace{script: servicesScript(), services: services}
 	runner, _ := newRunner(ws)
 
-	_, err := runner.Run(context.Background(), servicesContract(build, integration), "/tree")
+	_, err := runner.Run(context.Background(), testRunID, servicesContract(build, integration), "/tree")
 	if err == nil {
 		t.Fatal("Run = nil error, want the start failure: it is not a verdict on the repository")
 	}
@@ -243,7 +243,7 @@ func TestRunner_needNotDeclared_isAnErrorNothingStarted(t *testing.T) {
 	runner, _ := newRunner(ws)
 	ghost := domain.Gate{Name: "integration", Run: "make integration", Needs: []string{"ghost"}}
 
-	_, err := runner.Run(context.Background(), servicesContract(ghost), "/tree")
+	_, err := runner.Run(context.Background(), testRunID, servicesContract(ghost), "/tree")
 	if err == nil || !strings.Contains(err.Error(), "ghost") {
 		t.Fatalf("Run = %v, want an error naming the undeclared service", err)
 	}
@@ -268,7 +268,7 @@ func TestRunner_readinessZero_workspaceGetsDefault(t *testing.T) {
 			ws := &fakeWorkspace{script: servicesScript(), services: ready()}
 			runner := &gates.Runner{Launcher: &fakeLauncher{ws: ws}, Now: ticking(), Readiness: tt.readiness}
 
-			if _, err := runner.Run(context.Background(), servicesContract(integration), "/tree"); err != nil {
+			if _, err := runner.Run(context.Background(), testRunID, servicesContract(integration), "/tree"); err != nil {
 				t.Fatalf("Run: %v", err)
 			}
 			call, _ := ws.started("postgres")
@@ -316,7 +316,7 @@ func TestRunner_gateWithNeeds_durationCoversServiceStart(t *testing.T) {
 	ws := &fakeWorkspace{script: servicesScript(), services: ready(), onStart: func() { clock.advance(10 * time.Second) }}
 	runner := &gates.Runner{Launcher: &fakeLauncher{ws: ws}, Now: clock.now}
 
-	report, err := runner.Run(context.Background(), servicesContract(build, integration), "/tree")
+	report, err := runner.Run(context.Background(), testRunID, servicesContract(build, integration), "/tree")
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}

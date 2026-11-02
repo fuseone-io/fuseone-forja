@@ -5,6 +5,7 @@ package runstore
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -48,12 +49,13 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 	return clone(run), nil
 }
 
-// clone copies the run so that the pointer field is not shared between the
-// store and its callers.
+// clone copies the run so that neither the pointer field nor the denial
+// list is shared between the store and its callers.
 func clone(run domain.Run) domain.Run {
 	if run.FinishedAt != nil {
 		finished := *run.FinishedAt
 		run.FinishedAt = &finished
 	}
+	run.Egress.Denied = slices.Clone(run.Egress.Denied)
 	return run
 }

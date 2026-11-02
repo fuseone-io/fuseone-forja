@@ -2,26 +2,61 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/moby/moby/client"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
+// linuxForjad cross-compiles this binary for the daemon's architecture, to
+// serve as the run's gateway.
+func linuxForjad(ctx context.Context, t *testing.T) string {
+	t.Helper()
+	cli, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	defer func() { _ = cli.Close() }()
+	v, err := cli.ServerVersion(ctx, client.ServerVersionOptions{})
+	if err != nil {
+		t.Fatalf("ServerVersion: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "forjad")
+	build := exec.CommandContext(ctx, "go", "build", "-trimpath", "-o", path, "github.com/fuseone-io/fuseone-forja/cmd/forjad")
+	build.Env = append(os.Environ(), "GOOS=linux", "GOARCH="+v.Arch, "CGO_ENABLED=0")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build forjad for linux/%s: %v\n%s", v.Arch, err, out)
+	}
+	return path
+}
+
 // Postgres runs for seconds before it listens, so a readiness the adapter
 // did not hand on to the container would leave it not ready.
 func TestContainer_startService_readinessReachesTheContainer(t *testing.T) {
-	d, err := workspace.NewDocker()
+	probe, err := workspace.NewDocker(workspace.Options{})
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
-	if err := d.Ping(ctx); err != nil {
+	if err := probe.Ping(ctx); err != nil {
 		t.Skipf("no Docker daemon: %v", err)
 	}
-	ws, err := launcher{d}.Launch(ctx, "alpine:3.20", t.TempDir())
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: linuxForjad(ctx, t)})
+	if err != nil {
+		t.Fatalf("NewDocker: %v", err)
+	}
+	var id [8]byte
+	_, _ = rand.Read(id[:])
+	ws, err := launcher{d}.Launch(ctx, "deps-test-"+hex.EncodeToString(id[:]), "alpine:3.20", t.TempDir())
 	if err != nil {
 		t.Fatalf("Launch: %v", err)
 	}
