@@ -74,7 +74,8 @@ func (h host) startMetrics(ctx context.Context, stderr io.Writer, addr string, d
 	go func() {
 		defer close(done)
 		if err := awaitMetrics(ctx, srv, served); err != nil {
-			// The exit code is the only channel left when stderr itself fails.
+			// The MCP server keeps running, so a failed stderr leaves no
+			// channel to report on.
 			_, _ = fmt.Fprintf(stderr, "forjad: metrics: %v\n", err)
 		}
 	}()
