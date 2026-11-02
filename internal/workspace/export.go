@@ -119,9 +119,9 @@ func extractBundle(r io.Reader, dst string, limit int64) (err error) {
 			_ = os.Remove(dst)
 		}
 	}()
-	n, err := io.Copy(f, io.LimitReader(tr, limit+1))
+	n, err := io.CopyN(f, tr, limit+1)
 	switch {
-	case err != nil:
+	case err != nil && !errors.Is(err, io.EOF):
 		return fmt.Errorf("copy bundle: %w", err)
 	case n > limit:
 		return fmt.Errorf("bundle is over the cap of %d bytes", limit)
