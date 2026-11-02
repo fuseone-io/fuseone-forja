@@ -1,4 +1,4 @@
-# ADR 9999: a red gate goes back to the agent up to the attempt limit
+# ADR 0046: a red gate goes back to the agent up to the attempt limit
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #17

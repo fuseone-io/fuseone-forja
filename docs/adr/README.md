@@ -14,4 +14,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |
 | [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
-| [9999](9999-gate-retry.md) | A red gate goes back to the agent up to the attempt limit | proposed |
+| [0046](0046-gate-retry.md) | A red gate goes back to the agent up to the attempt limit | proposed |
