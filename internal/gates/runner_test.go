@@ -450,6 +450,25 @@ func TestRunner_serviceNeededTwice_countedOnce(t *testing.T) {
 	}
 }
 
+// A sidecar that never became ready was still started: its container is
+// counted from before its start until Close, like a ready one.
+func TestRunner_serviceNotReady_sidecarStillCounted(t *testing.T) {
+	t.Parallel()
+	services := ready()
+	services["postgres"] = scriptedService{notReady: true, reason: "service postgres exited with code 1"}
+	ws := &fakeWorkspace{script: servicesScript(), services: services}
+
+	report, err := timedRun(t, ws, servicesContract(integration))
+	if err != nil || report.FailedStep != "integration" {
+		t.Fatalf("Run = failed %q, %v; want integration red", report.FailedStep, err)
+	}
+	workspace := launchTakes + 2*execTakes + startTakes + closeTakes
+	postgres := startTakes + closeTakes
+	if report.Compute != workspace+postgres {
+		t.Fatalf("Compute = %v, want %v: the workspace's %v and the unready postgres's %v", report.Compute, workspace+postgres, workspace, postgres)
+	}
+}
+
 // A run that ended in an error has no report but still had its
 // containers up: the compute comes back with the error.
 func TestRunner_execError_reportCarriesCompute(t *testing.T) {
