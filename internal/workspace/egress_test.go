@@ -97,6 +97,11 @@ func sibling(t *testing.T, runID, name string) {
 	}
 }
 
+// resolve looks a name up through libc, as the gate's own tools do. busybox
+// nslookup walks the host's search list whatever ndots says, and a search
+// domain the internal network cannot forward answers SERVFAIL.
+const resolve = "getent hosts "
+
 func mustExec(t *testing.T, c *workspace.Container, command string) workspace.ExecResult {
 	t.Helper()
 	res, err := c.Exec(context.Background(), command)
@@ -116,8 +121,8 @@ func TestDocker_workspace_reachesGatewayAndRunSiblingByName(t *testing.T) {
 	sibling(t, runID, name)
 
 	for _, command := range []string{
-		"nslookup forja-gateway", "nc -z -w 3 forja-gateway 3128",
-		"nslookup " + name, "nc -z -w 3 " + name + " 8080",
+		resolve + "forja-gateway", "nc -z -w 3 forja-gateway 3128",
+		resolve + name, "nc -z -w 3 " + name + " 8080",
 	} {
 		if res := mustExec(t, c, command); res.ExitCode != 0 {
 			t.Errorf("%s: exit %d, want 0\n%s%s", command, res.ExitCode, res.Stdout, res.Stderr)
@@ -134,8 +139,8 @@ func TestDocker_rawSocketToExternalIP_denied(t *testing.T) {
 	if res := mustExec(t, c, "nc -z -w 3 1.1.1.1 80"); res.ExitCode == 0 {
 		t.Fatal("nc to 1.1.1.1:80 from the workspace exit 0, want the network unreachable")
 	}
-	if res := mustExec(t, c, "nslookup example.com"); res.ExitCode == 0 {
-		t.Fatalf("nslookup example.com from the workspace exit 0, want no external name resolved:\n%s", res.Stdout)
+	if res := mustExec(t, c, resolve+"example.com"); res.ExitCode == 0 {
+		t.Fatalf("%sexample.com from the workspace exit 0, want no external name resolved:\n%s", resolve, res.Stdout)
 	}
 }
 
@@ -181,13 +186,13 @@ func TestDocker_twoRuns_cannotResolveOrReachEachOthersSiblings(t *testing.T) {
 	sibling(t, runs[1], "sib-"+runs[1])
 	a, otherSibling := containers[0], "sib-"+runs[1]
 
-	if res := mustExec(t, a, "nslookup "+otherSibling); res.ExitCode == 0 {
+	if res := mustExec(t, a, resolve+otherSibling); res.ExitCode == 0 {
 		t.Errorf("run A resolved run B's sibling:\n%s", res.Stdout)
 	}
 	if res := mustExec(t, a, "nc -z -w 3 "+gatewayIP(t, runs[1])+" 3128"); res.ExitCode == 0 {
 		t.Error("run A reached run B's gateway by its address on B's network")
 	}
-	res := mustExec(t, a, "nslookup forja-gateway")
+	res := mustExec(t, a, resolve+"forja-gateway")
 	if own := gatewayIP(t, runs[0]); res.ExitCode != 0 || !strings.Contains(string(res.Stdout), own) || strings.Contains(string(res.Stdout), gatewayIP(t, runs[1])) {
 		t.Errorf("forja-gateway in run A = exit %d\n%s\nwant A's own gateway %s only", res.ExitCode, res.Stdout, own)
 	}
