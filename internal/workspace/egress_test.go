@@ -2,6 +2,7 @@ package workspace_test
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -346,6 +347,47 @@ func TestDocker_gatewayStopped_egressRefused(t *testing.T) {
 
 	if report, err := c.Egress(ctx); err == nil {
 		t.Fatalf("Egress after the gateway stopped = %+v, nil error; want a failure", report)
+	}
+}
+
+// A listed destination gets past the policy to the gateway's own dialer:
+// the CONNECT is not refused and nothing is recorded. The name never
+// resolves, so the tunnel ends upstream with a 502 and nothing leaves.
+func TestDocker_listedDestination_reachesGatewayDialerNotDenied(t *testing.T) {
+	const listed = "forja-unresolvable.invalid:443"
+	d := newDocker(t, listed)
+
+	report := runGate(t, d, newRunID(t), `printf 'CONNECT `+listed+` HTTP/1.1\r\nHost: `+listed+`\r\n\r\n' | nc -w 12 forja-gateway 3128 | head -n 1 | grep -q ' 502 '`)
+	if fetch := report.Gates[0]; fetch.Status != domain.StepPassed {
+		t.Fatalf("CONNECT to a listed name = {%s exit %d}, want the 502 of an unreachable upstream\nstderr: %s", fetch.Status, fetch.ExitCode, fetch.Stderr)
+	}
+	if report.Egress.Count != 0 {
+		t.Fatalf("egress = %+v, want no denial for a listed destination", report.Egress)
+	}
+}
+
+// Launch waits for the gateway to say it is serving: a gateway that exits
+// first fails the launch, and nothing of the run is left behind.
+func TestDocker_gatewayExitsBeforeReady_launchFailsNothingLeft(t *testing.T) {
+	newDocker(t)
+	script := filepath.Join(t.TempDir(), "forjad")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: script})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runID := newRunID(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	if c, err := d.Launch(ctx, runID, testImage, treeWith(t)); err == nil {
+		_ = c.Close(context.Background())
+		t.Fatal("Launch with a gateway that exits before it is ready = nil error, want a failure")
+	}
+	if n := leftovers(t, runID); n != 0 {
+		t.Fatalf("%d containers or networks of the failed launch left behind", n)
 	}
 }
 
