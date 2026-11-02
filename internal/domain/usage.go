@@ -43,8 +43,12 @@ const (
 	// ReasonNoCommits is a run whose agent exited 0 without committing.
 	ReasonNoCommits FailureReason = "no_commits"
 	// ReasonInversionUnavailable is a verify run whose diff has production
-	// code, which only an inversion can verify.
+	// code and whose QA agent left no candidate the control plane admits.
 	ReasonInversionUnavailable FailureReason = "inversion_unavailable"
+	// ReasonInversionInconclusive is a verify run with an inversion whose
+	// gates neither went red at a gate that ran nor all passed, such as a
+	// setup step or a service that failed.
+	ReasonInversionInconclusive FailureReason = "inversion_inconclusive"
 	// ReasonWallClock is a run that its contract's limits.wall_clock ended.
 	ReasonWallClock FailureReason = "wall_clock"
 	// ReasonDiffTooLarge is a run whose diff against the base changed more

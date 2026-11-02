@@ -23,11 +23,11 @@ type verifier struct {
 }
 
 // verifyHandler reads the pull request, reserves the issue its branch
-// names, classifies its diff under the base commit's contract, publishes
-// forja/qa on its head when the diff is not verifiable, and releases the
-// reservation. A pull request no run of Forja opened, or a refused claim,
-// is a tool error and records no run; a diff only an inversion can verify
-// is a result.
+// names, classifies its diff under the base commit's contract, inverts a
+// diff with production code through the QA agent, publishes forja/qa on
+// its head, and releases the reservation. A pull request no run of Forja
+// opened, or a refused claim, is a tool error and records no run; a diff
+// no inversion could decide is a result.
 func verifyHandler(deps Deps) sdk.ToolHandlerFor[VerifyInput, VerifyOutput] {
 	v := verifier{lifecycle{deps: deps}}
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in VerifyInput) (*sdk.CallToolResult, VerifyOutput, error) {
@@ -64,18 +64,25 @@ func (v verifier) verify(ctx context.Context, in VerifyInput) (VerifyOutput, err
 	if err := v.run(ctx, f, work); err != nil {
 		return VerifyOutput{}, fmt.Errorf("run %s: %w", f.claim.RunID, err)
 	}
-	return verifyOutput(f.run, f.evidence), nil
+	return verifyOutput(f.run, f.evidence, v.deps.Prices), nil
 }
 
 // wired refuses a server missing any dependency a verify run reaches,
-// naming the missing ones.
+// naming the missing ones, and one without a QA agent with what to set.
 func (v verifier) wired() error {
 	d := v.deps
-	return notWired([]dependency{
+	err := notWired([]dependency{
 		{"runs", d.Runs != nil}, {"contracts", d.Contracts != nil}, {"claims", d.Claims != nil},
-		{"cloner", d.Cloner != nil}, {"pull request reader", d.PullRequestReader != nil}, {"statuses", d.Statuses != nil},
-		{"NewID", d.NewID != nil}, {"Now", d.Now != nil},
+		{"branch cloner", d.BranchCloner != nil}, {"pull request reader", d.PullRequestReader != nil}, {"statuses", d.Statuses != nil},
+		{"issues", d.Issues != nil}, {"gates", d.Gates != nil}, {"NewID", d.NewID != nil}, {"Now", d.Now != nil},
 	})
+	if err != nil {
+		return err
+	}
+	if d.QA == nil {
+		return errNoAgent
+	}
+	return nil
 }
 
 // errNotARunBranch is a pull request whose head is not a branch a run of
@@ -97,8 +104,9 @@ func runIssue(repo string, pr domain.PullRequestDiff) (int, error) {
 	return n, nil
 }
 
-// verifyOutput is the run as forja.verify answers it.
-func verifyOutput(run domain.Run, body string) VerifyOutput {
+// verifyOutput is the run as forja.verify answers it, its cost estimated
+// at prices.
+func verifyOutput(run domain.Run, body string, prices *domain.PriceTable) VerifyOutput {
 	return VerifyOutput{
 		RunID: run.ID, State: string(run.State),
 		Verdict: string(run.QA.Verdict), VerdictReason: string(run.QA.Reason), Excluded: excludedOf(run.QA),
@@ -106,7 +114,21 @@ func verifyOutput(run domain.Run, body string) VerifyOutput {
 		BaseSHA:       run.BaseSHA, ContractSHA: run.ContractSHA, HeadSHA: run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
+		ComputeMinutes: computeMinutes(run.Compute), EstimatedCostUSDMicros: estimate(prices, run),
+		Inversions: inversionReports(run.Inversions),
 	}
+}
+
+// inversionReports is every candidate on the wire, [] for none.
+func inversionReports(invs []domain.Inversion) []InversionReport {
+	out := make([]InversionReport, 0, len(invs))
+	for _, inv := range invs {
+		out = append(out, InversionReport{
+			Branch: inv.Branch, Commit: inv.Commit, Paths: append([]string{}, inv.Paths...),
+			Admitted: inv.Admitted, Rejected: string(inv.Rejected), Outcome: string(inv.Outcome), FailedStep: inv.Gates.FailedStep,
+		})
+	}
+	return out
 }
 
 // excludedOf is the excluded paths, empty rather than nil so the wire

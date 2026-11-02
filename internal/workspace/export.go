@@ -36,7 +36,8 @@ var (
 
 // ExportCommits writes to dst, a path on the control plane that must not
 // exist, a git bundle of branch beyond the commit base as the workspace's
-// tree holds it. A branch still at base wraps domain.ErrNoCommits. The
+// tree holds it. A branch still at base wraps domain.ErrNoCommits, and a
+// branch the tree does not hold wraps domain.ErrNoBranch. The
 // bundle is copied out only as one regular file of at most MaxBundleBytes;
 // anything else is refused and leaves nothing at dst. The workspace must
 // still be running.
@@ -54,7 +55,7 @@ func (c *Container) ExportCommits(ctx context.Context, base, branch, dst string)
 	case exitNoCommits:
 		return fmt.Errorf("workspace: export %s: %w", branch, domain.ErrNoCommits)
 	case exitNoBranch:
-		return fmt.Errorf("workspace: export %s: the branch is not in the tree", branch)
+		return fmt.Errorf("workspace: export %s: %w", branch, domain.ErrNoBranch)
 	default:
 		return fmt.Errorf("workspace: export %s: git exited %d", branch, res.ExitCode)
 	}

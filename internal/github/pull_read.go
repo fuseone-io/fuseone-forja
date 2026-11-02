@@ -29,9 +29,13 @@ const (
 	maxFilesPage = 64 << 20
 )
 
+// pullDiffResponse is what Read decodes of a pull request. A body of null,
+// which the API answers for a pull request with no description, decodes
+// to "".
 type pullDiffResponse struct {
 	Number       int    `json:"number"`
 	HTMLURL      string `json:"html_url"`
+	Body         string `json:"body"`
 	ChangedFiles int    `json:"changed_files"`
 	Head         struct {
 		Ref  string `json:"ref"`
@@ -108,7 +112,7 @@ func listFiles(ctx context.Context, api *apiClient, pull string) ([]domain.Chang
 
 func diffOf(pr pullDiffResponse, files []domain.ChangedFile) domain.PullRequestDiff {
 	diff := domain.PullRequestDiff{
-		Number: pr.Number, URL: pr.HTMLURL, HeadRef: pr.Head.Ref, HeadSHA: pr.Head.SHA, BaseRef: pr.Base.Ref, Files: files,
+		Number: pr.Number, URL: pr.HTMLURL, HeadRef: pr.Head.Ref, HeadSHA: pr.Head.SHA, BaseRef: pr.Base.Ref, Body: pr.Body, Files: files,
 	}
 	if pr.Head.Repo != nil {
 		diff.HeadRepository = pr.Head.Repo.FullName

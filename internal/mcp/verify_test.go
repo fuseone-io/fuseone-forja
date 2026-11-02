@@ -30,9 +30,12 @@ const (
 const verifyContract = "version: 1\nimage: golang:1.26\ngates:\n  - name: build\n    run: make build\n" +
 	"verify:\n  exclude: [\"**/*.md\"]\nproof_paths:\n  - .forja.yaml\n  - \"**/*_test.go\"\nlimits:\n  wall_clock: 20m\n"
 
+// verifyCheckout is the clone of the base with the pull request's head
+// checked out at its tip, as CloneBranch leaves it: reads answer for the
+// base, Start is the head.
 func verifyCheckout(contract string) *fakeCheckout {
 	return &fakeCheckout{
-		sha: planSHA, branch: "main", dir: "/tmp/forja-verify",
+		sha: planSHA, start: verifyHead, branch: "main", dir: "/tmp/forja-verify",
 		files: map[string]string{".forja.yaml": contract}, dirs: map[string]bool{},
 	}
 }
@@ -58,9 +61,12 @@ type verifyFixture struct {
 	calls    *callLog
 	claims   *fakeClaims
 	runs     *recordingRuns
-	cloner   *fakeCloner
+	cloner   *fakeBranchCloner
 	pulls    *fakePullReader
 	statuses *fakeStatuses
+	gates    *fakeGates
+	qa       *fakeQA
+	issues   *fakeIssues
 	cs       *sdk.ClientSession
 }
 
@@ -69,14 +75,21 @@ type verifyWiring struct {
 	pr       domain.PullRequestDiff
 	checkout *fakeCheckout
 	claims   func(*fakeClaims)
-	deps     func(*forja.Deps)
+	// fakes changes the gates, the QA agent and the issue reader.
+	fakes func(*verifyFixture)
+	deps  func(*forja.Deps)
 }
 
+var verifyStatement = domain.Issue{Number: implementIssue, Title: "Meter the cost", Body: "## What to build\n\nCompute minutes.\n"}
+
 // newVerifyFixture is a server wired with what forja.verify reaches and
-// nothing else: no agent, gates, pusher, pull request opener nor issue
-// reader, so a verify that touched one would crash. The API's contract,
-// read only to size the lease, is contractWithWallClock; the base
-// checkout holds verifyContract unless the wiring says otherwise.
+// nothing else: no implement agent, base-only cloner, pusher nor pull
+// request opener, so a verify that touched one would crash. The gates are
+// green on every tree and the QA agent exits 0 leaving no candidate,
+// unless the wiring says otherwise. The API's contract, read only to size
+// the lease, is contractWithWallClock; the base checkout holds
+// verifyContract with the head at its tip unless the wiring says
+// otherwise.
 func newVerifyFixture(t *testing.T, w verifyWiring) *verifyFixture {
 	t.Helper()
 	calls := &callLog{}
@@ -92,12 +105,19 @@ func newVerifyFixture(t *testing.T, w verifyWiring) *verifyFixture {
 	deps := testDeps(runs, &fakeContracts{src: domain.ContractSource{SHA: doctorSHA, Body: contractWithWallClock}}, claims)
 	fx := &verifyFixture{
 		calls: calls, claims: claims, runs: runs,
-		cloner:   &fakeCloner{co: co, log: calls},
+		cloner:   &fakeBranchCloner{co: co, log: calls},
 		pulls:    &fakePullReader{calls: calls, repo: doctorRepo, prs: map[int]domain.PullRequestDiff{verifyPR: w.pr}},
 		statuses: &fakeStatuses{deliveryLog[github.StatusRequest]{calls: calls, name: "status"}},
+		gates:    &fakeGates{report: greenReport(), log: calls},
+		qa:       &fakeQA{calls: calls},
+		issues:   &fakeIssues{issue: verifyStatement},
 	}
-	deps.Cloner, deps.PullRequestReader, deps.Statuses = fx.cloner, fx.pulls, fx.statuses
-	deps.Agent, deps.Gates, deps.Pusher, deps.PullRequests, deps.Issues = nil, nil, nil, nil, nil
+	if w.fakes != nil {
+		w.fakes(fx)
+	}
+	deps.BranchCloner, deps.PullRequestReader, deps.Statuses = fx.cloner, fx.pulls, fx.statuses
+	deps.Gates, deps.QA, deps.Issues = fx.gates, fx.qa, fx.issues
+	deps.Cloner, deps.Agent, deps.Pusher, deps.PullRequests = nil, nil, nil, nil
 	if w.deps != nil {
 		w.deps(&deps)
 	}
@@ -179,10 +199,10 @@ func assertEvidencePins(t *testing.T, evidence, contractSHA string) {
 	}
 }
 
-// Whatever the diff, verify never publishes forja/qa success. A
-// diff that is not verifiable gets one pending status with its reason's
-// description; a diff with production code gets none, and the run fails
-// with no verdict.
+// Without an inversion, verify never publishes forja/qa success. A diff
+// that is not verifiable gets one pending status with its reason's
+// description; a diff with production code for which the QA agent left
+// no candidate gets none, and the run fails with no verdict.
 func TestVerify_anyDiff_neverPublishesQASuccess(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -262,7 +282,10 @@ func TestVerify_wireKeys_alwaysPresentAndSnakeCase(t *testing.T) {
 	fx := newVerifyFixture(t, verifyWiring{pr: verifyPull(changed("internal/verify/classify.go")...)})
 
 	wire := wireOf(t, callVerify(t, fx.cs, verifyPR))
-	want := map[string]string{"run_id": `"run-1"`, "state": `"failed"`, "excluded": `[]`, "tokens_in": "0", "tokens_out": "0"}
+	want := map[string]string{
+		"run_id": `"run-1"`, "state": `"failed"`, "excluded": `[]`, "tokens_in": "0", "tokens_out": "0",
+		"compute_minutes": "0", "inversions": "[]",
+	}
 	for key, value := range want {
 		if string(wire[key]) != value {
 			t.Errorf("%s = %s, want %s", key, wire[key], value)

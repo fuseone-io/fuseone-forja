@@ -26,10 +26,10 @@ func Classify(c domain.Contract, files []domain.ChangedFile) Outcome {
 	excluded := map[string]bool{}
 	var proof, production bool
 	for _, p := range changedPaths(files) {
-		switch {
-		case matches(c.Verify.Exclude, p):
+		switch kindOf(c, p) {
+		case pathExcluded:
 			excluded[p] = true
-		case matches(c.ProofPaths, p):
+		case pathProof:
 			proof = true
 		default:
 			production = true
@@ -44,6 +44,27 @@ func Classify(c domain.Contract, files []domain.ChangedFile) Outcome {
 		qa.Reason = domain.NotVerifiableOnlyExcludedPaths
 	}
 	return Outcome{QA: qa}
+}
+
+// pathKind is what one path is under a contract.
+type pathKind int
+
+const (
+	pathProduction pathKind = iota
+	pathExcluded
+	pathProof
+)
+
+// kindOf is p under c: excluded when verify.exclude matches it, even when
+// a proof path matches it too, then a proof path, then production code.
+func kindOf(c domain.Contract, p string) pathKind {
+	switch {
+	case matches(c.Verify.Exclude, p):
+		return pathExcluded
+	case matches(c.ProofPaths, p):
+		return pathProof
+	}
+	return pathProduction
 }
 
 // changedPaths is every path the files name, the previous path of a

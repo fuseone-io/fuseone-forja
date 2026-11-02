@@ -31,6 +31,14 @@ type fakeGates struct {
 	// while the gates would.
 	log    *callLog
 	during func()
+	// byTree answers for a tree over report and reports, and errByTree
+	// fails it; contracts are what every call was given, in order.
+	byTree    map[string]domain.GateReport
+	errByTree map[string]error
+	contracts []domain.Contract
+	// untilDeadline runs the first gate of that tree until the deadline
+	// and reports it timed out, as the real runner does.
+	untilDeadline string
 }
 
 func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tree string) (domain.GateReport, error) {
@@ -45,16 +53,30 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 	}
 	f.calls++
 	f.runID, f.contract, f.tree = runID, c, tree
-	f.trees = append(f.trees, tree)
+	f.trees, f.contracts = append(f.trees, tree), append(f.contracts, c)
 	f.deadline, f.hasDL = ctx.Deadline()
 	f.deadlines = append(f.deadlines, f.deadline)
-	if f.err != nil {
-		return domain.GateReport{Compute: f.report.Compute}, f.err
+	if tree == f.untilDeadline {
+		<-ctx.Done()
+		return domain.GateReport{
+			Gates:      []domain.GateResult{{Name: "build", Command: "make build", Status: domain.StepTimedOut, ExitCode: domain.NoExitCode}},
+			FailedStep: "build",
+		}, nil
 	}
+	report := f.report
 	if len(f.reports) > 0 {
-		return f.reports[min(f.calls, len(f.reports))-1], nil
+		report = f.reports[min(f.calls, len(f.reports))-1]
 	}
-	return f.report, nil
+	if r, ok := f.byTree[tree]; ok {
+		report = r
+	}
+	if err := f.errByTree[tree]; err != nil {
+		return domain.GateReport{Compute: report.Compute}, err
+	}
+	if f.err != nil {
+		return domain.GateReport{Compute: report.Compute}, f.err
+	}
+	return report, nil
 }
 
 func passed(name, command, stdout, stderr string, d time.Duration) domain.GateResult {

@@ -110,44 +110,15 @@ type Runner struct {
 // launch, no workspace exists and nothing more is metered. The compute
 // runs from just before the launch until Close returned, or until a
 // failed launch returned.
-func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
-	if r.Launcher == nil {
-		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
-	}
-	if r.Now == nil {
-		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a clock")
-	}
-	launched := r.Now()
-	ws, err := r.Launcher.LaunchAgent(ctx, Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree, Spent: t.Spent.Total()})
-	if errors.Is(err, ErrCapSpent) {
-		return Result{ExitCode: domain.NoExitCode, Capped: true, Compute: r.Now().Sub(launched)}, nil
-	}
-	if err != nil {
-		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
-	}
-	detached := context.WithoutCancel(ctx)
-	defer func() {
-		closeCtx, cancel := context.WithTimeout(detached, closeTimeout)
-		defer cancel()
-		if closeErr := ws.Close(closeCtx); closeErr != nil {
-			err = errors.Join(err, fmt.Errorf("agent: close workspace: %w", closeErr))
-		}
-		res.Compute = r.Now().Sub(launched)
-	}()
-	res, err = execute(ctx, ws, t)
-	if err == nil {
-		err = export(ctx, ws, t, &res)
-	}
-	return res, errors.Join(err, collect(detached, ws, &res))
+func (r *Runner) Run(ctx context.Context, t Task) (Result, error) {
+	l := launch{Launch: Launch{RunID: t.RunID, Image: t.Contract.Image, Tree: t.Tree, Spent: t.Spent.Total()}, prompt: Render(t)}
+	return r.session(ctx, l, func(ctx context.Context, ws Workspace, res *Result) error { return export(ctx, ws, t, res) })
 }
 
 // export brings the commits of an agent that exited 0 on its own out to
 // the task's Bundle. Nothing to export is a result; so is the deadline
 // ending the export.
 func export(ctx context.Context, ws Workspace, t Task, res *Result) error {
-	if res.ExitCode != 0 || res.Capped {
-		return nil
-	}
 	err := ws.ExportCommits(ctx, t.BaseSHA, t.Branch, t.Bundle)
 	switch {
 	case err == nil:
@@ -162,9 +133,9 @@ func export(ctx context.Context, ws Workspace, t Task, res *Result) error {
 }
 
 // execute writes the prompt and runs the agent, classifying how it ended.
-func execute(ctx context.Context, ws Workspace, t Task) (Result, error) {
+func execute(ctx context.Context, ws Workspace, prompt []byte) (Result, error) {
 	res := Result{ExitCode: domain.NoExitCode}
-	if err := ws.WriteFile(ctx, PromptPath, Render(t)); err != nil {
+	if err := ws.WriteFile(ctx, PromptPath, prompt); err != nil {
 		return res, fmt.Errorf("agent: write prompt: %w", err)
 	}
 	out, capped, err := execUnderCap(ctx, ws)

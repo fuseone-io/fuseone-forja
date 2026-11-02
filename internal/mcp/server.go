@@ -34,6 +34,9 @@ type Deps struct {
 	Identity     Identity
 	// PullRequestReader reads the pull request a forja.verify run verifies.
 	PullRequestReader PullRequestReader
+	// QA runs the QA agent of a forja.verify run; nil until the model proxy
+	// is configured.
+	QA QAAgent
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time

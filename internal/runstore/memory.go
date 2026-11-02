@@ -91,6 +91,11 @@ func clone(run domain.Run) domain.Run {
 	run.Proof.ProofPaths = slices.Clone(run.Proof.ProofPaths)
 	run.Proof.HumanMergePaths = slices.Clone(run.Proof.HumanMergePaths)
 	run.QA.Excluded = slices.Clone(run.QA.Excluded)
+	run.Inversions = slices.Clone(run.Inversions)
+	for i := range run.Inversions {
+		run.Inversions[i].Paths = slices.Clone(run.Inversions[i].Paths)
+		run.Inversions[i].Gates = cloneReport(run.Inversions[i].Gates)
+	}
 	return run
 }
 

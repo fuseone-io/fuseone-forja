@@ -70,7 +70,8 @@ type Run struct {
 	// the last one may still be running.
 	Stages []Stage
 	// Gates is the report of the gates an implement run ran on the agent's
-	// head, of its latest attempt; empty until they ran.
+	// head, of its latest attempt, or a verify run on the pull request's
+	// head before any inversion; empty until they ran.
 	Gates GateReport
 	// Attempts are the attempts whose gates ran, in order; MaxAttempts is
 	// how many the base commit's contract allows, zero until it was read.
@@ -98,6 +99,9 @@ type Run struct {
 	PullRequest PullRequest
 	// QA is the verdict of a verify run; zero for any other run.
 	QA QA
+	// Inversions are the candidates of a verify run's QA agent the control
+	// plane looked at, in the agent's order, admitted or not.
+	Inversions []Inversion
 	// Limits are the limits the run works under, its base contract's with
 	// the defaults filled; zero until the contract was read.
 	Limits Limits

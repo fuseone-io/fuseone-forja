@@ -21,8 +21,10 @@ type fakeWorkspace struct {
 	egress domain.EgressReport
 	// modelErr fails the usage read.
 	modelErr error
-	// exportErr fails the export of the agent's commits.
-	exportErr error
+	// exportErr fails the export of the agent's commits; exportErrs fails
+	// the export of one branch, over exportErr.
+	exportErr  error
+	exportErrs map[string]error
 	// capReached is closed to say the proxy reached the cap.
 	capReached chan struct{}
 	// onClose runs inside Close, as the time a removal takes.
@@ -82,6 +84,9 @@ func (f *fakeWorkspace) ExportCommits(_ context.Context, base, branch, dst strin
 		return errors.New("fake: workspace halted")
 	}
 	f.exported = append(f.exported, [3]string{base, branch, dst})
+	if err, ok := f.exportErrs[branch]; ok {
+		return err
+	}
 	return f.exportErr
 }
 

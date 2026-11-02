@@ -68,10 +68,7 @@ func TestDocker_exportCommits_bundleOfAgentCommitOnly(t *testing.T) {
 	ctx := context.Background()
 	tmp := t.TempDir()
 
-	err := c.ExportCommits(ctx, co.SHA(), exportBranch, filepath.Join(tmp, "empty.bundle"))
-	if !errors.Is(err, domain.ErrNoCommits) {
-		t.Fatalf("ExportCommits of a branch at the base = %v, want ErrNoCommits", err)
-	}
+	assertNothingToExport(t, c, co.SHA(), tmp)
 	head := agentCommits(t, c, "echo proof > proof.txt && echo left > leftover.txt && "+agentGit+" add proof.txt")
 	dst := filepath.Join(tmp, "commits.bundle")
 	if err := c.ExportCommits(ctx, co.SHA(), exportBranch, dst); err != nil {
@@ -92,6 +89,20 @@ func TestDocker_exportCommits_bundleOfAgentCommitOnly(t *testing.T) {
 	}
 	if n := leftovers(t, runID); n != 0 {
 		t.Fatalf("%d containers or networks of the run left after Close", n)
+	}
+}
+
+// assertNothingToExport checks a branch still at the base wraps
+// ErrNoCommits and one the tree lacks wraps ErrNoBranch.
+func assertNothingToExport(t *testing.T, c *workspace.Container, base, tmp string) {
+	t.Helper()
+	err := c.ExportCommits(context.Background(), base, exportBranch, filepath.Join(tmp, "empty.bundle"))
+	if !errors.Is(err, domain.ErrNoCommits) {
+		t.Fatalf("ExportCommits of a branch at the base = %v, want ErrNoCommits", err)
+	}
+	err = c.ExportCommits(context.Background(), base, "forja-qa/4", filepath.Join(tmp, "missing.bundle"))
+	if !errors.Is(err, domain.ErrNoBranch) || errors.Is(err, domain.ErrNoCommits) {
+		t.Fatalf("ExportCommits of a branch the tree lacks = %v, want ErrNoBranch", err)
 	}
 }
 

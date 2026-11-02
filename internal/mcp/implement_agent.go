@@ -58,13 +58,15 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 // stopped is what a stage that ended the run leaves to return. When the
 // wall clock ran out, the run failed for it, a result whatever the stage
 // met on the way: it names the reason unless the cap or the run's own
-// terms already named a more specific one than a red gate. Otherwise it
-// is the stage's error.
+// terms already named a more specific one than a red gate or an
+// inconclusive inversion, which the deadline may have caused. Otherwise
+// it is the stage's error.
 func stopped(runCtx context.Context, f *flight, err error) error {
 	if !errors.Is(context.Cause(runCtx), errWallClock) {
 		return err
 	}
-	if f.run.Reason == "" || f.run.Reason == domain.ReasonGateFailed {
+	switch f.run.Reason {
+	case "", domain.ReasonGateFailed, domain.ReasonInversionInconclusive:
 		f.run.Reason = domain.ReasonWallClock
 	}
 	return nil
