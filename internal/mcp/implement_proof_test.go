@@ -26,6 +26,7 @@ var (
 	newTestFile      = domain.FileChange{Path: "pkg/new_test.go", Kind: domain.ChangeAdded, Added: 9}
 	newTestdataFile  = domain.FileChange{Path: "pkg/testdata/f", Kind: domain.ChangeAdded, Added: 1}
 	productionChange = domain.FileChange{Path: "internal/x.go", Kind: domain.ChangeModified, Added: 5, Deleted: 5}
+	binaryTestdata   = domain.FileChange{Path: "pkg/testdata/img.png", Kind: domain.ChangeModified, Binary: true}
 )
 
 // newProofFixture is the implement fixture whose base contract carries the
@@ -85,10 +86,10 @@ func implementWire(t *testing.T, fx *implementFixture) map[string]json.RawMessag
 // forja.implement, forja.status and the evidence the pull request carries.
 func TestImplement_proofChanges_listedOnOutputStatusAndEvidence(t *testing.T) {
 	t.Parallel()
-	fx := newProofFixture(t, productionChange, makefileChanged, newTestFile, codeownersAdded)
+	fx := newProofFixture(t, productionChange, makefileChanged, binaryTestdata, newTestFile, codeownersAdded)
 
 	wire := implementWire(t, fx)
-	want := proofOnWire{HumanMerge: true, ProofApparatus: []forja.ChangedPath{changedPath(makefileChanged)}, HumanMergePaths: []forja.ChangedPath{changedPath(codeownersAdded)}}
+	want := proofOnWire{HumanMerge: true, ProofApparatus: []forja.ChangedPath{changedPath(makefileChanged), changedPath(binaryTestdata)}, HumanMergePaths: []forja.ChangedPath{changedPath(codeownersAdded)}}
 	if got := decodeProof(t, wire); !reflect.DeepEqual(got, want) {
 		t.Fatalf("forja.implement proof = %+v, want %+v", got, want)
 	}
@@ -99,7 +100,7 @@ func TestImplement_proofChanges_listedOnOutputStatusAndEvidence(t *testing.T) {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: gitBlobSHA(proofContract), HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
-		Proof: domain.Proof{ProofPaths: []domain.FileChange{makefileChanged}, HumanMergePaths: []domain.FileChange{codeownersAdded}},
+		Proof: domain.Proof{ProofPaths: []domain.FileChange{makefileChanged, binaryTestdata}, HumanMergePaths: []domain.FileChange{codeownersAdded}},
 	})
 	if prs := fx.prs.got(); len(prs) != 1 || prs[0].Body != wantBody {
 		t.Fatalf("pull request bodies = %+v, want one with the proof sections:\n%s", prs, wantBody)
