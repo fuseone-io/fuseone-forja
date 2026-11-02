@@ -334,7 +334,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "tokens_in", "tokens_out"}
+	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)
@@ -407,6 +407,63 @@ func TestStatus_noDenials_zeroAndEmptyListOnTheWire(t *testing.T) {
 	wire := statusWire(t, cs, "run-quiet")
 	if string(wire["egress_denied_count"]) != "0" || string(wire["egress_denied"]) != "[]" {
 		t.Fatalf("egress_denied_count = %s, egress_denied = %s; want 0 and []", wire["egress_denied_count"], wire["egress_denied"])
+	}
+}
+
+// registryAccess is what a registry proxy reports for a doctor run: more
+// requests counted than listed, so a reader that counted the list would
+// be caught.
+func registryAccess() domain.RegistryReport {
+	at := startedAt().Add(30 * time.Second)
+	return domain.RegistryReport{
+		Accesses: []domain.RegistryAccess{
+			{At: at, Registry: "proxy.golang.org", Path: "/github.com/x/@v/list", Outcome: domain.RegistryAllowed, Status: 200},
+			{At: at.Add(time.Second), Registry: "example.com", Path: "/x", Outcome: domain.RegistryDenied, Status: 403},
+		},
+		Count: 4,
+	}
+}
+
+// What the doctor run's registry proxy served and refused reaches
+// forja.status as the control plane read it; a run with none says so with
+// a zero and an empty list, never a missing key or null.
+func TestStatus_doctorRun_showsRegistryAccess(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	report := greenReport()
+	report.Registry = registryAccess()
+	cs := connectWith(t, store, &fakeCloner{co: doctorCheckout(doctorContract)}, &fakeGates{report: report})
+	runID := decodeDoctor(t, callDoctor(t, cs, doctorRepo)).RunID
+
+	wire := statusWire(t, cs, runID)
+	if string(wire["registry_access_count"]) != "4" {
+		t.Fatalf("registry_access_count = %s, want 4", wire["registry_access_count"])
+	}
+	var events []map[string]json.RawMessage
+	if err := json.Unmarshal(wire["registry_access"], &events); err != nil {
+		t.Fatalf("registry_access = %s: %v", wire["registry_access"], err)
+	}
+	want := []map[string]string{
+		{"at": `"2026-10-31T12:00:30Z"`, "registry": `"proxy.golang.org"`, "path": `"/github.com/x/@v/list"`, "outcome": `"allowed"`, "status": "200"},
+		{"at": `"2026-10-31T12:00:31Z"`, "registry": `"example.com"`, "path": `"/x"`, "outcome": `"denied"`, "status": "403"},
+	}
+	if len(events) != len(want) {
+		t.Fatalf("registry_access = %s, want %d events", wire["registry_access"], len(want))
+	}
+	for i, ev := range events {
+		got := map[string]string{}
+		for k, v := range ev {
+			got[k] = string(v)
+		}
+		if !reflect.DeepEqual(got, want[i]) {
+			t.Errorf("registry_access[%d] = %v, want %v", i, got, want[i])
+		}
+	}
+
+	mustPut(t, store, terminalRun("run-no-registry"))
+	quiet := statusWire(t, cs, "run-no-registry")
+	if string(quiet["registry_access_count"]) != "0" || string(quiet["registry_access"]) != "[]" {
+		t.Fatalf("registry_access_count = %s, registry_access = %s; want 0 and []", quiet["registry_access_count"], quiet["registry_access"])
 	}
 }
 

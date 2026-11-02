@@ -60,26 +60,27 @@ func resolveGatewayBinary(configured, goos string, executable func() (string, er
 
 // createGateway creates the run's gateway on its network under the alias
 // the workspace's proxy variables name. It is not started.
-func createGateway(ctx context.Context, cli *client.Client, runID string, allow []string) (string, error) {
-	cmd := []string{gatewayDir + "/" + gatewayBin, "gateway", "-run", runID}
+func (c *Container) createGateway(ctx context.Context, allow []string) (string, error) {
+	cmd := []string{gatewayDir + "/" + gatewayBin, "gateway", "-run", c.runID}
 	if len(allow) > 0 {
 		cmd = append(cmd, "-allow", strings.Join(allow, ","))
 	}
-	netName := networkName(runID)
-	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	netName := networkName(c.runID)
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:   netName + "-gateway",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
+			Runtime:     c.runtime,
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			netName: {Aliases: []string{gatewayAlias}},
 		}},
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: create gateway of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create gateway of run %s: %w", c.runID, err)
 	}
 	return created.ID, nil
 }
@@ -90,6 +91,7 @@ func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error 
 	if err := copyBinary(ctx, cli, g.id, g.binary, gatewayDir, gatewayBin); err != nil {
 		return fmt.Errorf("workspace: copy gateway binary: %w", err)
 	}
+	ready := func(r io.Reader) error { return egress.AwaitReady(r, g.runID) }
 	if len(g.allow) > 0 {
 		if _, err := cli.NetworkConnect(ctx, "bridge", client.NetworkConnectOptions{Container: g.id}); err != nil {
 			return fmt.Errorf("workspace: connect gateway to bridge: %w", err)
@@ -98,7 +100,6 @@ func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error 
 	if _, err := cli.ContainerStart(ctx, g.id, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("workspace: start gateway: %w", err)
 	}
-	ready := func(r io.Reader) error { return egress.AwaitReady(r, g.runID) }
 	if err := awaitReady(ctx, cli, g.id, ready); err != nil {
 		return fmt.Errorf("workspace: gateway of run %s: %w", g.runID, err)
 	}
@@ -149,25 +150,35 @@ func readStdout(logs io.ReadCloser, read func(io.Reader) error) error {
 // that is no longer running may have missed attempts after it stopped,
 // so its log is refused as evidence.
 func (c *Container) Egress(ctx context.Context) (domain.EgressReport, error) {
-	inspect, err := c.cli.ContainerInspect(ctx, c.gateway, client.ContainerInspectOptions{})
-	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: inspect gateway: %w", err)
-	}
-	if state := inspect.Container.State; state == nil || !state.Running {
-		return domain.EgressReport{}, fmt.Errorf("workspace: gateway of run %s is not running: its log may miss denials", c.runID)
-	}
-	logs, err := c.cli.ContainerLogs(ctx, c.gateway, client.ContainerLogsOptions{ShowStdout: true})
-	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: read gateway log: %w", err)
-	}
 	var report domain.EgressReport
-	err = readStdout(logs, func(r io.Reader) error {
+	err := c.readLog(ctx, c.gateway, "gateway", func(r io.Reader) error {
 		var err error
 		report, err = egress.ReadDenials(r, c.runID)
 		return err
 	})
 	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: gateway log: %w", err)
+		return domain.EgressReport{}, err
 	}
 	return report, nil
+}
+
+// readLog hands the stdout of the run's proxy id, named what, to read,
+// and refuses the log of a proxy that is no longer running: it may have
+// missed what happened after it stopped.
+func (c *Container) readLog(ctx context.Context, id, what string, read func(io.Reader) error) error {
+	inspect, err := c.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("workspace: inspect %s: %w", what, err)
+	}
+	if state := inspect.Container.State; state == nil || !state.Running {
+		return fmt.Errorf("workspace: %s of run %s is not running: its log may be incomplete", what, c.runID)
+	}
+	logs, err := c.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true})
+	if err != nil {
+		return fmt.Errorf("workspace: read %s log: %w", what, err)
+	}
+	if err := readStdout(logs, read); err != nil {
+		return fmt.Errorf("workspace: %s log: %w", what, err)
+	}
+	return nil
 }

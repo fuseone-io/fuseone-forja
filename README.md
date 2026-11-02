@@ -149,6 +149,17 @@ agent_context:
 Gates are the repository's own commands. Forja reads the exit code and keeps
 the raw log; it never interprets test output.
 
+`registries` lists the private registries `setup` fetches from, each as
+`host[:port][/path]`. When the list is not empty, the run gets a registry
+proxy that holds the area's read credential, and the workspace gets
+`FORJA_REGISTRY_URL=http://forja-registry:8080`. A request for
+`$FORJA_REGISTRY_URL/<entry>/<rest>` reaches `https://<entry>/<rest>`; anything
+outside the declared entries is denied and logged. Forja configures no tool:
+the repository's `setup` points its own at that URL, for example
+`GOPROXY=$FORJA_REGISTRY_URL/proxy.golang.org` or
+`git config --global url."$FORJA_REGISTRY_URL/github.com/my-org/".insteadOf "https://github.com/my-org/"`.
+See [ADR 0037](docs/adr/0037-registry-proxy.md).
+
 ## The tools
 
 | Tool | Gate class | Caller | Effect |
@@ -210,6 +221,7 @@ App's permissions and the private key's handling, is
 | `FORJA_GITHUB_TOKEN` | fine-grained PAT restricted to the pilot | development only; ignored when `FORJA_GITHUB_APP_ID` is set |
 | `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it | recommended; unset, a claim left by a crash is freed only by its lease |
 | `FORJA_CLAIM_LEASE` | Go duration the run holds `refs/forja/claims/<n>` for; must exceed the contract's `limits.wall_clock` | optional; default `wall_clock + 15m`, or `60m` without limits |
+| `FORJA_REGISTRY_CREDENTIALS` | **path** to a JSON file mounted by the vault, `{"<entry>": {"username": "...", "password": "..."}}`, one read credential per area | needed by any contract that declares `registries`; unset, such a run is refused at launch |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:

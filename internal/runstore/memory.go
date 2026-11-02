@@ -50,12 +50,13 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 }
 
 // clone copies the run so that neither the pointer field nor the denial
-// list is shared between the store and its callers.
+// and access lists are shared between the store and its callers.
 func clone(run domain.Run) domain.Run {
 	if run.FinishedAt != nil {
 		finished := *run.FinishedAt
 		run.FinishedAt = &finished
 	}
 	run.Egress.Denied = slices.Clone(run.Egress.Denied)
+	run.Registry.Accesses = slices.Clone(run.Registry.Accesses)
 	return run
 }

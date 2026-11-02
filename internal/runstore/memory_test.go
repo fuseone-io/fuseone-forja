@@ -255,6 +255,38 @@ func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
 	}
 }
 
+// The registry accesses are evidence too, under the same rule as the
+// denials.
+func TestMemory_get_registryListNotShared(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
+	want := domain.RegistryAccess{At: at, Registry: "ghcr.io/my-org", Path: "/pkg", Outcome: domain.RegistryAllowed, Status: 200}
+	original := sampleRun("run-1")
+	original.Registry = domain.RegistryReport{Accesses: []domain.RegistryAccess{want}, Count: 3}
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	original.Registry.Accesses[0].Path = "/changed-after-put"
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Registry.Accesses) != 1 || got.Registry.Accesses[0] != want || got.Registry.Count != 3 {
+		t.Fatalf("registry after the writer's change = %+v, want [%+v] count 3", got.Registry, want)
+	}
+	got.Registry.Accesses[0].Path = "/changed-after-get"
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.Registry.Accesses[0] != want {
+		t.Fatalf("registry after a reader's change = %+v, want %+v", again.Registry.Accesses[0], want)
+	}
+}
+
 func TestMemory_zeroValue_putThenGet(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -167,7 +167,7 @@ func TestDocker_twoRuns_cannotResolveOrReachEachOthersSiblings(t *testing.T) {
 		wg.Go(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 			defer cancel()
-			c, err := d.Launch(ctx, runs[i], testImage, treeWith(t))
+			c, err := d.Launch(ctx, workspace.LaunchSpec{RunID: runs[i], Image: testImage, Tree: treeWith(t)})
 			if err != nil {
 				t.Errorf("Launch %s: %v", runs[i], err)
 				return
@@ -312,7 +312,7 @@ func TestDocker_launchFails_noNetworkOrGatewayLeft(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 			defer cancel()
 
-			if _, err := d.Launch(ctx, runID, tt.image, tt.tree(t)); err == nil {
+			if _, err := d.Launch(ctx, workspace.LaunchSpec{RunID: runID, Image: tt.image, Tree: tt.tree(t)}); err == nil {
 				t.Fatal("Launch = nil error, want a failure")
 			}
 			if n := leftovers(t, runID); n != 0 {
@@ -324,13 +324,13 @@ func TestDocker_launchFails_noNetworkOrGatewayLeft(t *testing.T) {
 
 func TestDocker_noGatewayBinary_launchRefusedNothingCreated(t *testing.T) {
 	newDocker(t)
-	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: filepath.Join(t.TempDir(), "no-forjad")})
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: filepath.Join(t.TempDir(), "no-forjad"), Runtime: suiteRuntime(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	runID := newRunID(t)
 
-	_, err = d.Launch(context.Background(), runID, testImage, treeWith(t))
+	_, err = d.Launch(context.Background(), workspace.LaunchSpec{RunID: runID, Image: testImage, Tree: treeWith(t)})
 	if err == nil || !strings.Contains(err.Error(), "no-forjad") {
 		t.Fatalf("Launch without a gateway binary = %v, want an error naming it", err)
 	}
@@ -379,7 +379,7 @@ func TestDocker_gatewayExitsBeforeReady_launchFailsNothingLeft(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: script})
+	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: script, Runtime: suiteRuntime(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +387,7 @@ func TestDocker_gatewayExitsBeforeReady_launchFailsNothingLeft(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	if c, err := d.Launch(ctx, runID, testImage, treeWith(t)); err == nil {
+	if c, err := d.Launch(ctx, workspace.LaunchSpec{RunID: runID, Image: testImage, Tree: treeWith(t)}); err == nil {
 		_ = c.Close(context.Background())
 		t.Fatal("Launch with a gateway that exits before it is ready = nil error, want a failure")
 	}

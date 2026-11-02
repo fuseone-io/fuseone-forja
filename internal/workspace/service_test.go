@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -218,6 +220,35 @@ func TestDocker_close_removesSidecarsAndNetwork(t *testing.T) {
 	assertNetworkGone(t, c.NetworkID())
 	if err := c.Close(context.Background()); err != nil {
 		t.Fatalf("second Close: %v, want nil: Close is idempotent", err)
+	}
+}
+
+// A sidecar's anonymous volumes go with it: postgres declares one for its
+// data, and nothing of the run may outlive Close.
+func TestDocker_close_removesSidecarAnonymousVolumes(t *testing.T) {
+	d := newDocker(t)
+	runID := newRunID(t)
+	c := launch(t, d, runID, treeWith(t))
+	startReady(t, c, "postgres", postgres)
+	var volumes []string
+	for _, ct := range runContainers(t, runID) {
+		for _, m := range ct.Mounts {
+			if m.Type == mount.TypeVolume {
+				volumes = append(volumes, m.Name)
+			}
+		}
+	}
+	if len(volumes) == 0 {
+		t.Fatal("the postgres sidecar has no volume: the test proves nothing")
+	}
+
+	if err := c.Close(context.Background()); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	for _, name := range volumes {
+		if _, err := dockerCLI(t).VolumeInspect(context.Background(), name, client.VolumeInspectOptions{}); !cerrdefs.IsNotFound(err) {
+			t.Errorf("VolumeInspect(%s) after Close = %v, want not found", name, err)
+		}
 	}
 }
 

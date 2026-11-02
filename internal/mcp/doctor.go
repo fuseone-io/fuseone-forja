@@ -113,7 +113,8 @@ func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
 
 // recordedRun records a doctor run as running, runs the gates as that run
 // and records its end: succeeded only when every step that had to run
-// passed, failed otherwise, with what the gateway refused either way.
+// passed, failed otherwise, with what the gateway refused and what the
+// registry proxy served either way.
 func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract, tree string) (domain.GateReport, string, error) {
 	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, State: domain.StateRunning, StartedAt: deps.Now()}
 	if err := deps.Runs.Put(ctx, run); err != nil {
@@ -124,7 +125,7 @@ func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract,
 	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
 	finished := deps.Now()
-	run.FinishedAt, run.State, run.Egress = &finished, domain.StateFailed, report.Egress
+	run.FinishedAt, run.State, run.Egress, run.Registry = &finished, domain.StateFailed, report.Egress, report.Registry
 	if err == nil && report.OK() {
 		run.State = domain.StateSucceeded
 	}

@@ -13,6 +13,7 @@ coverage.out
 # Local tool state, not the project's
 .serena/
 .claude/settings.local.json
+.claude/worktrees/
 
 # Tooling scratch
 *.log

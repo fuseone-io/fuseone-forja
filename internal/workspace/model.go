@@ -59,8 +59,8 @@ type agentSpec struct {
 
 // env is the plain workspace's plus the model proxy's address, kept off the
 // gateway, and the run token as the agent's API key.
-func (a *agentSpec) env() []string {
-	return append(proxyEnv(noProxy+","+modelAlias),
+func (a *agentSpec) env(withRegistry bool) []string {
+	return append(proxyEnv(noProxy+","+modelAlias, withRegistry),
 		"ANTHROPIC_BASE_URL="+modelURL, "ANTHROPIC_API_KEY="+a.token)
 }
 
@@ -84,7 +84,7 @@ func (d *Docker) LaunchAgent(ctx context.Context, runID, image, tree string) (*C
 		return nil, err
 	}
 	agent := &agentSpec{binary: d.opts.AgentBinary, token: token, model: d.opts.Model}
-	return d.launch(ctx, launchSpec{runID: runID, image: image, tree: tree, agent: agent})
+	return d.launch(ctx, LaunchSpec{RunID: runID, Image: image, Tree: tree}, agent)
 }
 
 // newRunToken is tokenBytes from the system's random source, in hex.
@@ -100,7 +100,7 @@ func newRunToken() (string, error) {
 // binary and its secrets, gives it its way out and waits until it serves.
 func (d *Docker) addModel(ctx context.Context, c *Container, binary string, a *agentSpec) error {
 	var err error
-	if c.model, err = createModel(ctx, d.cli, c.runID, a.model); err != nil {
+	if c.model, err = c.createModel(ctx, a.model); err != nil {
 		return err
 	}
 	if err := copyBinary(ctx, d.cli, c.model, binary, gatewayDir, gatewayBin); err != nil {
@@ -121,30 +121,31 @@ func (d *Docker) addModel(ctx context.Context, c *Container, binary string, a *a
 // createModel creates the run's model proxy on its network under the alias
 // the workspace is given. Its command names the secret files, never the
 // secrets. It is not started.
-func createModel(ctx context.Context, cli *client.Client, runID string, opts ModelOptions) (string, error) {
+func (c *Container) createModel(ctx context.Context, opts ModelOptions) (string, error) {
 	upstream := opts.Upstream
 	if upstream == "" {
 		upstream = model.DefaultUpstream
 	}
 	cmd := []string{
-		gatewayDir + "/" + gatewayBin, "model", "-run", runID, "-upstream", upstream,
+		gatewayDir + "/" + gatewayBin, "model", "-run", c.runID, "-upstream", upstream,
 		"-cap", strconv.FormatInt(opts.Cap, 10), "-key-file", keyFile, "-token-file", tokenFile,
 	}
-	netName := networkName(runID)
-	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	netName := networkName(c.runID)
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:   netName + "-model",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
+			Runtime:     c.runtime,
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			netName: {Aliases: []string{modelAlias}},
 		}},
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: create model proxy of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create model proxy of run %s: %w", c.runID, err)
 	}
 	return created.ID, nil
 }

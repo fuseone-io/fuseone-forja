@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,7 +122,104 @@ func readyAddr(t *testing.T, lines *bufio.Scanner) string {
 	return ready.Addr
 }
 
+// registryCredentials writes a credentials file for the named entries.
+func registryCredentials(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "registries.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestRun_registryMisconfigured_exit2NothingOnStdout(t *testing.T) {
+	t.Parallel()
+	good := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "canary-cmd-secret"}}`)
+	bad := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": canary-cmd-secret}}`)
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "unknown flag", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", good, "-nope"}},
+		{name: "no run id", args: []string{"registry", "-registries", "ghcr.io/my-org", "-credentials", good}},
+		{name: "no registry", args: []string{"registry", "-run", "r1", "-credentials", good}},
+		{name: "malformed registry", args: []string{"registry", "-run", "r1", "-registries", "https://ghcr.io", "-credentials", good}},
+		{name: "no credentials file", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org"}},
+		{name: "credentials file malformed", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", bad}},
+		{name: "declared registry without credential", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org,npm.pkg.github.com", "-credentials", good}},
+		{name: "extra argument", args: []string{"registry", "-run", "r1", "-registries", "ghcr.io/my-org", "-credentials", good, "extra"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			if code := run(tt.args, &stdout, &stderr); code != 2 {
+				t.Fatalf("run(%q) = %d, want 2; stderr %q", tt.args, code, stderr.String())
+			}
+			if stdout.Len() != 0 {
+				t.Errorf("stdout = %q, want nothing: a proxy that did not start is never ready", stdout.String())
+			}
+			if stderr.Len() == 0 || strings.Contains(stderr.String(), "canary-cmd-secret") {
+				t.Errorf("stderr = %q, want the problem named and no credential", stderr.String())
+			}
+		})
+	}
+}
+
+// The subcommand is the registry proxy the control plane starts: ready on
+// stdout, one access line per request, exit 0 when stopped.
+func TestRegistryCommand_readyThenAccessLineThenCleanStop(t *testing.T) {
+	t.Parallel()
+	creds := registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "canary-cmd-secret"}}`)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stdoutR, stdoutW := io.Pipe()
+	var stderr bytes.Buffer
+	exited := make(chan int, 1)
+	go func() {
+		exited <- registryProxy(ctx, []string{"-run", "run-7", "-listen", "127.0.0.1:0", "-registries", "ghcr.io/my-org", "-credentials", creds}, stdoutW, &stderr)
+		_ = stdoutW.Close()
+	}()
+	lines := bufio.NewScanner(stdoutR)
+
+	addr := readyAddr(t, lines)
+	// The proxy writes the line before it answers, so the pipe is read
+	// while the request is in flight.
+	next := make(chan string, 1)
+	go func() {
+		if lines.Scan() {
+			next <- lines.Text()
+		}
+		close(next)
+		_, _ = io.Copy(io.Discard, stdoutR)
+	}()
+	res, err := http.Get("http://" + addr + "/example.com/x?q=1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("GET of an undeclared registry = %d, want 403", res.StatusCode)
+	}
+	if text := <-next; !strings.Contains(text, `"registry":"example.com"`) || !strings.Contains(text, `"outcome":"denied"`) {
+		t.Fatalf("line after the request = %q, want the denied access of example.com", text)
+	}
+	cancel()
+	if code := <-exited; code != 0 {
+		t.Fatalf("registry after cancel = %d, want 0; stderr %q", code, stderr.String())
+	}
+}
+
 func emptyEnv(string) string { return "" }
+
+// quietEnv configures nothing but the workspace runtime, whose absence is
+// the one warning an otherwise empty environment writes.
+func quietEnv(k string) string {
+	if k == EnvWorkspaceRuntime {
+		return "runc"
+	}
+	return ""
+}
 
 func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	t.Parallel()
@@ -130,7 +228,7 @@ func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	_, serverTransport := sdk.NewInMemoryTransports()
 
 	var stderr bytes.Buffer
-	if code := serve(ctx, serverTransport, &stderr, emptyEnv); code != 0 {
+	if code := serve(ctx, serverTransport, &stderr, quietEnv); code != 0 {
 		t.Fatalf("serve after cancellation = %d, want 0", code)
 	}
 	if stderr.Len() != 0 {
@@ -147,7 +245,7 @@ func serveWithoutCredentials(t *testing.T) (*sdk.ClientSession, func()) {
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 	var stderr bytes.Buffer
 	exited := make(chan int, 1)
-	go func() { exited <- serve(ctx, serverTransport, &stderr, emptyEnv) }()
+	go func() { exited <- serve(ctx, serverTransport, &stderr, quietEnv) }()
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil)
 	cs, err := client.Connect(ctx, clientTransport, nil)
@@ -225,7 +323,7 @@ func TestServe_noCredentials_planFailsExplicitly(t *testing.T) {
 // once on stderr that a claim left by a crash is only freed by its lease.
 func TestServe_noStateDir_warnsAndServes(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev"}
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_WORKSPACE_RUNTIME": "runc"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, serverTransport := sdk.NewInMemoryTransports()
@@ -246,7 +344,7 @@ func TestServe_noStateDir_warnsAndServes(t *testing.T) {
 
 func TestServe_stateDirSetAndEmpty_servesSilently(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": t.TempDir()}
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": t.TempDir(), "FORJA_WORKSPACE_RUNTIME": "runc"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, serverTransport := sdk.NewInMemoryTransports()
@@ -373,6 +471,119 @@ func TestWire_wellFormedEgressAllow_starts(t *testing.T) {
 	}
 	if _, _, err := wire(func(k string) string { return env[k] }, io.Discard); err != nil {
 		t.Fatalf("wire with a well-formed allowlist = %v", err)
+	}
+}
+
+// A credentials file that cannot be read would leave every run that
+// declares a registry unable to start; it stops the server before it
+// serves, naming the variable and never a value from the file.
+func TestWire_malformedRegistryCredentials_startupError(t *testing.T) {
+	t.Parallel()
+	for name, path := range map[string]string{
+		"malformed": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": canary-wire-secret}}`),
+		"bad entry": registryCredentials(t, `{"ghp_canary-wire-secret": {"username": "u", "password": "p"}}`),
+		"absent":    filepath.Join(t.TempDir(), "absent.json"),
+	} {
+		env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": path}
+		_, _, err := wire(func(k string) string { return env[k] }, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "FORJA_REGISTRY_CREDENTIALS") || strings.Contains(err.Error(), "canary-wire-secret") {
+			t.Errorf("%s: wire = %v, want a startup error naming the variable and no value", name, err)
+		}
+	}
+}
+
+func TestServe_malformedRegistryCredentials_exitsOne(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, "not json")}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, func(k string) string { return env[k] }); code != 1 {
+		t.Fatalf("serve with malformed registry credentials = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), "FORJA_REGISTRY_CREDENTIALS") {
+		t.Fatalf("stderr %q does not name the variable", stderr.String())
+	}
+}
+
+func TestWire_wellFormedRegistryCredentials_starts(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "p"}}`)}
+	if _, _, err := wire(func(k string) string { return env[k] }, io.Discard); err != nil {
+		t.Fatalf("wire with well-formed registry credentials = %v", err)
+	}
+}
+
+// The runtime the operator names is the one every workspace is created
+// under; unset, the daemon's default applies and the operator is told so
+// once.
+func TestWorkspaceOptions_runtime_fromTheEnvironmentWarnedWhenUnset(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, value string
+		warned      bool
+	}{
+		{name: "configured", value: "runsc"},
+		{name: "unset", value: "", warned: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{"FORJA_WORKSPACE_RUNTIME": tt.value}
+			var stderr bytes.Buffer
+
+			opts, err := workspaceOptions(func(k string) string { return env[k] }, &stderr)
+			if err != nil {
+				t.Fatalf("workspaceOptions: %v", err)
+			}
+			if opts.Runtime != tt.value {
+				t.Errorf("Options.Runtime = %q with FORJA_WORKSPACE_RUNTIME=%q, want it", opts.Runtime, tt.value)
+			}
+			warning := strings.Count(stderr.String(), "\n") == 1 && strings.Contains(stderr.String(), "FORJA_WORKSPACE_RUNTIME")
+			if warning != tt.warned || (!tt.warned && stderr.Len() != 0) {
+				t.Errorf("stderr = %q, want one warning naming FORJA_WORKSPACE_RUNTIME: %v", stderr.String(), tt.warned)
+			}
+		})
+	}
+}
+
+// The other workspace options still come through the same assembly.
+func TestWorkspaceOptions_gatewayAllowAndCredentials_fromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{
+		"FORJA_GATEWAY_BINARY":       "/opt/forja/forjad-linux",
+		"FORJA_EGRESS_ALLOW":         "proxy.golang.org:443",
+		"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "p"}}`),
+		"FORJA_WORKSPACE_RUNTIME":    "runsc",
+	}
+	opts, err := workspaceOptions(func(k string) string { return env[k] }, io.Discard)
+	if err != nil {
+		t.Fatalf("workspaceOptions: %v", err)
+	}
+	if opts.GatewayBinary != "/opt/forja/forjad-linux" || len(opts.EgressAllow) != 1 || opts.EgressAllow[0] != "proxy.golang.org:443" {
+		t.Errorf("Options = {binary %q allow %v}, want the configured binary and allowlist", opts.GatewayBinary, opts.EgressAllow)
+	}
+	if c, ok := opts.RegistryCredentials["ghcr.io/my-org"]; !ok || c.Username != "u" || len(opts.RegistryCredentials) != 1 {
+		t.Errorf("Options.RegistryCredentials = %d entries, want the file's one", len(opts.RegistryCredentials))
+	}
+}
+
+// The server warns at startup, whatever else is configured, that its
+// workspaces run under the daemon's default runtime.
+func TestServe_noWorkspaceRuntime_warnsOnceAndServes(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, emptyEnv); code != 0 {
+		t.Fatalf("serve without a workspace runtime = %d, want 0: %s", code, stderr.String())
+	}
+	if strings.Count(stderr.String(), "\n") != 1 || !strings.Contains(stderr.String(), "FORJA_WORKSPACE_RUNTIME") {
+		t.Fatalf("stderr = %q, want exactly one warning naming FORJA_WORKSPACE_RUNTIME", stderr.String())
 	}
 }
 
