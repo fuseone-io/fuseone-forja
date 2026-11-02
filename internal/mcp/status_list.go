@@ -16,10 +16,12 @@ const (
 )
 
 // RunList is forja.status without a run id: one page of the matching runs,
-// newest first. NextCursor is absent on the last page.
+// newest first, and the totals of every matching run by repository, the
+// same on every page. NextCursor is absent on the last page.
 type RunList struct {
-	Runs       []RunSummary `json:"runs"`
-	NextCursor string       `json:"next_cursor,omitempty"`
+	Runs         []RunSummary        `json:"runs"`
+	NextCursor   string              `json:"next_cursor,omitempty"`
+	Repositories []RepositoryMetrics `json:"repositories"`
 }
 
 // RunSummary is a run as a list reports it: what a platform owner adds up,
@@ -81,7 +83,7 @@ func listRuns(ctx context.Context, runs RunReader, prices *domain.PriceTable, in
 		return RunList{}, err
 	}
 	page := rest[:min(limit, len(rest))]
-	list := RunList{Runs: runSummaries(page, prices)}
+	list := RunList{Runs: runSummaries(page, prices), Repositories: repositoryMetrics(matched, prices)}
 	if len(rest) > len(page) {
 		list.NextCursor = page[len(page)-1].ID
 	}

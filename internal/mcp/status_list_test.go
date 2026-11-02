@@ -311,8 +311,8 @@ func TestStatus_listNoMatch_emptyArraysNeverNull(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			list := listWire(t, connect(t, store), map[string]any{"repository": "acme/none"})
-			if string(list["runs"]) != "[]" {
-				t.Fatalf("runs = %s, want []", list["runs"])
+			if string(list["runs"]) != "[]" || string(list["repositories"]) != "[]" {
+				t.Fatalf("runs = %s, repositories = %s; want [] and []", list["runs"], list["repositories"])
 			}
 			if raw, ok := list["next_cursor"]; ok {
 				t.Fatalf("next_cursor = %s with nothing listed, want absent", raw)
