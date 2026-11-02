@@ -489,6 +489,24 @@ func TestDocker_launchAgent_capSpent_refusedNothingLabelled(t *testing.T) {
 	}
 }
 
+// A negative spent count would raise the proxy's cap above the run's: the
+// launch is refused before anything of the run exists.
+func TestDocker_launchAgent_negativeSpent_refusedNothingLabelled(t *testing.T) {
+	upstream, _ := fakeUpstream(t, "")
+	d := agentDocker(t, upstream, 10, agentBinaryFile(t))
+	runID := newRunID(t)
+	c, err := d.LaunchAgent(context.Background(), workspace.AgentLaunch{RunID: runID, Image: agentImage, Tree: treeWith(t), Spent: -1})
+	if err == nil || errors.Is(err, workspace.ErrCapSpent) {
+		if c != nil {
+			_ = c.Close(context.Background())
+		}
+		t.Fatalf("LaunchAgent with -1 spent = %v, want a refusal that is not ErrCapSpent", err)
+	}
+	if n := leftovers(t, runID); n != 0 {
+		t.Fatalf("%d containers or networks of the refused launch exist", n)
+	}
+}
+
 // The agent is installed root-owned and executable; the prompt is written
 // outside the tree; Halt stops the workspace and leaves the proxies'
 // logs readable.
