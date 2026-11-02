@@ -47,6 +47,12 @@ type ImplementOutput struct {
 	TokensOut int64        `json:"tokens_out"`
 	Setup     []StepReport `json:"setup"`
 	Gates     []StepReport `json:"gates"`
+	// Attempt is the last attempt's number and MaxAttempts the base
+	// contract's limit, both 0 when no agent ran; Attempts lists every
+	// attempt whose gates ran, always on the wire.
+	Attempt     int             `json:"attempt"`
+	MaxAttempts int             `json:"max_attempts"`
+	Attempts    []AttemptReport `json:"attempts"`
 }
 
 // PullRequestRef is a pull request a run opened.

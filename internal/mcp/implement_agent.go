@@ -30,11 +30,11 @@ const branchPrefix = "forja/"
 // with its records on done.
 type runStep func(ctx, done context.Context, f *flight) (bool, error)
 
-// work clones the base, then runs the agent, the gates and the delivery
-// under one deadline: the contract's wall clock counted from the claim,
-// which never outlives the claim's lease. Nothing the agent's tree holds
-// is read: the contract and the context are the base commit's. delivered
-// says every stage worked.
+// work clones the base, then runs the attempts of the agent and the gates,
+// and the delivery, under one deadline: the contract's wall clock counted
+// from the claim, which never outlives the claim's lease. Nothing the
+// agent's tree holds is read: the contract and the context are the base
+// commit's. delivered says every stage worked.
 func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool, err error) {
 	defer f.closeCheckout()
 	if ok, err := h.cloneStage(ctx, done, f); !ok || err != nil {
@@ -42,15 +42,13 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	}
 	runCtx, cancel := context.WithTimeout(ctx, f.left)
 	defer cancel()
-	dir, err := os.MkdirTemp("", "forja-bundle-*")
-	if err != nil {
+	if f.bundles, err = os.MkdirTemp("", "forja-bundle-*"); err != nil {
 		return false, fmt.Errorf("bundle directory: %w", err)
 	}
-	// The bundle was imported or refused by now; a directory that could not
-	// be removed changes neither.
-	defer func() { _ = os.RemoveAll(dir) }()
-	f.bundle = filepath.Join(dir, "commits.bundle")
-	for _, step := range []runStep{h.agentStage, h.gatesStage, h.pushStage, h.pullRequestStage, h.statusStage} {
+	// The bundles were imported or refused by now; a directory that could
+	// not be removed changes neither.
+	defer func() { _ = os.RemoveAll(f.bundles) }()
+	for _, step := range []runStep{h.attempts, h.pushStage, h.pullRequestStage, h.statusStage} {
 		if ok, err := step(runCtx, done, f); !ok || err != nil {
 			return false, err
 		}
@@ -78,7 +76,7 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 	if err != nil {
 		return err
 	}
-	f.contract, f.run.ContractSHA = parsed, contractSHA
+	f.contract, f.run.ContractSHA, f.run.MaxAttempts = parsed, contractSHA, parsed.Limits.Attempts()
 	if f.issue, err = h.deps.Issues.Read(ctx, f.run.Repository, f.run.Issue); err != nil {
 		return err
 	}
@@ -92,16 +90,20 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 	return f.co.StartBranch(ctx, f.run.Branch)
 }
 
-// agentStage runs the agent on the checkout and imports its commits. The
-// cap is the reason whatever else happened; an agent stopped, failed or
-// that committed nothing ends the run without an error.
+// agentStage runs the agent on the checkout, with what the run already
+// spent and what the attempt before left, and imports its commits into a
+// bundle of the attempt's own. The cap is the reason whatever else
+// happened; an agent stopped, failed or that committed nothing ends the
+// run without an error.
 func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageAgent, func() (bool, error) {
+		f.bundle = filepath.Join(f.bundles, "attempt-"+strconv.Itoa(f.attempt)+".bundle")
 		res, err := h.deps.Agent.Run(ctx, agent.Task{
 			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),
-			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle,
+			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle, Spent: f.run.Tokens, Retry: f.retry,
 		})
-		f.run.Tokens, f.run.Egress = res.Tokens, res.Egress
+		f.spent = res.Tokens
+		f.run.Tokens, f.run.Egress = f.run.Tokens.Add(res.Tokens), f.run.Egress.Merge(res.Egress)
 		if res.Capped {
 			f.run.Reason = domain.ReasonTokenCap
 		}
@@ -119,10 +121,11 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 }
 
 // adopt brings the exported commits into the checkout; a head at the base
-// is no commit at all.
+// is no commit at all, and so is a later attempt's head that is the one
+// the gates already ran on.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
-	if errors.Is(err, domain.ErrNoCommits) {
+	if errors.Is(err, domain.ErrNoCommits) || (err == nil && head == f.run.HeadSHA) {
 		f.run.Reason = domain.ReasonNoCommits
 		return false, nil
 	}

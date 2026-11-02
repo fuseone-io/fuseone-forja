@@ -45,9 +45,12 @@ type fakeCheckout struct {
 	failErr  error
 	closed   int
 	// started is the branch StartBranch created. head is the commit Adopt
-	// imports; adoptedDir the tree Dir holds once it did; adoptErr fails it.
+	// imports, or with heads set the n-th Adopt imports heads[n], the last
+	// one once they run out; adoptedDir the tree Dir holds once it did;
+	// adoptErr fails it.
 	started    string
 	head       string
+	heads      []string
 	adoptedDir string
 	adoptErr   error
 	adopted    []string
@@ -86,10 +89,14 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	if branch != f.started {
 		return "", fmt.Errorf("fake: adopt %s, started %s", branch, f.started)
 	}
-	if f.head == f.sha {
+	head := f.head
+	if len(f.heads) > 0 {
+		head = f.heads[min(len(f.adopted), len(f.heads))-1]
+	}
+	if head == f.sha {
 		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
 	}
-	return f.head, nil
+	return head, nil
 }
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {

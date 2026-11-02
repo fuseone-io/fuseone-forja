@@ -33,6 +33,8 @@ func greenEvidence() string {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
+		Attempts:    []domain.Attempt{{Number: 1, HeadSHA: agentHead, Gates: greenReport(), Tokens: spent}},
+		MaxAttempts: domain.DefaultMaxAttempts,
 	})
 }
 
@@ -73,16 +75,20 @@ func assertDelivered(t *testing.T, fx *implementFixture) {
 func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 	t.Helper()
 	got := out
-	got.Setup, got.Gates = nil, nil
+	got.Setup, got.Gates, got.Attempts = nil, nil, nil
 	want := forja.ImplementOutput{
 		RunID: "run-1", State: "succeeded", BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead, Branch: runBranch,
 		PullRequest: &forja.PullRequestRef{Number: 41, URL: prURL}, Evidence: greenEvidence(), TokensIn: 1230, TokensOut: 400,
+		Attempt: 1, MaxAttempts: 3,
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("output = %+v\nwant %+v", got, want)
 	}
 	if len(out.Setup) != 1 || len(out.Gates) != 2 || out.Gates[1].Stderr != "warn\n" {
 		t.Fatalf("setup %+v gates %+v, want the green report", out.Setup, out.Gates)
+	}
+	if len(out.Attempts) != 1 || out.Attempts[0].Number != 1 || out.Attempts[0].HeadSHA != agentHead || out.Attempts[0].FailedStep != "" || out.Attempts[0].TokensIn != 1230 {
+		t.Fatalf("attempts = %+v, want the one green attempt on the head", out.Attempts)
 	}
 }
 
@@ -154,11 +160,13 @@ func TestImplement_agentChangedContract_gatesRunBaseContract(t *testing.T) {
 	}
 }
 
-// A red gate is the run's result: nothing leaves the control plane, the run
-// fails with the gate's raw log, and the issue is freed.
+// A red gate on the last attempt is the run's result: nothing leaves the
+// control plane, the run fails with the gate's raw log, and the issue is
+// freed.
 func TestImplement_gateRed_noPushNoPRNoStatus_failedWithGateLogs(t *testing.T) {
 	t.Parallel()
 	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.cloner.co.files[".forja.yaml"] = checkoutWithMaxAttempts(1)
 	fx.gates.report = redReport()
 
 	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))

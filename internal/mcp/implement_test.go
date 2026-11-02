@@ -475,8 +475,8 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	if !present || string(raw) != `"run-expired"` {
 		t.Fatalf("supersedes on the wire = %s (present %v), want \"run-expired\"", raw, present)
 	}
-	if len(wire) != 21 {
-		t.Fatalf("wire object has %d keys, want the 20 of a delivered run plus supersedes: %s", len(wire), structuredJSON(t, res))
+	if len(wire) != 24 {
+		t.Fatalf("wire object has %d keys, want the 23 of a delivered run plus supersedes: %s", len(wire), structuredJSON(t, res))
 	}
 }
 

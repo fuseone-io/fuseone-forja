@@ -56,6 +56,13 @@ type StatusOutput struct {
 	Stages []StageReport `json:"stages"`
 	Setup  []StepReport  `json:"setup"`
 	Gates  []StepReport  `json:"gates"`
+	// Attempt is the number of the attempt in flight, or of the last one,
+	// 0 before the first agent stage; MaxAttempts is the base contract's
+	// limit, 0 until the contract is read. Attempts lists every attempt
+	// whose gates ran, always on the wire.
+	Attempt     int             `json:"attempt"`
+	MaxAttempts int             `json:"max_attempts"`
+	Attempts    []AttemptReport `json:"attempts"`
 	// BaseSHA, ContractSHA and HeadSHA are absent until the run knows them;
 	// PullRequest until it opened one.
 	BaseSHA     string          `json:"base_sha,omitempty"`
@@ -64,12 +71,14 @@ type StatusOutput struct {
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
 }
 
-// StageReport is one stage of a run; FinishedAt is absent while it runs.
+// StageReport is one stage of a run; FinishedAt is absent while it runs,
+// and Attempt for a stage outside every attempt.
 type StageReport struct {
 	Name       string     `json:"name"`
 	StartedAt  time.Time  `json:"started_at"`
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	Outcome    string     `json:"outcome"`
+	Attempt    int        `json:"attempt,omitempty"`
 }
 
 // RegistryEvent is one request the workspace made to its registry proxy.
@@ -93,7 +102,7 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, the model tokens it used, what its workspace was refused on the way out, and every request it made to its registry proxy.",
+		Description: "State, start and end of a run, its stages, the attempt in flight out of the contract's limit with every attempt's gates, the model tokens it used, what its workspace was refused on the way out, and every request it made to its registry proxy.",
 		Annotations: readClass(),
 	}
 }
@@ -132,6 +141,9 @@ func statusOutput(run domain.Run) StatusOutput {
 		Stages:      stageReports(run.Stages),
 		Setup:       stepReports(run.Gates.Setup),
 		Gates:       stepReports(run.Gates.Gates),
+		Attempt:     currentAttempt(run.Stages),
+		MaxAttempts: run.MaxAttempts,
+		Attempts:    attemptReports(run.Attempts),
 		BaseSHA:     run.BaseSHA,
 		ContractSHA: run.ContractSHA,
 		HeadSHA:     run.HeadSHA,

@@ -33,16 +33,17 @@ const gatesContext = "forja/gates"
 const gatesDescription = "Every gate of the base commit's contract passed on this commit."
 
 // gatesStage runs the base checkout's contract, parsed before the agent
-// ran, on the agent's head in a fresh workspace, and renders the evidence.
-// A red gate ends the run without an error.
+// ran, on the agent's head in a fresh workspace, records the attempt and
+// renders the evidence. A red gate ends the attempt without an error.
 func (h implementer) gatesStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageGates, func() (bool, error) {
 		report, err := h.deps.Gates.Run(ctx, f.run.ID, f.contract, f.co.Dir())
 		if err != nil {
 			return false, err
 		}
-		f.run.Gates, f.run.Registry = report, report.Registry
+		f.run.Gates, f.run.Registry = report, f.run.Registry.Merge(report.Registry)
 		f.run.Egress = f.run.Egress.Merge(report.Egress)
+		f.run.Attempts = append(f.run.Attempts, domain.Attempt{Number: f.attempt, HeadSHA: f.run.HeadSHA, Gates: report, Tokens: f.spent})
 		f.evidence = evidence.Render(h.evidenceOf(f))
 		if !report.OK() {
 			f.run.Reason = domain.ReasonGateFailed
@@ -57,6 +58,7 @@ func (h implementer) evidenceOf(f *flight) evidence.Run {
 		Issue: f.run.Issue, RunID: f.run.ID, BaseBranch: f.co.Branch(),
 		BaseSHA: f.run.BaseSHA, ContractSHA: f.run.ContractSHA, HeadSHA: f.run.HeadSHA,
 		Gates: f.run.Gates, Tokens: f.run.Tokens, Elapsed: h.deps.Now().Sub(f.run.StartedAt),
+		Attempts: f.run.Attempts, MaxAttempts: f.run.MaxAttempts,
 	}
 }
 
@@ -115,6 +117,7 @@ func implementOutput(run domain.Run, body string) ImplementOutput {
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
 		Setup: stepReports(run.Gates.Setup), Gates: stepReports(run.Gates.Gates),
+		Attempt: currentAttempt(run.Stages), MaxAttempts: run.MaxAttempts, Attempts: attemptReports(run.Attempts),
 	}
 }
 
