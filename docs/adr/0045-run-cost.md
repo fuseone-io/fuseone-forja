@@ -1,4 +1,4 @@
-# ADR 9999: compute minutes, tokens and estimated cost per run
+# ADR 0045: compute minutes, tokens and estimated cost per run
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #14

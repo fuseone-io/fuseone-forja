@@ -14,4 +14,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |
 | [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
-| [9999](9999-run-cost.md) | Compute minutes, tokens and estimated cost per run | proposed |
+| [0045](0045-run-cost.md) | Compute minutes, tokens and estimated cost per run | proposed |
