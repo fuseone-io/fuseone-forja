@@ -70,9 +70,11 @@ func fakeModelBinary(t *testing.T) string {
 
 // fakeUpstream starts the fake Messages API on the default bridge, where
 // only a container attached to it, such as a run's model proxy, can reach
-// it. It returns its URL and its container id.
+// it. It returns its URL and its container id. Like every test here, it
+// skips when no daemon answers.
 func fakeUpstream(t *testing.T, bash string) (string, string) {
 	t.Helper()
+	newDocker(t)
 	cli, ctx := dockerCLI(t), context.Background()
 	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config:     &container.Config{Image: testImage, Cmd: []string{"/fakemodel"}, Env: []string{"FAKE_KEY=" + fakeKey, "FAKE_BASH=" + bash}},
