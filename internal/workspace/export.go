@@ -92,11 +92,9 @@ func exportCommand(base, branch string) (string, error) {
 	}, " && "), nil
 }
 
-// extractBundle writes the single regular file of the tar stream r to dst,
-// created for the owner alone, refusing it over limit bytes. Any refusal
-// removes what was written.
-func extractBundle(r io.Reader, dst string, limit int64) (err error) {
-	tr := tar.NewReader(r)
+// firstEntry advances tr to its first entry and accepts only the bundle
+// file, regular and within limit.
+func firstEntry(tr *tar.Reader, limit int64) error {
 	hdr, err := tr.Next()
 	if err != nil {
 		return fmt.Errorf("read bundle archive: %w", err)
@@ -106,6 +104,17 @@ func extractBundle(r io.Reader, dst string, limit int64) (err error) {
 	}
 	if hdr.Size > limit {
 		return fmt.Errorf("bundle of %d bytes is over the cap of %d", hdr.Size, limit)
+	}
+	return nil
+}
+
+// extractBundle writes the single regular file of the tar stream r to dst,
+// created for the owner alone, refusing it over limit bytes. Any refusal
+// removes what was written.
+func extractBundle(r io.Reader, dst string, limit int64) (err error) {
+	tr := tar.NewReader(r)
+	if err := firstEntry(tr, limit); err != nil {
+		return err
 	}
 	f, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
