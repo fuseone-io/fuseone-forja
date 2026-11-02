@@ -154,6 +154,31 @@ func TestCheckout_adoptBundle_treeAtTheAgentsHead(t *testing.T) {
 	}
 }
 
+// Candidates on branches that each start at Start and diverge are adopted
+// one after the other, and again, each replacing the tree in Dir: the
+// control plane's own ref takes any head the descent check accepts.
+func TestCheckout_adoptDivergingBranchesInTurn_eachTreeInDir(t *testing.T) {
+	t.Parallel()
+	_, co := startedCheckout(t)
+	ws := workspaceCopy(t, co)
+	heads, bundles := map[string]string{}, map[string]string{}
+	for _, branch := range []string{"forja-qa/1", "forja-qa/2"} {
+		runGit(t, ws, "checkout", "-q", "-b", branch, co.Start())
+		heads[branch] = agentCommit(t, ws, map[string]string{"docs/a.md": branch + "\n"}, branch)
+		bundles[branch] = exportBundle(t, ws, co.Start(), branch)
+	}
+
+	for _, branch := range []string{"forja-qa/1", "forja-qa/2", "forja-qa/1"} {
+		got, err := co.Adopt(context.Background(), bundles[branch], branch)
+		if err != nil || got != heads[branch] {
+			t.Fatalf("Adopt(%s) = %s, %v; want %s", branch, got, err, heads[branch])
+		}
+		if b := readFile(t, filepath.Join(co.Dir(), "docs", "a.md")); b != branch+"\n" {
+			t.Fatalf("docs/a.md after adopting %s = %q", branch, b)
+		}
+	}
+}
+
 // What the agent did to the contract reaches the tree the gates run on and
 // nothing else: every read still answers for the base commit.
 func TestCheckout_adoptBundleChangingContract_readsStillAnswerForBase(t *testing.T) {

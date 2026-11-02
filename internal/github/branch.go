@@ -59,14 +59,16 @@ func (c *Checkout) Adopt(ctx context.Context, bundle, branch string) (string, er
 }
 
 // fetchBundle verifies the bundle, fetches its branch into adoptedRef and
-// returns the commit it names.
+// returns the commit it names. adoptedRef is the control plane's own and
+// takes whatever head the bundle names, fast-forward or not: what may be
+// checked out is decided by the descent check after it.
 func (c *Checkout) fetchBundle(ctx context.Context, bundle, branch string) (string, error) {
 	if _, err := c.git.run(ctx, c.dir, c.env, "bundle", "verify", "-q", bundle); err != nil {
 		return "", err
 	}
 	args := append(append([]string{}, noHooks...),
 		"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
-		bundle, "refs/heads/"+branch+":"+adoptedRef)
+		bundle, "+refs/heads/"+branch+":"+adoptedRef)
 	if _, err := c.git.run(ctx, c.dir, c.env, args...); err != nil {
 		return "", err
 	}
