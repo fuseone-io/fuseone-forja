@@ -1,5 +1,6 @@
 // Command forjad is Forja's binary: the MCP server over stdio, and the
-// egress gateway the control plane starts next to each run's workspace.
+// egress gateway and the model proxy the control plane starts next to
+// each run's workspace.
 package main
 
 import (
@@ -30,6 +31,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
 	case len(args) >= 1 && args[0] == "gateway":
 		return gateway(ctx, args[1:], stdout, stderr)
+	case len(args) >= 1 && args[0] == "model":
+		return model(ctx, args[1:], stdout, stderr)
 	}
 	usage(stderr)
 	return 2
@@ -62,7 +65,9 @@ func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, geten
 
 func usage(w io.Writer) {
 	// The exit code is the only channel left when stderr itself fails.
-	_, _ = fmt.Fprint(w, "usage: forjad serve\n       forjad gateway -run <id> [-allow host:port,...] [-listen addr]\n\n"+
+	_, _ = fmt.Fprint(w, "usage: forjad serve\n       forjad gateway -run <id> [-allow host:port,...] [-listen addr]\n"+
+		"       forjad model -run <id> -upstream <url> -cap <n> -key-file <path> -token-file <path> [-listen addr]\n\n"+
 		"  serve    run the MCP server over stdio\n"+
-		"  gateway  run the egress gateway of one run's workspace\n")
+		"  gateway  run the egress gateway of one run's workspace\n"+
+		"  model    run the model proxy of one run's agent\n")
 }
