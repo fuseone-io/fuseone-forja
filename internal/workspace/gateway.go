@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 	"time"
 
@@ -91,6 +92,7 @@ func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error 
 	if err := copyBinary(ctx, cli, g.id, g.binary); err != nil {
 		return fmt.Errorf("workspace: copy gateway binary: %w", err)
 	}
+	ready := func(r io.Reader) error { return egress.AwaitReady(r, g.runID) }
 	if len(g.allow) > 0 {
 		if _, err := cli.NetworkConnect(ctx, "bridge", client.NetworkConnectOptions{Container: g.id}); err != nil {
 			return fmt.Errorf("workspace: connect gateway to bridge: %w", err)
@@ -99,7 +101,7 @@ func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error 
 	if _, err := cli.ContainerStart(ctx, g.id, client.ContainerStartOptions{}); err != nil {
 		return fmt.Errorf("workspace: start gateway: %w", err)
 	}
-	if err := awaitReady(ctx, cli, g.id, g.runID); err != nil {
+	if err := awaitReady(ctx, cli, g.id, ready); err != nil {
 		return fmt.Errorf("workspace: gateway of run %s: %w", g.runID, err)
 	}
 	return nil
@@ -111,8 +113,8 @@ type gatewaySpec struct {
 	allow             []string
 }
 
-// copyBinary streams the binary into the gateway as root-owned 0755: the
-// gateway's user runs it and cannot change it.
+// copyBinary streams the binary in as root-owned 0755: the container's
+// user runs it and cannot change it.
 func copyBinary(ctx context.Context, cli *client.Client, id, binary string) error {
 	f, err := os.Open(binary)
 	if err != nil {
@@ -124,34 +126,56 @@ func copyBinary(ctx context.Context, cli *client.Client, id, binary string) erro
 	if err != nil {
 		return err
 	}
+	return copyFile(ctx, cli, id, containerFile{dest: gatewayDir, name: gatewayBin, mode: 0o755, size: info.Size(), content: f})
+}
+
+// containerFile is one file to place in a container before it starts:
+// name is relative to dest, and a parent directory in name is created
+// owned like the file, readable and searchable by its owner only.
+type containerFile struct {
+	dest, name string
+	mode       int64
+	uid, gid   int
+	size       int64
+	content    io.Reader
+}
+
+// copyFile streams f into the container as a tar archive.
+func copyFile(ctx context.Context, cli *client.Client, id string, f containerFile) error {
 	pr, pw := io.Pipe()
-	go func() {
-		tw := tar.NewWriter(pw)
-		err := tw.WriteHeader(&tar.Header{Name: gatewayBin, Mode: 0o755, Size: info.Size(), Typeflag: tar.TypeReg})
-		if err == nil {
-			_, err = io.Copy(tw, f)
-		}
-		if err == nil {
-			err = tw.Close()
-		}
-		pw.CloseWithError(err)
-	}()
-	_, err = cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: gatewayDir, Content: pr})
+	go func() { pw.CloseWithError(writeContainerFile(pw, f)) }()
+	_, err := cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: f.dest, Content: pr})
 	// Ends the writer if the copy stopped before the archive did.
 	_ = pr.CloseWithError(err)
 	return err
 }
 
-// awaitReady follows the gateway's stdout until its readiness line, for at
-// most readyTimeout. A gateway that exits first ends the stream.
-func awaitReady(ctx context.Context, cli *client.Client, id, runID string) error {
+func writeContainerFile(w io.Writer, f containerFile) error {
+	tw := tar.NewWriter(w)
+	if dir := path.Dir(f.name); dir != "." {
+		if err := tw.WriteHeader(&tar.Header{Name: dir + "/", Mode: 0o500, Uid: f.uid, Gid: f.gid, Typeflag: tar.TypeDir}); err != nil {
+			return err
+		}
+	}
+	if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Uid: f.uid, Gid: f.gid, Size: f.size, Typeflag: tar.TypeReg}); err != nil {
+		return err
+	}
+	if _, err := io.Copy(tw, f.content); err != nil {
+		return err
+	}
+	return tw.Close()
+}
+
+// awaitReady follows a proxy's stdout until ready finds its readiness
+// line, for at most readyTimeout. A proxy that exits first ends the stream.
+func awaitReady(ctx context.Context, cli *client.Client, id string, ready func(io.Reader) error) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
 	logs, err := cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true, Follow: true})
 	if err != nil {
 		return fmt.Errorf("follow log: %w", err)
 	}
-	err = readStdout(logs, func(r io.Reader) error { return egress.AwaitReady(r, runID) })
+	err = readStdout(logs, ready)
 	if ctx.Err() != nil {
 		return fmt.Errorf("not ready within %v: %w", readyTimeout, ctx.Err())
 	}
@@ -179,25 +203,35 @@ func readStdout(logs io.ReadCloser, read func(io.Reader) error) error {
 // that is no longer running may have missed attempts after it stopped,
 // so its log is refused as evidence.
 func (c *Container) Egress(ctx context.Context) (domain.EgressReport, error) {
-	inspect, err := c.cli.ContainerInspect(ctx, c.gateway, client.ContainerInspectOptions{})
-	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: inspect gateway: %w", err)
-	}
-	if state := inspect.Container.State; state == nil || !state.Running {
-		return domain.EgressReport{}, fmt.Errorf("workspace: gateway of run %s is not running: its log may miss denials", c.runID)
-	}
-	logs, err := c.cli.ContainerLogs(ctx, c.gateway, client.ContainerLogsOptions{ShowStdout: true})
-	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: read gateway log: %w", err)
-	}
 	var report domain.EgressReport
-	err = readStdout(logs, func(r io.Reader) error {
+	err := c.readLog(ctx, c.gateway, "gateway", func(r io.Reader) error {
 		var err error
 		report, err = egress.ReadDenials(r, c.runID)
 		return err
 	})
 	if err != nil {
-		return domain.EgressReport{}, fmt.Errorf("workspace: gateway log: %w", err)
+		return domain.EgressReport{}, err
 	}
 	return report, nil
+}
+
+// readLog hands the stdout of the run's proxy id, named what, to read,
+// and refuses the log of a proxy that is no longer running: it may have
+// missed what happened after it stopped.
+func (c *Container) readLog(ctx context.Context, id, what string, read func(io.Reader) error) error {
+	inspect, err := c.cli.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("workspace: inspect %s: %w", what, err)
+	}
+	if state := inspect.Container.State; state == nil || !state.Running {
+		return fmt.Errorf("workspace: %s of run %s is not running: its log may be incomplete", what, c.runID)
+	}
+	logs, err := c.cli.ContainerLogs(ctx, id, client.ContainerLogsOptions{ShowStdout: true})
+	if err != nil {
+		return fmt.Errorf("workspace: read %s log: %w", what, err)
+	}
+	if err := readStdout(logs, read); err != nil {
+		return fmt.Errorf("workspace: %s log: %w", what, err)
+	}
+	return nil
 }

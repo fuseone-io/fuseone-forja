@@ -55,11 +55,14 @@ type Workspace interface {
 }
 
 // LaunchSpec is one workspace to create: run RunID's, from Image, with a
-// copy of Tree, a directory on the control plane, at its root.
+// copy of Tree, a directory on the control plane, at its root. Registries
+// are the contract's private registries, which the workspace reaches
+// through a proxy that holds their credentials.
 type LaunchSpec struct {
-	RunID string
-	Image string
-	Tree  string
+	RunID      string
+	Image      string
+	Tree       string
+	Registries []string
 }
 
 // Launcher creates the workspace a LaunchSpec describes.
@@ -97,7 +100,7 @@ func (r *Runner) Run(ctx context.Context, runID string, c domain.Contract, tree 
 	if r.Now == nil {
 		return domain.GateReport{}, errors.New("gates: Runner needs a clock")
 	}
-	ws, err := r.Launcher.Launch(ctx, LaunchSpec{RunID: runID, Image: c.Image, Tree: tree})
+	ws, err := r.Launcher.Launch(ctx, LaunchSpec{RunID: runID, Image: c.Image, Tree: tree, Registries: c.Registries})
 	if err != nil {
 		return domain.GateReport{}, fmt.Errorf("gates: launch %s: %w", c.Image, err)
 	}

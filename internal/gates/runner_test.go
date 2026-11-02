@@ -94,6 +94,24 @@ func TestRunner_setupThenGates_runInDeclaredOrder(t *testing.T) {
 	assertResult(t, report.Gates[1], "make vet", domain.StepPassed, 0, "", "vet notes\n")
 }
 
+// The registries the workspace gets a proxy for are the contract's, which
+// the caller read from the base commit; none declared is none proxied.
+func TestRunner_contractRegistries_reachTheLauncher(t *testing.T) {
+	t.Parallel()
+	for _, registries := range [][]string{{"ghcr.io/my-org", "npm.pkg.github.com"}, {}} {
+		runner, launcher := newRunner(&fakeWorkspace{script: allGreen()})
+		c := pilotContract()
+		c.Registries = registries
+
+		if _, err := runner.Run(context.Background(), testRunID, c, "/tree"); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		if !reflect.DeepEqual(launcher.registries, registries) {
+			t.Errorf("launched with registries %q, want the contract's %q", launcher.registries, registries)
+		}
+	}
+}
+
 // assertGreenReport checks the names, order, verdict and measured
 // durations of a run of pilotContract where everything passed.
 func assertGreenReport(t *testing.T, report domain.GateReport) {

@@ -85,6 +85,12 @@ func gatewayBinary(t *testing.T) string {
 // gateway binary is built only once a daemon answered.
 func newDocker(t *testing.T, allow ...string) *workspace.Docker {
 	t.Helper()
+	return newDockerWith(t, workspace.Options{EgressAllow: allow})
+}
+
+// newDockerWith is newDocker with opts, the gateway binary filled in.
+func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
+	t.Helper()
 	probe, err := workspace.NewDocker(workspace.Options{})
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
@@ -94,7 +100,8 @@ func newDocker(t *testing.T, allow ...string) *workspace.Docker {
 	if err := probe.Ping(ctx); err != nil {
 		t.Skipf("no Docker daemon: %v", err)
 	}
-	d, err := workspace.NewDocker(workspace.Options{GatewayBinary: gatewayBinary(t), EgressAllow: allow})
+	opts.GatewayBinary = gatewayBinary(t)
+	d, err := workspace.NewDocker(opts)
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
 	}
@@ -132,9 +139,15 @@ func treeWith(t *testing.T) string {
 // removes it when the test ends, whatever the test did.
 func launch(t *testing.T, d *workspace.Docker, runID, tree string) *workspace.Container {
 	t.Helper()
+	return launchSpec(t, d, workspace.LaunchSpec{RunID: runID, Image: testImage, Tree: tree})
+}
+
+// launchSpec is launch with the whole spec.
+func launchSpec(t *testing.T, d *workspace.Docker, spec workspace.LaunchSpec) *workspace.Container {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	c, err := d.Launch(ctx, workspace.LaunchSpec{RunID: runID, Image: testImage, Tree: tree})
+	c, err := d.Launch(ctx, spec)
 	if err != nil {
 		t.Fatalf("Launch(%s): %v", testImage, err)
 	}

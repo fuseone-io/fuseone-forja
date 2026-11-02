@@ -218,12 +218,14 @@ type fakeLauncher struct {
 	runID string
 	image string
 	tree  string
-	calls int
+	// registries is what the last Launch was asked to proxy.
+	registries []string
+	calls      int
 }
 
 func (l *fakeLauncher) Launch(_ context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
 	l.calls++
-	l.runID, l.image, l.tree = spec.RunID, spec.Image, spec.Tree
+	l.runID, l.image, l.tree, l.registries = spec.RunID, spec.Image, spec.Tree, spec.Registries
 	if l.err != nil {
 		return nil, l.err
 	}
