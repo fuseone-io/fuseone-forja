@@ -51,6 +51,23 @@ type fakeCheckout struct {
 	adoptedDir string
 	adoptErr   error
 	adopted    []string
+	// diffLines is what DiffLines counts for the adopted head; diffErr
+	// fails it.
+	diffLines   int
+	diffErr     error
+	adoptedHead string
+}
+
+// DiffLines answers, as the real count does, only for the head Adopt
+// brought in.
+func (f *fakeCheckout) DiffLines(_ context.Context, head string) (int, error) {
+	if f.diffErr != nil {
+		return 0, f.diffErr
+	}
+	if f.adoptedHead == "" || head != f.adoptedHead {
+		return 0, fmt.Errorf("fake: diff of %q, adopted %q", head, f.adoptedHead)
+	}
+	return f.diffLines, nil
 }
 
 func (f *fakeCheckout) SHA() string    { return f.sha }
@@ -89,6 +106,7 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	if f.head == f.sha {
 		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
 	}
+	f.adoptedHead = f.head
 	return f.head, nil
 }
 

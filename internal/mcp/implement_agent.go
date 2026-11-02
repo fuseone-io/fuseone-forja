@@ -54,7 +54,7 @@ func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool,
 	// be removed changes neither.
 	defer func() { _ = os.RemoveAll(dir) }()
 	f.bundle = filepath.Join(dir, "commits.bundle")
-	for _, step := range []runStep{h.agentStage, h.gatesStage, h.pushStage, h.pullRequestStage, h.statusStage} {
+	for _, step := range []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage} {
 		if ok, err := step(runCtx, done, f); !ok || err != nil {
 			return false, stopped(runCtx, f, err)
 		}
@@ -137,8 +137,9 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	})
 }
 
-// adopt brings the exported commits into the checkout; a head at the base
-// is no commit at all.
+// adopt brings the exported commits into the checkout and counts what the
+// head changes against the base on the control plane's own clone; a head
+// at the base is no commit at all.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) {
@@ -149,6 +150,11 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 		return false, err
 	}
 	f.run.HeadSHA = head
+	lines, err := f.co.DiffLines(ctx, head)
+	if err != nil {
+		return false, err
+	}
+	f.run.DiffLines = &lines
 	return true, nil
 }
 

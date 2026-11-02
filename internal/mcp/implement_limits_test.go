@@ -186,3 +186,126 @@ func TestImplement_limitsOnTheWire_effectiveInOutputAndStatus(t *testing.T) {
 		})
 	}
 }
+
+// checkoutWithMaxDiff is the checkout's contract with the given
+// limits.max_diff_lines.
+func checkoutWithMaxDiff(lines string) string {
+	return checkoutWithWallClock("20m") + "  max_diff_lines: " + lines + "\n"
+}
+
+// A head that changes more lines than the contract allows never leaves the
+// control plane: the run fails diff_too_large, both readers and the
+// evidence show the count against the limit, and the issue is freed.
+func TestImplement_diffOverLimit_noPushNoPRNoStatus_failedDiffTooLarge(t *testing.T) {
+	t.Parallel()
+	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx.cloner.co.diffLines = 101
+
+	res := callImplement(t, fx.cs, implementIssue)
+	out := decodeImplement(t, res)
+	if got, want := fx.calls.list(), []string{"claim", "put running", "clone", "agent", "gates", "release", "put failed"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %q, want %q: no push, pull request or status", got, want)
+	}
+	for reader, wire := range map[string]map[string]json.RawMessage{"output": wireOf(t, res), "status": statusOf(t, fx)} {
+		if string(wire["state"]) != `"failed"` || string(wire["failure_reason"]) != `"diff_too_large"` ||
+			string(wire["diff_lines"]) != "101" || string(wire["max_diff_lines"]) != "100" {
+			t.Errorf("%s state %s reason %s diff_lines %s max_diff_lines %s, want failed diff_too_large 101 over 100",
+				reader, wire["state"], wire["failure_reason"], wire["diff_lines"], wire["max_diff_lines"])
+		}
+	}
+	if !strings.Contains(out.Evidence, "| Diff lines (measured / limit) | 101 / 100 |") {
+		t.Fatalf("evidence does not show the count against the limit:\n%s", out.Evidence)
+	}
+	if released := fx.claims.releasedClaims(); len(released) != 1 {
+		t.Fatalf("released %d claims, want 1", len(released))
+	}
+	assertFailedAt(t, fx, "diff")
+}
+
+// The limit is the most the head may change: at it the run delivers, one
+// line over it does not, whether the limit is the contract's or the
+// default.
+func TestImplement_diffAtLimit_delivered(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		checkout   string
+		lines      int
+		wantState  string
+		wantReason string
+	}{
+		{name: "at the contract's limit", checkout: checkoutWithMaxDiff("100"), lines: 100, wantState: "succeeded"},
+		{name: "over the contract's limit", checkout: checkoutWithMaxDiff("100"), lines: 101, wantState: "failed", wantReason: "diff_too_large"},
+		{name: "at the default limit", checkout: checkoutWithWallClock("20m"), lines: 400, wantState: "succeeded"},
+		{name: "over the default limit", checkout: checkoutWithWallClock("20m"), lines: 401, wantState: "failed", wantReason: "diff_too_large"},
+		{name: "no line changed", checkout: checkoutWithWallClock("20m"), lines: 0, wantState: "succeeded"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			fx := limitsFixture(t, tt.checkout, nil)
+			fx.cloner.co.diffLines = tt.lines
+
+			out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+			if out.State != tt.wantState || out.FailureReason != tt.wantReason {
+				t.Fatalf("state %q reason %q, want %q %q", out.State, out.FailureReason, tt.wantState, tt.wantReason)
+			}
+			if pushed := len(fx.pusher.got()) == 1; pushed != (tt.wantState == "succeeded") {
+				t.Fatalf("pushed %d times, want a push only for a delivered run", len(fx.pusher.got()))
+			}
+		})
+	}
+}
+
+// A red gate stops the run before its size is judged: the reason is the
+// gate, and the count still shows.
+func TestImplement_gateRedAndDiffOver_reasonGateFailed(t *testing.T) {
+	t.Parallel()
+	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx.cloner.co.diffLines = 101
+	fx.gates.report = redReport()
+
+	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	if out.State != "failed" || out.FailureReason != "gate_failed" || out.DiffLines == nil || *out.DiffLines != 101 {
+		t.Fatalf("state %q reason %q diff_lines %v, want failed gate_failed with 101 counted", out.State, out.FailureReason, out.DiffLines)
+	}
+	assertFailedAt(t, fx, "gates")
+}
+
+// A head whose size cannot be counted is not judged under the limit: the
+// run fails as a tool error before any gate, and the issue is freed.
+func TestImplement_diffUnmeasurable_toolErrorRunFailed(t *testing.T) {
+	t.Parallel()
+	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx.cloner.co.diffErr = errors.New("git diff died")
+
+	res := callImplement(t, fx.cs, implementIssue)
+	if !res.IsError || !strings.Contains(textOf(res), "git diff died") {
+		t.Fatalf("IsError %v text %q, want the count's failure as a tool error", res.IsError, textOf(res))
+	}
+	if fx.gates.calls != 0 || len(fx.pusher.got()) != 0 {
+		t.Fatalf("gates ran %d times, pushes %d, want none", fx.gates.calls, len(fx.pusher.got()))
+	}
+	assertFailedAt(t, fx, "agent")
+	if wire := statusOf(t, fx); string(wire["state"]) != `"failed"` {
+		t.Fatalf("status state %s, want failed", wire["state"])
+	}
+	if released := fx.claims.releasedClaims(); len(released) != 1 {
+		t.Fatalf("released %d claims, want 1", len(released))
+	}
+}
+
+// A run that never counted its diff says so by leaving diff_lines out,
+// never with a zero.
+func TestImplement_noCommits_diffLinesAbsent(t *testing.T) {
+	t.Parallel()
+	fx := limitsFixture(t, checkoutWithMaxDiff("100"), nil)
+	fx.agent.result = agent.Result{ExitCode: 0, Tokens: spent}
+
+	output := wireOf(t, callImplement(t, fx.cs, implementIssue))
+	for reader, wire := range map[string]map[string]json.RawMessage{"output": output, "status": statusOf(t, fx)} {
+		if raw, present := wire["diff_lines"]; present {
+			t.Errorf("%s diff_lines = %s for a run that counted none", reader, raw)
+		}
+	}
+}
