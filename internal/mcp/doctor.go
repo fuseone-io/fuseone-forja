@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -140,13 +141,18 @@ func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract,
 // runGates runs the contract under its own wall clock, or the default
 // when the contract sets none.
 func runGates(ctx context.Context, runner GateRunner, runID string, c domain.Contract, tree string) (domain.GateReport, error) {
-	wallClock := c.Limits.WallClock
-	if wallClock == 0 {
-		wallClock = gates.DefaultWallClock
-	}
-	runCtx, cancel := context.WithTimeout(ctx, wallClock)
+	runCtx, cancel := context.WithTimeout(ctx, wallClock(c))
 	defer cancel()
 	return runner.Run(runCtx, runID, c, tree)
+}
+
+// wallClock is the contract's limits.wall_clock, or the default when it
+// sets none.
+func wallClock(c domain.Contract) time.Duration {
+	if c.Limits.WallClock == 0 {
+		return gates.DefaultWallClock
+	}
+	return c.Limits.WallClock
 }
 
 func emptyDoctorOutput(repo, sha, contractSHA string) DoctorOutput {

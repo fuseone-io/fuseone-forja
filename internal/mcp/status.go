@@ -42,6 +42,14 @@ type StatusOutput struct {
 	// run made none or declares no registry.
 	RegistryAccessCount int             `json:"registry_access_count"`
 	RegistryAccess      []RegistryEvent `json:"registry_access"`
+	// TokensIn is every input token the run's model proxy metered, cache
+	// fields included; TokensOut every output token. Both are 0 for a run
+	// that called no model.
+	TokensIn  int64 `json:"tokens_in"`
+	TokensOut int64 `json:"tokens_out"`
+	// FailureReason says why a failed run failed when the control plane
+	// knows more than its state; absent otherwise.
+	FailureReason string `json:"failure_reason,omitempty"`
 }
 
 // RegistryEvent is one request the workspace made to its registry proxy.
@@ -65,7 +73,7 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, what its workspace was refused on the way out, and every request it made to its registry proxy.",
+		Description: "State, start and end of a run, the model tokens it used, what its workspace was refused on the way out, and every request it made to its registry proxy.",
 		Annotations: readClass(),
 	}
 }
@@ -96,6 +104,10 @@ func statusOutput(run domain.Run) StatusOutput {
 
 		RegistryAccessCount: run.Registry.Count,
 		RegistryAccess:      registryEvents(run.Registry.Accesses),
+
+		TokensIn:      run.Tokens.In(),
+		TokensOut:     run.Tokens.Output,
+		FailureReason: string(run.Reason),
 	}
 }
 

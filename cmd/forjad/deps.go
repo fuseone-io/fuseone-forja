@@ -33,9 +33,10 @@ const (
 // credentials at all the server still serves the tools that need none,
 // and every GitHub-backed tool answers with the error naming the variables
 // to set; the claim store is then nil. A half-configured App, a malformed
-// lease, egress allowlist or registry credentials file, or a Docker client
-// that cannot be built from DOCKER_HOST and its siblings is a startup
-// failure; an unset workspace runtime is a warning. The wall clock and the
+// lease, egress allowlist, registry credentials file or model
+// configuration, or a Docker client that cannot be built from DOCKER_HOST
+// and its siblings is a startup failure; an unset workspace runtime is a
+// warning. The wall clock and the
 // id generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
 	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
@@ -44,7 +45,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Lease = lease
-	opts, err := workspaceOptions(getenv, stderr)
+	opts, agentOn, err := driverOptions(getenv, stderr)
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
@@ -53,12 +54,16 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Gates = &gates.Runner{Launcher: launcher{docker}, Now: time.Now}
+	deps.Agent = agentRunner(docker, agentOn)
 	tokens, err := github.TokenSourceFromEnv(getenv)
 	if errors.Is(err, github.ErrNoCredentials) {
 		deps.Contracts = unavailableContracts{err: err}
 		deps.Claims = unavailableClaims{err: err}
 		deps.Cloner = unavailablePlan{err: err}
 		deps.Issues = unavailablePlan{err: err}
+		if deps.Agent == nil {
+			deps.Agent = unavailableAgent{err: err}
+		}
 		return deps, nil, nil
 	}
 	if err != nil {
@@ -70,6 +75,21 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
+}
+
+// driverOptions is the workspace driver's configuration: the workspaces'
+// own, and the agent with its model proxy when a key is set.
+func driverOptions(getenv func(string) string, stderr io.Writer) (workspace.Options, bool, error) {
+	opts, err := workspaceOptions(getenv, stderr)
+	if err != nil {
+		return workspace.Options{}, false, err
+	}
+	agentOpts, agentOn, err := agentConfig(getenv)
+	if err != nil {
+		return workspace.Options{}, false, err
+	}
+	opts.AgentBinary, opts.Model = agentOpts.AgentBinary, agentOpts.Model
+	return opts, agentOn, nil
 }
 
 func claimLease(getenv func(string) string) (time.Duration, error) {

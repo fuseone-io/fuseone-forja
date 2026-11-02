@@ -12,3 +12,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0033](0033-reservation-by-ref-with-lease.md) | Issue reservation by ref with lease | proposed |
 | [0035](0035-egress-gateway.md) | Per-run egress gateway | proposed |
 | [0037](0037-registry-proxy.md) | Per-run registry proxy | proposed |
+| [0038](0038-model-proxy.md) | Model proxy and the agent in the workspace | proposed |

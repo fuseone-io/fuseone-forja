@@ -127,25 +127,59 @@ func (r *failingRuns) Put(ctx context.Context, run domain.Run) error {
 }
 
 // implementFixture is a server wired with a granting claimer over a valid
-// contract with wall_clock 30m.
+// contract with wall_clock 30m, a base checkout, an issue and an agent
+// that exits 0.
 type implementFixture struct {
 	calls  *callLog
 	claims *fakeClaims
 	runs   *recordingRuns
+	agent  *fakeAgent
+	cloner *fakeCloner
+	issues *fakeIssues
 	cs     *sdk.ClientSession
 }
 
 func newImplementFixture(t *testing.T, contract []byte, mutate func(*fakeClaims)) *implementFixture {
 	t.Helper()
+	return newAgentFixture(t, contract, mutate, &fakeAgent{})
+}
+
+// newAgentFixture is the fixture with the given agent.
+func newAgentFixture(t *testing.T, contract []byte, mutate func(*fakeClaims), agent *fakeAgent) *implementFixture {
+	t.Helper()
+	return newWiredFixture(t, contract, fixtureWiring{claims: mutate, agent: agent})
+}
+
+// fixtureWiring changes the fixture before the server is connected: the
+// claimer, the agent, and any other dependency.
+type fixtureWiring struct {
+	claims func(*fakeClaims)
+	agent  *fakeAgent
+	deps   func(*forja.Deps)
+}
+
+func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementFixture {
+	t.Helper()
 	calls := &callLog{}
 	claims := &fakeClaims{calls: calls}
-	if mutate != nil {
-		mutate(claims)
+	if w.claims != nil {
+		w.claims(claims)
 	}
+	agent := w.agent
+	if agent == nil {
+		agent = &fakeAgent{}
+	}
+	agent.calls = calls
 	runs := &recordingRuns{Memory: runstore.NewMemory(), calls: calls}
 	contracts := &fakeContracts{src: domain.ContractSource{SHA: doctorSHA, Body: contract}}
-	cs := connectDeps(t, testDeps(runs, contracts, claims))
-	return &implementFixture{calls: calls, claims: claims, runs: runs, cs: cs}
+	deps := testDeps(runs, contracts, claims)
+	cloner, issues := &fakeCloner{co: implementCheckout()}, &fakeIssues{issue: implementStatement}
+	deps.Cloner, deps.Issues, deps.Agent = cloner, issues, agent
+	if w.deps != nil {
+		w.deps(&deps)
+	}
+	cs := connectDeps(t, deps)
+	return &implementFixture{calls: calls, claims: claims, runs: runs, agent: agent, cloner: cloner, issues: issues, cs: cs}
 }
 
 var contractWithWallClock = []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\nlimits:\n  wall_clock: 30m\n")
@@ -174,12 +208,12 @@ func decodeImplement(t *testing.T, res *sdk.CallToolResult) forja.ImplementOutpu
 	return out
 }
 
-func TestImplement_free_claimsThenRecordsThenReleasesThenTerminal(t *testing.T) {
+func TestImplement_free_claimsRecordsRunsAgentReleasesThenTerminal(t *testing.T) {
 	t.Parallel()
 	fx := newImplementFixture(t, contractWithWallClock, nil)
 
 	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
-	want := []string{"claim", "put running", "release", "put succeeded"}
+	want := []string{"claim", "put running", "agent", "release", "put succeeded"}
 	if got := fx.calls.list(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -247,7 +281,7 @@ func TestImplement_releaseFails_runFailedAndErrorReturned(t *testing.T) {
 			t.Errorf("error text %q does not contain %q", text, want)
 		}
 	}
-	want := []string{"claim", "put running", "release", "put failed"}
+	want := []string{"claim", "put running", "agent", "release", "put failed"}
 	if got := fx.calls.list(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -316,6 +350,7 @@ func TestImplement_configuredLease_winsOrIsRefused(t *testing.T) {
 			contracts := &fakeContracts{src: domain.ContractSource{SHA: doctorSHA, Body: contractWithWallClock}}
 			deps := testDeps(&recordingRuns{Memory: runstore.NewMemory(), calls: calls}, contracts, claims)
 			deps.Lease = tt.lease
+			deps.Cloner, deps.Issues, deps.Agent = &fakeCloner{co: implementCheckout()}, &fakeIssues{issue: implementStatement}, &fakeAgent{calls: calls}
 			cs := connectDeps(t, deps)
 
 			res := callImplement(t, cs, implementIssue)
@@ -396,8 +431,8 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	if !present || string(raw) != `"run-expired"` {
 		t.Fatalf("supersedes on the wire = %s (present %v), want \"run-expired\"", raw, present)
 	}
-	if len(wire) != 12 {
-		t.Fatalf("wire object has %d keys, want the 11 usual plus supersedes: %s", len(wire), structuredJSON(t, res))
+	if len(wire) != 14 {
+		t.Fatalf("wire object has %d keys, want the 13 usual plus supersedes: %s", len(wire), structuredJSON(t, res))
 	}
 }
 

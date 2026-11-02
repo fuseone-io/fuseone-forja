@@ -1,13 +1,11 @@
 package workspace
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -90,7 +88,7 @@ func (c *Container) createGateway(ctx context.Context, allow []string) (string, 
 // startGateway copies the binary in, gives the gateway its way out when
 // there is anywhere to go, starts it and waits for its readiness line.
 func startGateway(ctx context.Context, cli *client.Client, g gatewaySpec) error {
-	if err := copyBinary(ctx, cli, g.id, g.binary); err != nil {
+	if err := copyBinary(ctx, cli, g.id, g.binary, gatewayDir, gatewayBin); err != nil {
 		return fmt.Errorf("workspace: copy gateway binary: %w", err)
 	}
 	ready := func(r io.Reader) error { return egress.AwaitReady(r, g.runID) }
@@ -114,61 +112,9 @@ type gatewaySpec struct {
 	allow             []string
 }
 
-// copyBinary streams the binary in as root-owned 0755: the container's
-// user runs it and cannot change it.
-func copyBinary(ctx context.Context, cli *client.Client, id, binary string) error {
-	f, err := os.Open(binary)
-	if err != nil {
-		return err
-	}
-	// The file was only read; a failure to close it changes no byte sent.
-	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return err
-	}
-	return copyFile(ctx, cli, id, containerFile{dest: gatewayDir, name: gatewayBin, mode: 0o755, size: info.Size(), content: f})
-}
-
-// containerFile is one file to place in a container before it starts:
-// name is relative to dest, and a parent directory in name is created
-// owned like the file, readable and searchable by its owner only.
-type containerFile struct {
-	dest, name string
-	mode       int64
-	uid, gid   int
-	size       int64
-	content    io.Reader
-}
-
-// copyFile streams f into the container as a tar archive.
-func copyFile(ctx context.Context, cli *client.Client, id string, f containerFile) error {
-	pr, pw := io.Pipe()
-	go func() { pw.CloseWithError(writeContainerFile(pw, f)) }()
-	_, err := cli.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: f.dest, Content: pr})
-	// Ends the writer if the copy stopped before the archive did.
-	_ = pr.CloseWithError(err)
-	return err
-}
-
-func writeContainerFile(w io.Writer, f containerFile) error {
-	tw := tar.NewWriter(w)
-	if dir := path.Dir(f.name); dir != "." {
-		if err := tw.WriteHeader(&tar.Header{Name: dir + "/", Mode: 0o500, Uid: f.uid, Gid: f.gid, Typeflag: tar.TypeDir}); err != nil {
-			return err
-		}
-	}
-	if err := tw.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Uid: f.uid, Gid: f.gid, Size: f.size, Typeflag: tar.TypeReg}); err != nil {
-		return err
-	}
-	if _, err := io.Copy(tw, f.content); err != nil {
-		return err
-	}
-	return tw.Close()
-}
-
 // awaitReady follows a proxy's stdout until ready finds its readiness
-// line, for at most readyTimeout. A proxy that exits first ends the stream.
+// line, for at most readyTimeout. A proxy that exits first ends the
+// stream.
 func awaitReady(ctx context.Context, cli *client.Client, id string, ready func(io.Reader) error) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()

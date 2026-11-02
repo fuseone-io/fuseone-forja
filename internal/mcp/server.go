@@ -11,7 +11,7 @@ import (
 )
 
 // Deps is everything the tools need from the edge: the stores, the
-// repository readers, the gates runner, and the clock and id generator
+// repository readers, the gates and agent runners, and the clock and id generator
 // injected so that the handlers stay deterministic.
 type Deps struct {
 	Runs      RunStore
@@ -20,6 +20,9 @@ type Deps struct {
 	Cloner    Cloner
 	Issues    IssueReader
 	Gates     GateRunner
+	// Agent runs the agent of a forja.implement run; nil until the model
+	// proxy is configured.
+	Agent AgentRunner
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time

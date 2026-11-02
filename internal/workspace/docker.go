@@ -55,6 +55,11 @@ type Options struct {
 	// under: the workspace, its sidecars and its proxies. Empty means the
 	// daemon's default; a name the daemon does not list refuses the launch.
 	Runtime string
+	// AgentBinary is a linux agent for the daemon's architecture, installed
+	// in every agent workspace. Empty, LaunchAgent is refused.
+	AgentBinary string
+	// Model configures the model proxy of every agent launch.
+	Model ModelOptions
 }
 
 // Docker launches containers on the daemon the environment points at.
@@ -101,6 +106,11 @@ type LaunchSpec struct {
 // filesystem. Launch returns once every proxy said it is ready; any
 // failure removes whatever it had created.
 func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error) {
+	return d.launch(ctx, spec, nil)
+}
+
+// launch is Launch for a plain spec, or an agent's when agent is set.
+func (d *Docker) launch(ctx context.Context, spec LaunchSpec, agent *agentSpec) (*Container, error) {
 	if err := validRunID(spec.RunID); err != nil {
 		return nil, err
 	}
@@ -121,7 +131,7 @@ func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error
 		}
 	}
 	c := &Container{cli: d.cli, runID: spec.RunID, runtime: d.opts.Runtime}
-	if err := d.assemble(ctx, c, launchPlan{spec: spec, binary: binary, creds: creds}); err != nil {
+	if err := d.assemble(ctx, c, launchPlan{spec: spec, binary: binary, creds: creds, agent: agent}); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
 		// The launch failure is the error; what could not be removed on top
@@ -132,17 +142,19 @@ func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error
 	return c, nil
 }
 
-// launchPlan is a spec checked by Launch: the binary every proxy runs and
-// the credentials of the spec's registries.
+// launchPlan is a spec checked by launch: the binary every proxy runs, the
+// credentials of the spec's registries, and the agent of an agent launch.
 type launchPlan struct {
 	spec   LaunchSpec
 	binary string
 	creds  map[string]registry.Credential
+	agent  *agentSpec
 }
 
 // assemble builds the run's pieces in order, recording each in c as soon
 // as it exists so that Close removes it whatever fails next. The proxies
-// come before the workspace, which is created with its final environment.
+// come before the workspace, which is created with its final environment;
+// an agent launch installs the agent once the tree is in.
 func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) error {
 	var err error
 	if c.network, err = createNetwork(ctx, d.cli, c.runID); err != nil {
@@ -154,25 +166,49 @@ func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) er
 	if err := startGateway(ctx, d.cli, gatewaySpec{id: c.gateway, runID: c.runID, binary: plan.binary, allow: d.opts.EgressAllow}); err != nil {
 		return err
 	}
-	withRegistry := len(plan.spec.Registries) > 0
-	if withRegistry {
-		if c.registry, err = c.createRegistry(ctx, plan.spec.Registries); err != nil {
-			return err
-		}
-		if err := startRegistry(ctx, d.cli, registrySpec{id: c.registry, runID: c.runID, binary: plan.binary, creds: plan.creds}); err != nil {
-			return err
-		}
-	}
-	if c.id, err = c.createWorkspace(ctx, plan.spec.Image, withRegistry); err != nil {
+	env, err := d.addProxies(ctx, c, plan)
+	if err != nil {
 		return err
 	}
-	return c.startWithTree(ctx, plan.spec.Tree)
+	if c.id, err = c.createWorkspace(ctx, plan.spec.Image, env); err != nil {
+		return err
+	}
+	if err := c.startWithTree(ctx, plan.spec.Tree); err != nil {
+		return err
+	}
+	if plan.agent != nil {
+		return c.installAgent(ctx, plan.agent.binary)
+	}
+	return nil
+}
+
+// addProxies starts the run's registry proxy when the spec declares
+// registries and its model proxy on an agent launch, and returns the
+// workspace's environment, which names them.
+func (d *Docker) addProxies(ctx context.Context, c *Container, plan launchPlan) ([]string, error) {
+	withRegistry := len(plan.spec.Registries) > 0
+	if withRegistry {
+		var err error
+		if c.registry, err = c.createRegistry(ctx, plan.spec.Registries); err != nil {
+			return nil, err
+		}
+		if err := startRegistry(ctx, d.cli, registrySpec{id: c.registry, runID: c.runID, binary: plan.binary, creds: plan.creds}); err != nil {
+			return nil, err
+		}
+	}
+	if plan.agent == nil {
+		return proxyEnv(noProxy, withRegistry), nil
+	}
+	if err := d.addModel(ctx, c, plan.binary, plan.agent); err != nil {
+		return nil, err
+	}
+	return plan.agent.env(withRegistry), nil
 }
 
 // createWorkspace creates the workspace container on the run's network
 // alone, never on the default bridge. The network is set at creation: a
 // container connected afterwards does not get the embedded DNS.
-func (c *Container) createWorkspace(ctx context.Context, image string, withRegistry bool) (string, error) {
+func (c *Container) createWorkspace(ctx context.Context, image string, env []string) (string, error) {
 	netName := networkName(c.runID)
 	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: netName + "-workspace",
@@ -180,7 +216,7 @@ func (c *Container) createWorkspace(ctx context.Context, image string, withRegis
 			Image:      image,
 			Cmd:        []string{"sleep", "infinity"},
 			WorkingDir: workDir,
-			Env:        proxyEnv(withRegistry),
+			Env:        env,
 			Labels:     map[string]string{labelRun: c.runID},
 		},
 		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName), Runtime: c.runtime},
@@ -192,11 +228,11 @@ func (c *Container) createWorkspace(ctx context.Context, image string, withRegis
 	return created.ID, nil
 }
 
-// proxyEnv points both spellings tools read at the gateway and, for a run
-// with a registry proxy, names that proxy's URL and keeps it off the
-// gateway. A URL is an address, not a credential.
-func proxyEnv(withRegistry bool) []string {
-	direct := noProxy
+// proxyEnv points both spellings tools read at the gateway, except for the
+// hosts in direct, and, for a run with a registry proxy, names that
+// proxy's URL and keeps it off the gateway. A URL is an address, not a
+// credential.
+func proxyEnv(direct string, withRegistry bool) []string {
 	env := []string{}
 	if withRegistry {
 		direct += "," + registryAlias

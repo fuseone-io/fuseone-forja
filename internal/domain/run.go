@@ -56,6 +56,12 @@ type Run struct {
 	// Registry is every request the run's workspace made to its registry
 	// proxy; empty for a run whose contract declares no registry.
 	Registry RegistryReport
+	// Tokens is what the run's model proxy metered; zero for a run that
+	// called no model.
+	Tokens TokenUsage
+	// Reason is why a failed run failed, when that is more than its
+	// outcome; empty otherwise.
+	Reason FailureReason
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
