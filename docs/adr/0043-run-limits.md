@@ -1,4 +1,4 @@
-# ADR 9999: the run's limits, wall_clock and max_diff_lines
+# ADR 0043: the run's limits, wall_clock and max_diff_lines
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #19

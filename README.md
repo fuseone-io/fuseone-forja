@@ -160,7 +160,7 @@ lines, a rename as a delete and an add, a binary file as zero, with the base
 commit's `.gitattributes` deciding what is binary. One line over the limit and
 nothing is pushed; the run is `failed` with reason `diff_too_large`. Both
 limits, and the measured lines, are in `forja.status` and in the evidence. See
-[ADR 9999](docs/adr/9999-run-limits.md).
+[ADR 0043](docs/adr/0043-run-limits.md).
 
 `registries` lists the private registries `setup` fetches from, each as
 `host[:port][/path]`. When the list is not empty, the run gets a registry
