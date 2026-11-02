@@ -147,10 +147,27 @@ func newImplementFixture(t *testing.T, contract []byte, mutate func(*fakeClaims)
 // newAgentFixture is the fixture with the given agent.
 func newAgentFixture(t *testing.T, contract []byte, mutate func(*fakeClaims), agent *fakeAgent) *implementFixture {
 	t.Helper()
+	return newWiredFixture(t, contract, fixtureWiring{claims: mutate, agent: agent})
+}
+
+// fixtureWiring changes the fixture before the server is connected: the
+// claimer, the agent, and any other dependency.
+type fixtureWiring struct {
+	claims func(*fakeClaims)
+	agent  *fakeAgent
+	deps   func(*forja.Deps)
+}
+
+func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementFixture {
+	t.Helper()
 	calls := &callLog{}
 	claims := &fakeClaims{calls: calls}
-	if mutate != nil {
-		mutate(claims)
+	if w.claims != nil {
+		w.claims(claims)
+	}
+	agent := w.agent
+	if agent == nil {
+		agent = &fakeAgent{}
 	}
 	agent.calls = calls
 	runs := &recordingRuns{Memory: runstore.NewMemory(), calls: calls}
@@ -158,6 +175,9 @@ func newAgentFixture(t *testing.T, contract []byte, mutate func(*fakeClaims), ag
 	deps := testDeps(runs, contracts, claims)
 	cloner, issues := &fakeCloner{co: implementCheckout()}, &fakeIssues{issue: implementStatement}
 	deps.Cloner, deps.Issues, deps.Agent = cloner, issues, agent
+	if w.deps != nil {
+		w.deps(&deps)
+	}
 	cs := connectDeps(t, deps)
 	return &implementFixture{calls: calls, claims: claims, runs: runs, agent: agent, cloner: cloner, issues: issues, cs: cs}
 }

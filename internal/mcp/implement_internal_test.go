@@ -20,9 +20,11 @@ func (f fixedContracts) Read(context.Context, string) (domain.ContractSource, er
 }
 
 // cancellingClaims cancels the caller's context the moment the claim is
-// granted and records the context the release then arrived with.
+// granted, for the requested lease from now, and records the context the
+// release then arrived with.
 type cancellingClaims struct {
 	cancel context.CancelFunc
+	now    time.Time
 
 	mu            sync.Mutex
 	releases      int
@@ -32,7 +34,10 @@ type cancellingClaims struct {
 
 func (c *cancellingClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.Claim, error) {
 	c.cancel()
-	return domain.Claim{RunID: req.RunID, Repository: req.Repository, Issue: req.Issue, SHA: "sha"}, nil
+	return domain.Claim{
+		RunID: req.RunID, Repository: req.Repository, Issue: req.Issue, SHA: "sha",
+		CreatedAt: c.now, ExpiresAt: c.now.Add(req.Lease),
+	}, nil
 }
 
 func (c *cancellingClaims) Release(ctx context.Context, _ domain.Claim) error {
@@ -85,7 +90,8 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	claims := &cancellingClaims{cancel: cancel}
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	claims := &cancellingClaims{cancel: cancel, now: now}
 	runs := runstore.NewMemory()
 	body := []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\n")
 	deps := Deps{
@@ -95,7 +101,7 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 		Issues:    staticIssues{},
 		Agent:     exitingAgent{},
 		NewID:     func() string { return "run-cancelled" },
-		Now:       func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) },
+		Now:       func() time.Time { return now },
 	}
 
 	_, out, err := implementHandler(deps)(ctx, nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
