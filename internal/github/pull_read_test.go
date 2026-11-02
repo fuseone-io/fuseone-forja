@@ -184,7 +184,10 @@ func TestPullRequests_read_unknownNumber_errPullRequestNotFound(t *testing.T) {
 func TestPullRequests_read_failures_noContentInErrors(t *testing.T) {
 	t.Parallel()
 	tests := map[string]func(*fakePulls){
-		"truncated":   func(f *fakePulls) { f.files = []fakeFile{{name: "secret/path.go", patch: "+leaked"}}; f.changedFiles = 2 },
+		"truncated": func(f *fakePulls) {
+			f.files = []fakeFile{{name: "secret/path.go", patch: "+leaked"}}
+			f.changedFiles = 2
+		},
 		"files down":  func(f *fakePulls) { f.filesDown = true },
 		"wrong token": func(f *fakePulls) { f.token = "ghs_other" },
 	}
