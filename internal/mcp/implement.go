@@ -31,9 +31,9 @@ type RunStore interface {
 	Put(ctx context.Context, run domain.Run) error
 }
 
-// finishTimeout bounds the release and the terminal record once the caller
-// is gone: the ref must come off and the run must end whether or not
-// anyone is still waiting for the answer.
+// finishTimeout bounds each record of the run and the release, counted
+// from when each starts: the ref must come off and the run must end
+// whether or not anyone is still waiting for the answer.
 const finishTimeout = 30 * time.Second
 
 type implementer struct {
@@ -128,11 +128,10 @@ func (h implementer) lease(ctx context.Context, repo string) (time.Duration, err
 // or the release is returned after the run was recorded failed.
 func (h implementer) run(ctx context.Context, f *flight) error {
 	// The caller may be gone by now. Once the issue is claimed, the records
-	// and the release run on a context detached from the caller's, with a
-	// deadline of their own, so neither the ref nor a run stuck in running
-	// is left behind.
-	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-	defer cancel()
+	// and the release run on a context detached from the caller's, each
+	// bounded from its own start, so neither the ref nor a run stuck in
+	// running is left behind however long the work took.
+	done := context.WithoutCancel(ctx)
 	if err := f.put(done); err != nil {
 		return errors.Join(err, h.release(done, f.claim))
 	}
@@ -159,6 +158,8 @@ func (h implementer) releaseStage(done context.Context, f *flight) error {
 }
 
 func (h implementer) release(ctx context.Context, c domain.Claim) error {
+	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
+	defer cancel()
 	if err := h.deps.Claims.Release(ctx, c); err != nil {
 		return fmt.Errorf("release claim: %w", err)
 	}

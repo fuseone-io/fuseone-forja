@@ -61,9 +61,10 @@ type fakeClaims struct {
 	// supersedes is copied into every granted claim.
 	supersedes *domain.ClaimSummary
 
-	mu       sync.Mutex
-	requests []domain.ClaimRequest
-	released []domain.Claim
+	mu        sync.Mutex
+	requests  []domain.ClaimRequest
+	released  []domain.Claim
+	deadlines []time.Time
 }
 
 func (f *fakeClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.Claim, error) {
@@ -80,12 +81,28 @@ func (f *fakeClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.C
 	}, nil
 }
 
-func (f *fakeClaims) Release(_ context.Context, c domain.Claim) error {
+// Release fails on a context that already ended, as the real one does
+// before it reaches GitHub.
+func (f *fakeClaims) Release(ctx context.Context, c domain.Claim) error {
 	f.calls.add("release")
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	dl, _ := ctx.Deadline()
+	f.deadlines = append(f.deadlines, dl)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.released = append(f.released, c)
 	return f.releaseErr
+}
+
+func (f *fakeClaims) releaseDeadline() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.deadlines) == 0 {
+		return time.Time{}
+	}
+	return f.deadlines[0]
 }
 
 func (f *fakeClaims) requested() []domain.ClaimRequest {
@@ -460,6 +477,48 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	}
 	if len(wire) != 21 {
 		t.Fatalf("wire object has %d keys, want the 20 of a delivered run plus supersedes: %s", len(wire), structuredJSON(t, res))
+	}
+}
+
+// deadlineRuns keeps the deadline of every Put.
+type deadlineRuns struct {
+	forja.RunStore
+
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (r *deadlineRuns) Put(ctx context.Context, run domain.Run) error {
+	dl, _ := ctx.Deadline()
+	r.mu.Lock()
+	r.deadlines = append(r.deadlines, dl)
+	r.mu.Unlock()
+	return r.RunStore.Put(ctx, run)
+}
+
+func (r *deadlineRuns) first() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deadlines[0]
+}
+
+// The release is bounded from when it starts, not from when the run
+// started: a run that works longer than the release's bound still frees
+// its issue.
+func TestImplement_runOutlastsFinishBound_releaseStillHasItsOwn(t *testing.T) {
+	t.Parallel()
+	var runs *deadlineRuns
+	fx := newWiredFixture(t, contractWithWallClock, fixtureWiring{deps: func(d *forja.Deps) {
+		runs = &deadlineRuns{RunStore: d.Runs}
+		d.Runs = runs
+	}})
+	const worked = 20 * time.Millisecond
+	fx.gates.during = func() { time.Sleep(worked) }
+
+	decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	first, release := runs.first(), fx.claims.releaseDeadline()
+	if first.IsZero() || release.Sub(first) < worked {
+		t.Fatalf("release deadline %v, first record's %v: the release's bound was spent while the run worked %v", release, first, worked)
 	}
 }
 

@@ -80,6 +80,8 @@ func (f *flight) finish(ok bool) {
 }
 
 func (f *flight) put(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
+	defer cancel()
 	if err := f.runs.Put(ctx, f.run); err != nil {
 		return fmt.Errorf("record run: %w", err)
 	}
