@@ -74,6 +74,12 @@ var repoPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // cloneURL builds Remote + owner/name.git, refusing a repository whose
 // parts GitHub itself would not accept.
 func (c *Cloner) cloneURL(repo string) (string, error) {
+	return repoURL(c.Remote, repo)
+}
+
+// repoURL is remote + owner/name.git, with DefaultRemote for an empty
+// remote and the repository checked as cloneURL says.
+func repoURL(remote, repo string) (string, error) {
 	owner, name, err := splitRepo(repo)
 	if err != nil {
 		return "", err
@@ -81,7 +87,6 @@ func (c *Cloner) cloneURL(repo string) (string, error) {
 	if !repoPart.MatchString(owner) || !repoPart.MatchString(name) || owner == ".." || name == ".." {
 		return "", fmt.Errorf("github: repository %q has characters GitHub does not allow", repo)
 	}
-	remote := c.Remote
 	if remote == "" {
 		remote = DefaultRemote
 	}
