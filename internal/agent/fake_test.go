@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -23,6 +24,8 @@ type fakeWorkspace struct {
 	exportErr error
 	// capReached is closed to say the proxy reached the cap.
 	capReached chan struct{}
+	// onClose runs inside Close, as the time a removal takes.
+	onClose func()
 
 	mu        sync.Mutex
 	calls     []string
@@ -132,6 +135,9 @@ func (f *fakeWorkspace) Halt(context.Context) error {
 }
 
 func (f *fakeWorkspace) Close(context.Context) error {
+	if f.onClose != nil {
+		f.onClose()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, "close")
@@ -155,17 +161,48 @@ func (f *fakeWorkspace) closeCount() int {
 type fakeLauncher struct {
 	ws  *fakeWorkspace
 	err error
+	// onLaunch runs inside LaunchAgent, as the time a launch takes, whether
+	// it fails or not.
+	onLaunch func()
 
 	mu                 sync.Mutex
+	calls              int
 	runID, image, tree string
 }
 
 func (l *fakeLauncher) LaunchAgent(_ context.Context, runID, image, tree string) (agent.Workspace, error) {
+	if l.onLaunch != nil {
+		l.onLaunch()
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.calls++
 	l.runID, l.image, l.tree = runID, image, tree
 	if l.err != nil {
 		return nil, l.err
 	}
 	return l.ws, nil
+}
+
+// clock reads the same instant until a fake moves it, so the only time
+// that passes is the time the fakes say their calls took.
+type clock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func newClock() *clock {
+	return &clock{t: time.Date(2026, 11, 2, 9, 0, 0, 0, time.UTC)}
+}
+
+func (c *clock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *clock) advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
 }

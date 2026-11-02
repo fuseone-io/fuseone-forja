@@ -88,7 +88,7 @@ func TestAgent_realClaudeAgainstFake_commitsAndTokensMetered(t *testing.T) {
 	upstream, fakeID := fakeUpstream(t, "echo forja > proof.txt && git add proof.txt && git commit -q -m 'forja proof'")
 	d := agentDocker(t, upstream, 1_000_000, os.Getenv("FORJA_AGENT_BINARY"))
 	var gitLog string
-	runner := &agent.Runner{Launcher: e2eLauncher{docker: d, log: &gitLog}}
+	runner := &agent.Runner{Launcher: e2eLauncher{docker: d, log: &gitLog}, Now: time.Now}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
@@ -107,6 +107,9 @@ func TestAgent_realClaudeAgainstFake_commitsAndTokensMetered(t *testing.T) {
 	}
 	if served := fakeServed(t, fakeID); res.Tokens != served || served.Total() == 0 {
 		t.Fatalf("metered %+v, want what the fake served %+v", res.Tokens, served)
+	}
+	if res.Compute <= 0 {
+		t.Fatalf("compute = %v, want the time the real workspace was up", res.Compute)
 	}
 	t.Logf("tokens %+v, egress denied %d %+v", res.Tokens, res.Egress.Count, res.Egress.Denied)
 }

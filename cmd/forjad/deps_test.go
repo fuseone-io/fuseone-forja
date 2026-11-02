@@ -17,6 +17,7 @@ import (
 	"github.com/moby/moby/client"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/github"
@@ -116,6 +117,23 @@ func TestWire_modelKey_decidesTheAgent(t *testing.T) {
 	deps, _, err = wire(agentEnv(t, map[string]string{"FORJA_MODEL_API_KEY": "", "FORJA_MODEL_TOKEN_CAP": "", "FORJA_AGENT_BINARY": ""}), io.Discard)
 	if err != nil || deps.Agent != nil {
 		t.Fatalf("wire without a key = agent %v, %v; want none and no error", deps.Agent, err)
+	}
+}
+
+// The agent runner refuses to run without a clock, so the one served must
+// carry one, and a monotonic one: its compute is a difference of readings.
+func TestWire_agentRunner_measuresWithTheMonotonicClock(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	runner, ok := deps.Agent.(*agent.Runner)
+	if !ok || runner.Now == nil {
+		t.Fatalf("Agent = %T, want an *agent.Runner with a clock", deps.Agent)
+	}
+	if reading := runner.Now(); reading.Round(0) == reading {
+		t.Fatalf("clock reading %v carries no monotonic reading", reading)
 	}
 }
 
