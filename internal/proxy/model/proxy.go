@@ -66,6 +66,9 @@ type Proxy struct {
 	cap        int64
 	now        func() time.Time
 	transport  http.RoundTripper
+	// slot holds the one request in flight: the next is admitted only once
+	// the previous one's usage is counted.
+	slot chan struct{}
 
 	mu      sync.Mutex
 	log     io.Writer
@@ -93,6 +96,7 @@ func New(opts Options) (*Proxy, error) {
 	return &Proxy{
 		runID: opts.RunID, upstream: opts.Upstream, key: opts.Key, token: opts.Token,
 		cap: opts.Cap, now: opts.Now, log: opts.Log, transport: transport,
+		slot: make(chan struct{}, 1),
 	}, nil
 }
 
@@ -108,7 +112,7 @@ func (p *Proxy) Serve(ctx context.Context, ln net.Listener) error {
 	ctx, stop := context.WithCancelCause(ctx)
 	defer stop(nil)
 	srv := &http.Server{
-		Handler:           &handler{p: p, forward: p.reverseProxy(stop)},
+		Handler:           &handler{p: p, forward: p.reverseProxy(stop), fail: stop},
 		ReadHeaderTimeout: readHeaderTimeout,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
@@ -146,18 +150,33 @@ func (p *Proxy) writeLocked(e entry) error {
 	return err
 }
 
-// admit reports whether a request may go upstream, and if not, the status
-// and body of the refusal.
-func (p *Proxy) admit() (status int, body string, ok bool) {
+// acquire takes the slot of the one request in flight, waiting for the
+// previous one to be counted, or gives up when ctx ends.
+func (p *Proxy) acquire(ctx context.Context) (release func(), ok bool) {
+	select {
+	case p.slot <- struct{}{}:
+		return func() { <-p.slot }, true
+	case <-ctx.Done():
+		return nil, false
+	}
+}
+
+// admit returns 0 when a request asking for up to maxTokens of output may
+// go upstream, and otherwise the status and body of the refusal. A request
+// whose max_tokens the cap left cannot cover reaches the cap. The error is
+// a cap line that could not be written.
+func (p *Proxy) admit(maxTokens int64) (status int, body string, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	switch {
 	case p.stopped:
-		return http.StatusServiceUnavailable, stoppedBody, false
+		return http.StatusServiceUnavailable, stoppedBody, nil
 	case p.capped:
-		return http.StatusTooManyRequests, capBody, false
+		return http.StatusTooManyRequests, capBody, nil
+	case maxTokens <= p.cap-p.total.Total():
+		return 0, "", nil
 	}
-	return 0, "", true
+	return http.StatusTooManyRequests, capBody, p.stopOnError(p.capLocked())
 }
 
 // record adds one response's usage to the run and writes its line, and the
@@ -169,14 +188,24 @@ func (p *Proxy) record(status int, u domain.TokenUsage) error {
 	p.total = p.total.Add(u)
 	err := p.writeLocked(entry{Event: eventUsage, Run: p.runID, At: p.now(), Status: status, Usage: fieldOf(u)})
 	if !p.capped && p.total.Total() >= p.cap {
-		p.capped = true
-		err = errors.Join(err, p.writeLocked(entry{Event: eventCap, Run: p.runID, At: p.now(), Total: p.total.Total(), Cap: p.cap}))
+		err = errors.Join(err, p.capLocked())
 	}
-	if err != nil {
-		p.stopped = true
-		return fmt.Errorf("%w: %w", errLogWrite, err)
+	return p.stopOnError(err)
+}
+
+// capLocked refuses the run from now on and writes the cap line.
+func (p *Proxy) capLocked() error {
+	p.capped = true
+	return p.writeLocked(entry{Event: eventCap, Run: p.runID, At: p.now(), Total: p.total.Total(), Cap: p.cap})
+}
+
+// stopOnError stops the proxy when a line could not be written.
+func (p *Proxy) stopOnError(err error) error {
+	if err == nil {
+		return nil
 	}
-	return nil
+	p.stopped = true
+	return fmt.Errorf("%w: %w", errLogWrite, err)
 }
 
 // authorized compares the presented x-api-key with the run token in

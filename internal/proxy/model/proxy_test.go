@@ -170,7 +170,7 @@ func serveProxy(t *testing.T, opts model.Options, log io.Writer) *proxyUnderTest
 // when key is empty, and returns the answer with its body read.
 func call(t *testing.T, p *proxyUnderTest, method, target, key string) (*http.Response, string) {
 	t.Helper()
-	req, err := http.NewRequest(method, "http://"+p.addr+target, strings.NewReader(`{"model":"claude-opus-5-5","stream":true}`))
+	req, err := http.NewRequest(method, "http://"+p.addr+target, strings.NewReader(`{"max_tokens":1,"model":"claude-opus-5-5","stream":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestProxy_messages_reachUpstreamWithRealKeyQueryAndHeaders(t *testing.T) {
 	t.Parallel()
 	up := newUpstream(t, replySSE(domain.TokenUsage{Input: 3, Output: 5}))
 	p := startProxy(t, up, 1_000_000)
-	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages?beta=true", strings.NewReader(`{"stream":true}`))
+	req, err := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages?beta=true", strings.NewReader(`{"max_tokens":1,"stream":true}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestProxy_messages_reachUpstreamWithRealKeyQueryAndHeaders(t *testing.T) {
 			t.Errorf("upstream %s = %q, want %q", name, c[0], c[1])
 		}
 	}
-	if body, _ := io.ReadAll(r.Body); string(body) != `{"stream":true}` {
+	if body, _ := io.ReadAll(r.Body); string(body) != `{"max_tokens":1,"stream":true}` {
 		t.Errorf("upstream body = %q, want the request's own", body)
 	}
 }
@@ -261,7 +261,7 @@ func TestProxy_sse_deliveredEventByEvent(t *testing.T) {
 		_, _ = io.WriteString(w, events[first:])
 	})
 	p := startProxy(t, up, 1_000_000)
-	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader("{}"))
+	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader(`{"max_tokens":1}`))
 	req.Header.Set("x-api-key", runToken)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {

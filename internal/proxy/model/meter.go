@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"mime"
+	"net/http"
 	"sync"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
@@ -44,7 +45,33 @@ func (w wireUsage) tokens() domain.TokenUsage {
 // parser reads usage out of a body fed to it in pieces.
 type parser interface {
 	feed(p []byte)
-	usage() domain.TokenUsage
+	usage() metered
+}
+
+// metered is what a parser read of one response: its usage, and whether
+// the body said its input and its output at all.
+type metered struct {
+	usage         domain.TokenUsage
+	input, output bool
+}
+
+// charge is what one response costs the run. A successful response whose
+// usage the proxy could not read whole may still have spent it upstream:
+// the part it never said is charged at the most it could be, the request's
+// max_tokens for the output and the body's size in bytes for the input. A
+// response that is not a success spent nothing.
+func charge(status int, m metered, req checked) domain.TokenUsage {
+	u := m.usage
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return u
+	}
+	if !m.input {
+		u.Input = int64(len(req.body))
+	}
+	if !m.output {
+		u.Output = req.maxTokens
+	}
+	return u
 }
 
 // parserFor picks the reader by the response's media type. A body that is
@@ -62,17 +89,18 @@ func parserFor(contentType string) parser {
 
 type noUsage struct{}
 
-func (noUsage) feed([]byte)              {}
-func (noUsage) usage() domain.TokenUsage { return domain.TokenUsage{} }
+func (noUsage) feed([]byte)     {}
+func (noUsage) usage() metered { return metered{} }
 
 // sseParser follows the events of a stream: message_start sets the input
 // and a first output count, message_delta replaces the output count with
-// its own, which is the message's running total.
+// its own, which is the message's running total. Only a message_delta
+// says the output.
 type sseParser struct {
 	line     []byte
 	data     []byte
 	overflow bool
-	seen     domain.TokenUsage
+	seen     metered
 }
 
 func (s *sseParser) feed(p []byte) {
@@ -131,17 +159,19 @@ func (s *sseParser) event() {
 	}
 	switch ev.Type {
 	case "message_start":
-		s.seen = s.seen.Add(ev.Message.Usage.tokens())
+		s.seen.usage = s.seen.usage.Add(ev.Message.Usage.tokens())
+		s.seen.input = true
 	case "message_delta":
 		if ev.Usage.OutputTokens != nil {
-			s.seen.Output = max(*ev.Usage.OutputTokens, 0)
+			s.seen.usage.Output = max(*ev.Usage.OutputTokens, 0)
+			s.seen.output = true
 		}
 	}
 }
 
 // usage counts an event the stream was cut in the middle of, if the data
 // it had is whole.
-func (s *sseParser) usage() domain.TokenUsage {
+func (s *sseParser) usage() metered {
 	if len(s.line) > 0 && !s.overflow {
 		s.endLine()
 	}
@@ -165,23 +195,23 @@ func (j *jsonParser) feed(p []byte) {
 	j.body = append(j.body, p...)
 }
 
-func (j *jsonParser) usage() domain.TokenUsage {
+func (j *jsonParser) usage() metered {
 	var msg struct {
-		Usage wireUsage `json:"usage"`
+		Usage *wireUsage `json:"usage"`
 	}
-	if j.overflow || json.Unmarshal(j.body, &msg) != nil {
-		return domain.TokenUsage{}
+	if j.overflow || json.Unmarshal(j.body, &msg) != nil || msg.Usage == nil {
+		return metered{}
 	}
-	return msg.Usage.tokens()
+	return metered{usage: msg.Usage.tokens(), input: true, output: msg.Usage.OutputTokens != nil}
 }
 
 // meteredBody hands every byte the client is sent to the parser and
-// records the usage once, at the end of the body or when it is closed
+// records what it read once, at the end of the body or when it is closed
 // early, whichever comes first.
 type meteredBody struct {
 	io.ReadCloser
 	parser parser
-	record func(domain.TokenUsage)
+	record func(metered)
 	once   sync.Once
 }
 

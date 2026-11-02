@@ -59,34 +59,104 @@ func TestMeter_json_topLevelUsage(t *testing.T) {
 	}
 }
 
-// A stream that ends before message_delta still spent its input: the
-// proxy counts what it saw.
-func TestMeter_streamCutAfterStart_inputCounted(t *testing.T) {
-	t.Parallel()
-	sent := domain.TokenUsage{Input: 100, CacheCreation: 20, CacheRead: 3}
-	up := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-		events := sse(sent)
-		_, _ = io.WriteString(w, events[:strings.Index(events, "\n\n")+2])
-		w.(http.Flusher).Flush()
-		conn, _, err := w.(http.Hijacker).Hijack()
-		if err == nil {
-			_ = conn.Close()
-		}
-	})
-	p := startProxy(t, up, 1_000_000)
-	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader("{}"))
+// cutBody is the request of the tests whose response never says its
+// output: the proxy charges its max_tokens, and its size when it never
+// learnt the input either. It is already in the form the proxy forwards.
+const (
+	cutBody      = `{"max_tokens":4096,"messages":[]}`
+	cutMaxTokens = 4096
+)
+
+// sendCut posts cutBody and reads whatever comes back.
+func sendCut(t *testing.T, p *proxyUnderTest) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader(cutBody))
 	req.Header.Set("x-api-key", runToken)
 	if res, err := http.DefaultClient.Do(req); err == nil {
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
 	}
+}
+
+// cutAfter answers a stream with body and then drops the connection.
+func cutAfter(body string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = io.WriteString(w, body)
+		w.(http.Flusher).Flush()
+		if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+			_ = conn.Close()
+		}
+	}
+}
+
+// A stream that ends before message_delta still spent its input, and up to
+// max_tokens of output the proxy never saw counted: it is charged both.
+func TestMeter_streamCutAfterStart_inputAndMaxTokensCharged(t *testing.T) {
+	t.Parallel()
+	sent := domain.TokenUsage{Input: 100, CacheCreation: 20, CacheRead: 3}
+	events := sse(sent)
+	p := startProxy(t, newUpstream(t, cutAfter(events[:strings.Index(events, "\n\n")+2])), 1_000_000)
+	sendCut(t, p)
 
 	awaitUsageLines(t, p, 1)
 	want := sent
-	want.Output = 1
+	want.Output = cutMaxTokens
 	if got := readUsage(t, p).Tokens; got != want {
-		t.Fatalf("metered %+v, want the input of message_start %+v", got, want)
+		t.Fatalf("metered %+v, want the input of message_start and max_tokens %+v", got, want)
+	}
+}
+
+// A stream cut before message_start told the proxy nothing: the request's
+// size stands for its input and its max_tokens for its output.
+func TestMeter_streamCutBeforeStart_sizeAndMaxTokensCharged(t *testing.T) {
+	t.Parallel()
+	p := startProxy(t, newUpstream(t, cutAfter("")), 1_000_000)
+	sendCut(t, p)
+
+	awaitUsageLines(t, p, 1)
+	want := domain.TokenUsage{Input: int64(len(cutBody)), Output: cutMaxTokens}
+	if got := readUsage(t, p).Tokens; got != want {
+		t.Fatalf("metered %+v, want the body's size and max_tokens %+v", got, want)
+	}
+}
+
+// A successful answer whose usage the proxy cannot read is charged as if
+// it had used everything it was allowed; an error answer spent nothing.
+func TestMeter_usageUnreadable_chargedOnlyOnSuccess(t *testing.T) {
+	t.Parallel()
+	whole := domain.TokenUsage{Input: int64(len(cutBody)), Output: cutMaxTokens}
+	tests := map[string]struct {
+		status      int
+		contentType string
+		body        string
+		want        domain.TokenUsage
+	}{
+		"json that does not parse":  {http.StatusOK, "application/json", `{"usage":`, whole},
+		"json without usage":        {http.StatusOK, "application/json", `{"type":"message"}`, whole},
+		"json without output":       {http.StatusOK, "application/json", `{"usage":{"input_tokens":9}}`, domain.TokenUsage{Input: 9, Output: cutMaxTokens}},
+		"neither stream nor json":   {http.StatusOK, "text/plain", `forja`, whole},
+		"stream without any event":  {http.StatusOK, "text/event-stream", "event: ping\ndata: {\"type\":\"ping\"}\n\n", whole},
+		"error answer":              {http.StatusBadRequest, "application/json", `{"type":"error","error":{"type":"invalid_request_error","message":"x"}}`, domain.TokenUsage{}},
+		"overloaded answer":         {529, "application/json", `{"type":"error","error":{"type":"overloaded_error","message":"x"}}`, domain.TokenUsage{}},
+		"error answer not readable": {http.StatusInternalServerError, "text/html", `<html>`, domain.TokenUsage{}},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			up := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", tt.contentType)
+				w.WriteHeader(tt.status)
+				_, _ = io.WriteString(w, tt.body)
+			})
+			p := startProxy(t, up, 1_000_000)
+			sendCut(t, p)
+
+			awaitUsageLines(t, p, 1)
+			if got := readUsage(t, p).Tokens; got != tt.want {
+				t.Fatalf("metered %+v, want %+v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -104,25 +174,12 @@ func TestMeter_streamCutInsideStartEvent_inputCounted(t *testing.T) {
 	for name, body := range cuts {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			up := newUpstream(t, func(w http.ResponseWriter, _ *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-				_, _ = io.WriteString(w, body)
-				w.(http.Flusher).Flush()
-				if conn, _, err := w.(http.Hijacker).Hijack(); err == nil {
-					_ = conn.Close()
-				}
-			})
-			p := startProxy(t, up, 1_000_000)
-			req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader("{}"))
-			req.Header.Set("x-api-key", runToken)
-			if res, err := http.DefaultClient.Do(req); err == nil {
-				_, _ = io.Copy(io.Discard, res.Body)
-				_ = res.Body.Close()
-			}
+			p := startProxy(t, newUpstream(t, cutAfter(body)), 1_000_000)
+			sendCut(t, p)
 
 			awaitUsageLines(t, p, 1)
 			want := sent
-			want.Output = 1
+			want.Output = cutMaxTokens
 			if got := readUsage(t, p).Tokens; got != want {
 				t.Fatalf("metered %+v, want the input of the cut message_start %+v", got, want)
 			}
@@ -130,9 +187,11 @@ func TestMeter_streamCutInsideStartEvent_inputCounted(t *testing.T) {
 	}
 }
 
-// A client that goes away mid-stream stops the copy, not the count: what
-// the proxy already relayed is recorded.
-func TestMeter_clientGoneMidStream_inputCounted(t *testing.T) {
+// A client that goes away mid-stream stops the copy, not the count: the
+// input the proxy already relayed is recorded, and the output it will never
+// see is charged at max_tokens, so leaving early saves the workspace
+// nothing against the cap.
+func TestMeter_clientGoneMidStream_inputAndMaxTokensCharged(t *testing.T) {
 	t.Parallel()
 	sent := domain.TokenUsage{Input: 9, CacheRead: 1}
 	release := make(chan struct{})
@@ -148,7 +207,7 @@ func TestMeter_clientGoneMidStream_inputCounted(t *testing.T) {
 	})
 	defer close(release)
 	p := startProxy(t, up, 1_000_000)
-	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader("{}"))
+	req, _ := http.NewRequest(http.MethodPost, "http://"+p.addr+"/v1/messages", strings.NewReader(cutBody))
 	req.Header.Set("x-api-key", runToken)
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -162,9 +221,9 @@ func TestMeter_clientGoneMidStream_inputCounted(t *testing.T) {
 
 	awaitUsageLines(t, p, 1)
 	want := sent
-	want.Output = 1
+	want.Output = cutMaxTokens
 	if got := readUsage(t, p).Tokens; got != want {
-		t.Fatalf("metered %+v, want what message_start said %+v", got, want)
+		t.Fatalf("metered %+v, want what message_start said and max_tokens %+v", got, want)
 	}
 }
 

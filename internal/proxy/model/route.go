@@ -1,6 +1,8 @@
 package model
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -8,8 +10,6 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
-
-	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // DefaultUpstream is the model API the proxy forwards to unless told
@@ -48,25 +48,54 @@ func ParseUpstream(raw string) (*url.URL, error) {
 type handler struct {
 	p       *Proxy
 	forward http.Handler
+	// fail stops the proxy when a line cannot be written.
+	fail func(error)
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodHead && r.URL.Path == helloPath:
 		w.WriteHeader(http.StatusOK)
-		return
 	case r.Method != http.MethodPost || r.URL.Path != messagesPath:
 		refuse(w, http.StatusNotFound, notFoundBody)
-		return
 	case !h.p.authorized(r):
 		refuse(w, http.StatusUnauthorized, unauthorizedBody)
+	default:
+		h.message(w, r)
+	}
+}
+
+// checkedKey carries the checked request to the response's meter.
+type checkedKey struct{}
+
+// message forwards one Messages request, one at a time, with the body the
+// proxy checked in place of the one it was sent.
+func (h *handler) message(w http.ResponseWriter, r *http.Request) {
+	release, ok := h.p.acquire(r.Context())
+	if !ok {
 		return
 	}
-	if status, body, ok := h.p.admit(); !ok {
+	defer release()
+	req, err := readBody(w, r)
+	switch {
+	case errors.Is(err, errTooLarge):
+		refuse(w, http.StatusRequestEntityTooLarge, tooLargeBody)
+		return
+	case err != nil:
+		refuse(w, http.StatusBadRequest, invalidBody)
+		return
+	}
+	status, body, err := h.p.admit(req.maxTokens)
+	if err != nil {
+		h.fail(err)
+	}
+	if status != 0 {
 		refuse(w, status, body)
 		return
 	}
-	h.forward.ServeHTTP(w, r)
+	r.Body, r.ContentLength = io.NopCloser(bytes.NewReader(req.body)), int64(len(req.body))
+	r.Header.Del("Content-Length")
+	h.forward.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), checkedKey{}, req)))
 }
 
 func refuse(w http.ResponseWriter, status int, body string) {
@@ -76,9 +105,10 @@ func refuse(w http.ResponseWriter, status int, body string) {
 }
 
 // reverseProxy forwards to the upstream with the real key in place of the
-// token, asks for an uncompressed answer the meter can read, and meters
-// the body as it streams to the client, flushing every write. fail stops
-// the proxy when a usage line cannot be written.
+// token and only the allowlisted betas, asks for an uncompressed answer the
+// meter can read, and meters the body as it streams to the client,
+// flushing every write. fail stops the proxy when a usage line cannot be
+// written.
 func (p *Proxy) reverseProxy(fail func(error)) *httputil.ReverseProxy {
 	return &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -87,6 +117,10 @@ func (p *Proxy) reverseProxy(fail func(error)) *httputil.ReverseProxy {
 			pr.Out.Header.Del("Authorization")
 			pr.Out.Header.Set("x-api-key", p.key)
 			pr.Out.Header.Set("Accept-Encoding", "identity")
+			pr.Out.Header.Del("anthropic-beta")
+			if kept := allowedBetas(pr.In.Header.Values("anthropic-beta")); kept != "" {
+				pr.Out.Header.Set("anthropic-beta", kept)
+			}
 		},
 		Transport:     p.transport,
 		FlushInterval: -1,
@@ -95,11 +129,12 @@ func (p *Proxy) reverseProxy(fail func(error)) *httputil.ReverseProxy {
 				return fmt.Errorf("model: upstream answered %s-encoded; the proxy meters only plain bodies", enc)
 			}
 			status := res.StatusCode
+			req, _ := res.Request.Context().Value(checkedKey{}).(checked)
 			res.Body = &meteredBody{
 				ReadCloser: res.Body,
 				parser:     parserFor(res.Header.Get("Content-Type")),
-				record: func(u domain.TokenUsage) {
-					if err := p.record(status, u); err != nil {
+				record: func(m metered) {
+					if err := p.record(status, charge(status, m, req)); err != nil {
 						fail(err)
 					}
 				},
