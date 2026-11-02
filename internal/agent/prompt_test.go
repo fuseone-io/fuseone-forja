@@ -59,6 +59,15 @@ func TestRender_contentWithFences_quotedWhole(t *testing.T) {
 	}
 }
 
+// The agent is told which branch its commits are kept from.
+func TestRender_branch_named(t *testing.T) {
+	t.Parallel()
+	prompt := string(agent.Render(agent.Task{Issue: domain.Issue{Number: 13, Title: "t", Body: "b"}, Branch: "forja/13"}))
+	if !strings.Contains(prompt, "on the branch forja/13, which is checked out") {
+		t.Fatalf("prompt does not name the branch:\n%s", prompt)
+	}
+}
+
 func TestRender_noContextNoGates_stillRenders(t *testing.T) {
 	t.Parallel()
 	prompt := string(agent.Render(agent.Task{Issue: domain.Issue{Number: 3, Title: "t", Body: "b"}}))

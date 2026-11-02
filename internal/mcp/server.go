@@ -23,6 +23,11 @@ type Deps struct {
 	// Agent runs the agent of a forja.implement run; nil until the model
 	// proxy is configured.
 	Agent AgentRunner
+	// Pusher, PullRequests and Statuses deliver a green implement run: its
+	// branch, its pull request and its forja/gates status.
+	Pusher       Pusher
+	PullRequests PullRequests
+	Statuses     CommitStatuses
 	// NewID yields the id of a new run.
 	NewID func() string
 	Now   func() time.Time

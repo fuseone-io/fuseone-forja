@@ -14,6 +14,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
+	"github.com/fuseone-io/fuseone-forja/internal/github"
 	forja "github.com/fuseone-io/fuseone-forja/internal/mcp"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
@@ -60,9 +61,10 @@ type fakeClaims struct {
 	// supersedes is copied into every granted claim.
 	supersedes *domain.ClaimSummary
 
-	mu       sync.Mutex
-	requests []domain.ClaimRequest
-	released []domain.Claim
+	mu        sync.Mutex
+	requests  []domain.ClaimRequest
+	released  []domain.Claim
+	deadlines []time.Time
 }
 
 func (f *fakeClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.Claim, error) {
@@ -79,12 +81,28 @@ func (f *fakeClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.C
 	}, nil
 }
 
-func (f *fakeClaims) Release(_ context.Context, c domain.Claim) error {
+// Release fails on a context that already ended, as the real one does
+// before it reaches GitHub.
+func (f *fakeClaims) Release(ctx context.Context, c domain.Claim) error {
 	f.calls.add("release")
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	dl, _ := ctx.Deadline()
+	f.deadlines = append(f.deadlines, dl)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	f.released = append(f.released, c)
 	return f.releaseErr
+}
+
+func (f *fakeClaims) releaseDeadline() time.Time {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.deadlines) == 0 {
+		return time.Time{}
+	}
+	return f.deadlines[0]
 }
 
 func (f *fakeClaims) requested() []domain.ClaimRequest {
@@ -99,15 +117,28 @@ func (f *fakeClaims) releasedClaims() []domain.Claim {
 	return append([]domain.Claim(nil), f.released...)
 }
 
-// recordingRuns is the real in-memory store with every Put logged by the
-// state it recorded.
+// recordingRuns is the real in-memory store with every Put that changes a
+// run's state logged by the state it recorded; the Puts that only record
+// a stage's progress are not logged.
 type recordingRuns struct {
 	*runstore.Memory
 	calls *callLog
+
+	mu   sync.Mutex
+	last map[string]domain.RunState
 }
 
 func (r *recordingRuns) Put(ctx context.Context, run domain.Run) error {
-	r.calls.add("put " + string(run.State))
+	r.mu.Lock()
+	if r.last == nil {
+		r.last = map[string]domain.RunState{}
+	}
+	prev, seen := r.last[run.ID]
+	r.last[run.ID] = run.State
+	r.mu.Unlock()
+	if !seen || prev != run.State {
+		r.calls.add("put " + string(run.State))
+	}
 	return r.Memory.Put(ctx, run)
 }
 
@@ -127,21 +158,26 @@ func (r *failingRuns) Put(ctx context.Context, run domain.Run) error {
 }
 
 // implementFixture is a server wired with a granting claimer over a valid
-// contract with wall_clock 30m, a base checkout, an issue and an agent
-// that exits 0.
+// contract with wall_clock 30m, a base checkout, an issue, an agent that
+// exits 0 with a commit, green gates, and a push, a pull request and a
+// status that all succeed.
 type implementFixture struct {
-	calls  *callLog
-	claims *fakeClaims
-	runs   *recordingRuns
-	agent  *fakeAgent
-	cloner *fakeCloner
-	issues *fakeIssues
-	cs     *sdk.ClientSession
+	calls    *callLog
+	claims   *fakeClaims
+	runs     *recordingRuns
+	agent    *fakeAgent
+	cloner   *fakeCloner
+	issues   *fakeIssues
+	gates    *fakeGates
+	pusher   *fakePusher
+	prs      *fakePullRequests
+	statuses *fakeStatuses
+	cs       *sdk.ClientSession
 }
 
 func newImplementFixture(t *testing.T, contract []byte, mutate func(*fakeClaims)) *implementFixture {
 	t.Helper()
-	return newAgentFixture(t, contract, mutate, &fakeAgent{})
+	return newAgentFixture(t, contract, mutate, &fakeAgent{result: exported()})
 }
 
 // newAgentFixture is the fixture with the given agent.
@@ -167,19 +203,27 @@ func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementF
 	}
 	agent := w.agent
 	if agent == nil {
-		agent = &fakeAgent{}
+		agent = &fakeAgent{result: exported()}
 	}
 	agent.calls = calls
 	runs := &recordingRuns{Memory: runstore.NewMemory(), calls: calls}
 	contracts := &fakeContracts{src: domain.ContractSource{SHA: doctorSHA, Body: contract}}
 	deps := testDeps(runs, contracts, claims)
-	cloner, issues := &fakeCloner{co: implementCheckout()}, &fakeIssues{issue: implementStatement}
-	deps.Cloner, deps.Issues, deps.Agent = cloner, issues, agent
+	fx := &implementFixture{
+		calls: calls, claims: claims, runs: runs, agent: agent,
+		cloner: &fakeCloner{co: implementCheckout(), log: calls}, issues: &fakeIssues{issue: implementStatement},
+		gates:    &fakeGates{report: greenReport(), log: calls},
+		pusher:   &fakePusher{deliveryLog[github.PushRequest]{calls: calls, name: "push"}},
+		prs:      &fakePullRequests{deliveryLog[github.PullRequestRequest]{calls: calls, name: "pull_request"}},
+		statuses: &fakeStatuses{deliveryLog[github.StatusRequest]{calls: calls, name: "status"}},
+	}
+	deps.Cloner, deps.Issues, deps.Agent, deps.Gates = fx.cloner, fx.issues, agent, fx.gates
+	deps.Pusher, deps.PullRequests, deps.Statuses = fx.pusher, fx.prs, fx.statuses
 	if w.deps != nil {
 		w.deps(&deps)
 	}
-	cs := connectDeps(t, deps)
-	return &implementFixture{calls: calls, claims: claims, runs: runs, agent: agent, cloner: cloner, issues: issues, cs: cs}
+	fx.cs = connectDeps(t, deps)
+	return fx
 }
 
 var contractWithWallClock = []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\nlimits:\n  wall_clock: 30m\n")
@@ -213,7 +257,7 @@ func TestImplement_free_claimsRecordsRunsAgentReleasesThenTerminal(t *testing.T)
 	fx := newImplementFixture(t, contractWithWallClock, nil)
 
 	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
-	want := []string{"claim", "put running", "agent", "release", "put succeeded"}
+	want := []string{"claim", "put running", "clone", "agent", "gates", "push", "pull_request", "status", "release", "put succeeded"}
 	if got := fx.calls.list(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -281,7 +325,7 @@ func TestImplement_releaseFails_runFailedAndErrorReturned(t *testing.T) {
 			t.Errorf("error text %q does not contain %q", text, want)
 		}
 	}
-	want := []string{"claim", "put running", "agent", "release", "put failed"}
+	want := []string{"claim", "put running", "clone", "agent", "gates", "push", "pull_request", "status", "release", "put failed"}
 	if got := fx.calls.list(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -431,8 +475,50 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	if !present || string(raw) != `"run-expired"` {
 		t.Fatalf("supersedes on the wire = %s (present %v), want \"run-expired\"", raw, present)
 	}
-	if len(wire) != 14 {
-		t.Fatalf("wire object has %d keys, want the 13 usual plus supersedes: %s", len(wire), structuredJSON(t, res))
+	if len(wire) != 21 {
+		t.Fatalf("wire object has %d keys, want the 20 of a delivered run plus supersedes: %s", len(wire), structuredJSON(t, res))
+	}
+}
+
+// deadlineRuns keeps the deadline of every Put.
+type deadlineRuns struct {
+	forja.RunStore
+
+	mu        sync.Mutex
+	deadlines []time.Time
+}
+
+func (r *deadlineRuns) Put(ctx context.Context, run domain.Run) error {
+	dl, _ := ctx.Deadline()
+	r.mu.Lock()
+	r.deadlines = append(r.deadlines, dl)
+	r.mu.Unlock()
+	return r.RunStore.Put(ctx, run)
+}
+
+func (r *deadlineRuns) first() time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.deadlines[0]
+}
+
+// The release is bounded from when it starts, not from when the run
+// started: a run that works longer than the release's bound still frees
+// its issue.
+func TestImplement_runOutlastsFinishBound_releaseStillHasItsOwn(t *testing.T) {
+	t.Parallel()
+	var runs *deadlineRuns
+	fx := newWiredFixture(t, contractWithWallClock, fixtureWiring{deps: func(d *forja.Deps) {
+		runs = &deadlineRuns{RunStore: d.Runs}
+		d.Runs = runs
+	}})
+	const worked = 20 * time.Millisecond
+	fx.gates.during = func() { time.Sleep(worked) }
+
+	decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	first, release := runs.first(), fx.claims.releaseDeadline()
+	if first.IsZero() || release.Sub(first) < worked {
+		t.Fatalf("release deadline %v, first record's %v: the release's bound was spent while the run worked %v", release, first, worked)
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -284,6 +285,76 @@ func TestMemory_get_registryListNotShared(t *testing.T) {
 	}
 	if again.Registry.Accesses[0] != want {
 		t.Fatalf("registry after a reader's change = %+v, want %+v", again.Registry.Accesses[0], want)
+	}
+}
+
+// stagedRun is a run with a finished stage, a stage in flight and a gate
+// report whose streams, egress and registry lists a caller could reach.
+func stagedRun() domain.Run {
+	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
+	finished := at.Add(time.Minute)
+	run := sampleRun("run-1")
+	run.Stages = []domain.Stage{
+		{Name: domain.StageClone, StartedAt: at, FinishedAt: &finished, Outcome: domain.StageSucceeded},
+		{Name: domain.StageGates, StartedAt: finished, Outcome: domain.StageRunning},
+	}
+	run.Gates = domain.GateReport{
+		Setup: []domain.GateResult{{Name: "setup[0]", Stdout: []byte("setup out"), Stderr: []byte("setup err")}},
+		Gates: []domain.GateResult{{Name: "build", Stdout: []byte("build out"), Stderr: []byte("build err")}},
+		Egress: domain.EgressReport{
+			Denied: []domain.EgressDenial{{At: at, Kind: domain.EgressConnect, Destination: "example.com:443"}}, Count: 1,
+		},
+		Registry: domain.RegistryReport{
+			Accesses: []domain.RegistryAccess{{At: at, Registry: "ghcr.io/my-org", Path: "/pkg", Outcome: domain.RegistryAllowed, Status: 200}}, Count: 1,
+		},
+	}
+	run.PullRequest = domain.PullRequest{Number: 41, URL: "https://github.com/fuseone-io/fuseone-forja/pull/41"}
+	return run
+}
+
+// scribble changes, in place, everything of run a shared backing array or
+// pointer would carry into the store.
+func scribble(run domain.Run) {
+	*run.Stages[0].FinishedAt = run.Stages[0].FinishedAt.Add(time.Hour)
+	run.Stages[1].Outcome = domain.StageFailed
+	run.Gates.Setup[0].Stdout[0] = 'X'
+	run.Gates.Gates[0].Stderr[0] = 'X'
+	run.Gates.Gates[0].ExitCode = 99
+	run.Gates.Egress.Denied[0].Destination = "changed:443"
+	run.Gates.Registry.Accesses[0].Path = "/changed"
+}
+
+// The stages and the gate report are evidence: neither the writer after
+// Put nor a reader after Get can change what the store holds through a
+// shared slice, byte stream or timestamp.
+func TestMemory_stagesAndGateStreams_notSharedWithCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	want := stagedRun()
+	written := stagedRun()
+	if err := store.Put(ctx, written); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	scribble(written)
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	assertStagedRun(t, "after the writer's change", got, want)
+	scribble(got)
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	assertStagedRun(t, "after a reader's change", again, want)
+}
+
+func assertStagedRun(t *testing.T, when string, got, want domain.Run) {
+	t.Helper()
+	if !reflect.DeepEqual(got.Stages, want.Stages) || !reflect.DeepEqual(got.Gates, want.Gates) || got.PullRequest != want.PullRequest {
+		t.Fatalf("%s: stages %+v gates %+v pr %+v, want %+v %+v %+v", when, got.Stages, got.Gates, got.PullRequest, want.Stages, want.Gates, want.PullRequest)
 	}
 }
 

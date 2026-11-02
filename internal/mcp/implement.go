@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -30,18 +31,19 @@ type RunStore interface {
 	Put(ctx context.Context, run domain.Run) error
 }
 
-// finishTimeout bounds the release and the terminal record once the caller
-// is gone: the ref must come off and the run must end whether or not
-// anyone is still waiting for the answer.
+// finishTimeout bounds each record of the run and the release, counted
+// from when each starts: the ref must come off and the run must end
+// whether or not anyone is still waiting for the answer.
 const finishTimeout = 30 * time.Second
 
 type implementer struct {
 	deps Deps
 }
 
-// implementHandler reserves the issue, records the run, runs the agent and
-// releases the reservation. A refused claim is a tool error naming the
-// holder and records no run.
+// implementHandler reserves the issue, records the run, runs the agent,
+// gates its head and delivers it, and releases the reservation. A refused
+// claim is a tool error naming the holder and records no run; a run that
+// failed on its own terms, such as a red gate, is a result.
 func implementHandler(deps Deps) sdk.ToolHandlerFor[ImplementInput, ImplementOutput] {
 	h := implementer{deps: deps}
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in ImplementInput) (*sdk.CallToolResult, ImplementOutput, error) {
@@ -64,22 +66,41 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 	if err != nil {
 		return ImplementOutput{}, err
 	}
+	started := h.deps.Now()
 	c, err := h.deps.Claims.Claim(ctx, domain.ClaimRequest{
 		Repository: in.Repository, Issue: in.Issue, RunID: h.deps.NewID(), Lease: lease,
 	})
 	if err != nil {
 		return ImplementOutput{}, err
 	}
-	if err := h.run(ctx, c, in.BaseBranch); err != nil {
+	f := newFlight(h.deps, c, in.BaseBranch, claimStage(started, h.deps.Now()))
+	if err := h.run(ctx, f); err != nil {
 		return ImplementOutput{}, fmt.Errorf("run %s: %w", c.RunID, err)
 	}
-	return ImplementOutput{RunID: c.RunID}, nil
+	return implementOutput(f.run, f.evidence), nil
 }
 
+// wired refuses a server missing any dependency a run reaches, naming the
+// missing ones; a missing agent names the variables that configure one.
 func (h implementer) wired() error {
 	d := h.deps
-	if d.Runs == nil || d.Contracts == nil || d.Claims == nil || d.Cloner == nil || d.Issues == nil || d.NewID == nil || d.Now == nil {
-		return errors.New("not wired: runs, contracts, claims, cloner, issues, NewID and Now are all required")
+	required := []struct {
+		name string
+		set  bool
+	}{
+		{"runs", d.Runs != nil}, {"contracts", d.Contracts != nil}, {"claims", d.Claims != nil},
+		{"cloner", d.Cloner != nil}, {"issues", d.Issues != nil}, {"gates", d.Gates != nil},
+		{"pusher", d.Pusher != nil}, {"pull requests", d.PullRequests != nil}, {"statuses", d.Statuses != nil},
+		{"NewID", d.NewID != nil}, {"Now", d.Now != nil},
+	}
+	var missing []string
+	for _, r := range required {
+		if !r.set {
+			missing = append(missing, r.name)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("not wired: %s required", strings.Join(missing, ", "))
 	}
 	if d.Agent == nil {
 		return errNoAgent
@@ -101,40 +122,44 @@ func (h implementer) lease(ctx context.Context, repo string) (time.Duration, err
 	return domain.LeaseFor(parsed.Limits, h.deps.Lease)
 }
 
-// run records the run as running, runs the agent on the base branch,
-// releases the claim and records the terminal state with what the
-// proxies recorded, on every outcome. Any failure of the work or the
-// release is returned after the run was recorded failed.
-func (h implementer) run(ctx context.Context, c domain.Claim, base string) error {
-	run := domain.Run{
-		ID: c.RunID, Tool: domain.ToolImplement, Repository: c.Repository, Issue: c.Issue,
-		State: domain.StateRunning, StartedAt: h.deps.Now(),
-	}
-	if c.Supersedes != nil {
-		run.Supersedes = c.Supersedes.RunID
-	}
+// run records the run as running, works it stage by stage, releases the
+// claim and records the terminal state, on every outcome. It is succeeded
+// only when every stage and the release worked. Any failure of the work
+// or the release is returned after the run was recorded failed.
+func (h implementer) run(ctx context.Context, f *flight) error {
 	// The caller may be gone by now. Once the issue is claimed, the records
-	// and the release run on a context detached from the caller's, with a
-	// deadline of their own, so neither the ref nor a run stuck in running
-	// is left behind.
-	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
-	defer cancel()
-	if err := h.deps.Runs.Put(done, run); err != nil {
-		return errors.Join(fmt.Errorf("record run: %w", err), h.release(done, c))
+	// and the release run on a context detached from the caller's, each
+	// bounded from its own start, so neither the ref nor a run stuck in
+	// running is left behind however long the work took.
+	done := context.WithoutCancel(ctx)
+	if err := f.put(done); err != nil {
+		return errors.Join(err, h.release(done, f.claim))
 	}
-	res, workErr := h.work(ctx, c, base)
-	releaseErr := h.release(done, c)
+	delivered, workErr := h.work(ctx, done, f)
+	releaseErr := h.releaseStage(done, f)
 	finished := h.deps.Now()
-	run.FinishedAt = &finished
-	run.Tokens, run.Egress = res.Tokens, res.Egress
-	run.State, run.Reason = outcome(res, workErr, releaseErr)
-	if err := h.deps.Runs.Put(done, run); err != nil {
-		return errors.Join(workErr, releaseErr, fmt.Errorf("record run: %w", err))
+	f.run.FinishedAt, f.run.State = &finished, domain.StateFailed
+	if delivered && workErr == nil && releaseErr == nil {
+		f.run.State, f.run.Reason = domain.StateSucceeded, ""
+	}
+	if err := f.put(done); err != nil {
+		return errors.Join(workErr, releaseErr, err)
 	}
 	return errors.Join(workErr, releaseErr)
 }
 
+// releaseStage frees the issue as the release stage. The release happens
+// even when its start could not be recorded; the terminal record ends it.
+func (h implementer) releaseStage(done context.Context, f *flight) error {
+	recordErr := f.begin(done, domain.StageRelease)
+	err := h.release(done, f.claim)
+	f.finish(err == nil)
+	return errors.Join(err, recordErr)
+}
+
 func (h implementer) release(ctx context.Context, c domain.Claim) error {
+	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
+	defer cancel()
 	if err := h.deps.Claims.Release(ctx, c); err != nil {
 		return fmt.Errorf("release claim: %w", err)
 	}

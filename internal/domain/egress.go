@@ -40,6 +40,14 @@ func (r *EgressReport) Record(d EgressDenial) {
 	}
 }
 
+// Merge is r followed by o: both counts, and o's listed denials after r's
+// while the list has room.
+func (r EgressReport) Merge(o EgressReport) EgressReport {
+	room := max(0, MaxEgressDenials-len(r.Denied))
+	denied := append(append([]EgressDenial(nil), r.Denied...), o.Denied[:min(room, len(o.Denied))]...)
+	return EgressReport{Denied: denied, Count: r.Count + o.Count}
+}
+
 // Truncated reports whether denials were counted that the list leaves out.
 func (r EgressReport) Truncated() bool {
 	return r.Count > len(r.Denied)

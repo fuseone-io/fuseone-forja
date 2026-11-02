@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/agent"
@@ -20,45 +23,118 @@ type AgentRunner interface {
 // agent.
 var errNoAgent = errors.New("not wired: no agent; set FORJA_MODEL_API_KEY, FORJA_MODEL_TOKEN_CAP and FORJA_AGENT_BINARY")
 
-// work clones base, reads the contract and the agent_context at that
-// commit and the issue from GitHub, and runs the agent on the checkout
-// under the contract's wall clock, which never outlives the claim's lease.
-// Nothing the agent's tree holds is read: the contract and the context are
-// the base commit's.
-func (h implementer) work(ctx context.Context, c domain.Claim, base string) (agent.Result, error) {
-	none := agent.Result{ExitCode: domain.NoExitCode}
-	co, err := h.deps.Cloner.Clone(ctx, c.Repository, base)
-	if err != nil {
-		return none, err
+// branchPrefix is the namespace of the branches runs push.
+const branchPrefix = "forja/"
+
+// runStep is one stage after the clone, run under the run's deadline
+// with its records on done.
+type runStep func(ctx, done context.Context, f *flight) (bool, error)
+
+// work clones the base, then runs the agent, the gates and the delivery
+// under one deadline: the contract's wall clock counted from the claim,
+// which never outlives the claim's lease. Nothing the agent's tree holds
+// is read: the contract and the context are the base commit's. delivered
+// says every stage worked.
+func (h implementer) work(ctx, done context.Context, f *flight) (delivered bool, err error) {
+	defer f.closeCheckout()
+	if ok, err := h.cloneStage(ctx, done, f); !ok || err != nil {
+		return false, err
 	}
-	// The run's outcome is the agent's; a clone directory that could not be
-	// removed changes none of it.
-	defer func() { _ = co.Close() }()
-	parsed, _, err := readContract(ctx, co, c.Repository)
-	if err != nil {
-		return none, err
-	}
-	issue, err := h.deps.Issues.Read(ctx, c.Repository, c.Issue)
-	if err != nil {
-		return none, err
-	}
-	files, _, err := agentContext(ctx, co, parsed.AgentContext)
-	if err != nil {
-		return none, err
-	}
-	left, err := h.timeLeft(c, parsed)
-	if err != nil {
-		return none, fmt.Errorf("contract at %s: %w", co.SHA(), err)
-	}
-	runCtx, cancel := context.WithTimeout(ctx, left)
+	runCtx, cancel := context.WithTimeout(ctx, f.left)
 	defer cancel()
-	return h.deps.Agent.Run(runCtx, agent.Task{
-		RunID: c.RunID, Contract: parsed, Tree: co.Dir(), Issue: issue, Context: agentFiles(files),
+	dir, err := os.MkdirTemp("", "forja-bundle-*")
+	if err != nil {
+		return false, fmt.Errorf("bundle directory: %w", err)
+	}
+	// The bundle was imported or refused by now; a directory that could not
+	// be removed changes neither.
+	defer func() { _ = os.RemoveAll(dir) }()
+	f.bundle = filepath.Join(dir, "commits.bundle")
+	for _, step := range []runStep{h.agentStage, h.gatesStage, h.pushStage, h.pullRequestStage, h.statusStage} {
+		if ok, err := step(runCtx, done, f); !ok || err != nil {
+			return false, err
+		}
+	}
+	return true, nil
+}
+
+// cloneStage clones the base branch and reads at that commit what the run
+// needs, then starts the run's branch.
+func (h implementer) cloneStage(ctx, done context.Context, f *flight) (bool, error) {
+	return f.stage(done, domain.StageClone, func() (bool, error) {
+		co, err := h.deps.Cloner.Clone(ctx, f.run.Repository, f.base)
+		if err != nil {
+			return false, err
+		}
+		f.co, f.run.BaseSHA = co, co.SHA()
+		return true, h.prepare(ctx, f)
 	})
 }
 
-// timeLeft is how long the agent may run under the held claim: the
-// contract's wall clock counted from the claim. The contract the agent runs
+// prepare reads the contract, the issue and the agent_context of the base
+// checkout, sizes what is left of the wall clock and starts the branch.
+func (h implementer) prepare(ctx context.Context, f *flight) error {
+	parsed, contractSHA, err := readContract(ctx, f.co, f.run.Repository)
+	if err != nil {
+		return err
+	}
+	f.contract, f.run.ContractSHA = parsed, contractSHA
+	if f.issue, err = h.deps.Issues.Read(ctx, f.run.Repository, f.run.Issue); err != nil {
+		return err
+	}
+	if f.context, _, err = agentContext(ctx, f.co, parsed.AgentContext); err != nil {
+		return err
+	}
+	if f.left, err = h.timeLeft(f.claim, parsed); err != nil {
+		return fmt.Errorf("contract at %s: %w", f.co.SHA(), err)
+	}
+	f.run.Branch = branchPrefix + strconv.Itoa(f.run.Issue)
+	return f.co.StartBranch(ctx, f.run.Branch)
+}
+
+// agentStage runs the agent on the checkout and imports its commits. The
+// cap is the reason whatever else happened; an agent stopped, failed or
+// that committed nothing ends the run without an error.
+func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, error) {
+	return f.stage(done, domain.StageAgent, func() (bool, error) {
+		res, err := h.deps.Agent.Run(ctx, agent.Task{
+			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),
+			Branch: f.run.Branch, BaseSHA: f.run.BaseSHA, Bundle: f.bundle,
+		})
+		f.run.Tokens, f.run.Egress = res.Tokens, res.Egress
+		if res.Capped {
+			f.run.Reason = domain.ReasonTokenCap
+		}
+		switch {
+		case err != nil:
+			return false, err
+		case res.Capped || res.TimedOut || res.ExitCode != 0:
+			return false, nil
+		case !res.Exported:
+			f.run.Reason = domain.ReasonNoCommits
+			return false, nil
+		}
+		return h.adopt(ctx, f)
+	})
+}
+
+// adopt brings the exported commits into the checkout; a head at the base
+// is no commit at all.
+func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
+	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
+	if errors.Is(err, domain.ErrNoCommits) {
+		f.run.Reason = domain.ReasonNoCommits
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	f.run.HeadSHA = head
+	return true, nil
+}
+
+// timeLeft is how long the run may work under the held claim: the
+// contract's wall clock counted from the claim. The contract the run works
 // under may differ from the one the lease was sized from, so it is refused
 // when it asks for a longer lease than the claim holds, or when its wall
 // clock would end at or after the lease, or is already spent.
@@ -88,17 +164,4 @@ func agentFiles(files []ContextFile) []agent.File {
 		out = append(out, agent.File{Path: f.Path, Content: f.Content})
 	}
 	return out
-}
-
-// outcome is the terminal state of an implement run. The cap is a reason
-// whatever else happened; success needs the agent to have exited 0 on its
-// own and every step around it to have worked.
-func outcome(res agent.Result, workErr, releaseErr error) (domain.RunState, domain.FailureReason) {
-	switch {
-	case res.Capped:
-		return domain.StateFailed, domain.ReasonTokenCap
-	case workErr != nil || releaseErr != nil || res.TimedOut || res.ExitCode != 0:
-		return domain.StateFailed, ""
-	}
-	return domain.StateSucceeded, ""
 }

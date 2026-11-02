@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -43,12 +44,53 @@ type fakeCheckout struct {
 	failPath string
 	failErr  error
 	closed   int
+	// started is the branch StartBranch created. head is the commit Adopt
+	// imports; adoptedDir the tree Dir holds once it did; adoptErr fails it.
+	started    string
+	head       string
+	adoptedDir string
+	adoptErr   error
+	adopted    []string
 }
 
 func (f *fakeCheckout) SHA() string    { return f.sha }
 func (f *fakeCheckout) Branch() string { return f.branch }
-func (f *fakeCheckout) Dir() string    { return f.dir }
 func (f *fakeCheckout) Close() error   { f.closed++; return nil }
+
+func (f *fakeCheckout) Dir() string {
+	if len(f.adopted) > 0 {
+		return f.adoptedDir
+	}
+	return f.dir
+}
+
+func (f *fakeCheckout) StartBranch(_ context.Context, name string) error {
+	if f.started != "" {
+		return fmt.Errorf("fake: branch %s already started", f.started)
+	}
+	f.started = name
+	return nil
+}
+
+// Adopt enforces what the real import does: the bundle exists, it is the
+// started branch, and a head at the base is no commit at all. Reads keep
+// answering for the base.
+func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, error) {
+	f.adopted = append(f.adopted, bundle)
+	if f.adoptErr != nil {
+		return "", f.adoptErr
+	}
+	if _, err := os.Stat(bundle); err != nil {
+		return "", fmt.Errorf("fake: bundle: %w", err)
+	}
+	if branch != f.started {
+		return "", fmt.Errorf("fake: adopt %s, started %s", branch, f.started)
+	}
+	if f.head == f.sha {
+		return "", fmt.Errorf("fake: %w", domain.ErrNoCommits)
+	}
+	return f.head, nil
+}
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {
 	path = strings.TrimSuffix(path, "/")
@@ -109,9 +151,14 @@ type fakeCloner struct {
 	repo   string
 	branch string
 	calls  int
+	// log, when set, records "clone" in the run's call order.
+	log *callLog
 }
 
 func (f *fakeCloner) Clone(_ context.Context, repo, branch string) (forja.Checkout, error) {
+	if f.log != nil {
+		f.log.add("clone")
+	}
 	f.calls++
 	f.repo, f.branch = repo, branch
 	if f.err != nil {
