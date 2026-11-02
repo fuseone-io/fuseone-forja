@@ -120,7 +120,28 @@ type Runner struct {
 // usage and the egress, and closes it, on every path. The deadline is a
 // result; a cancellation is an error. The compute runs from just before
 // the launch until Close returned, or until a failed launch returned.
-func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
+func (r *Runner) Run(ctx context.Context, t Task) (Result, error) {
+	return r.session(ctx, launch{runID: t.RunID, image: t.Contract.Image, tree: t.Tree, prompt: Render(t)},
+		func(ctx context.Context, ws Workspace, res *Result) error { return export(ctx, ws, t, res) })
+}
+
+// launch is one agent session: the run and image its workspace is
+// launched for, the tree copied in and the prompt the agent reads.
+type launch struct {
+	runID, image, tree string
+	prompt             []byte
+}
+
+// deliverFunc brings out of a running workspace what an agent that exited
+// 0 on its own left there.
+type deliverFunc func(ctx context.Context, ws Workspace, res *Result) error
+
+// session launches the workspace, writes the prompt and runs the agent
+// under the cap; an agent that exited 0 on its own is delivered while the
+// workspace still runs. Then it halts, reads the proxies and closes the
+// workspace, on every path, with the compute from just before the launch
+// until Close returned, or until a failed launch returned.
+func (r *Runner) session(ctx context.Context, l launch, deliver deliverFunc) (res Result, err error) {
 	if r.Launcher == nil {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a launcher")
 	}
@@ -128,9 +149,9 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 		return Result{ExitCode: domain.NoExitCode}, errors.New("agent: Runner needs a clock")
 	}
 	launched := r.Now()
-	ws, err := r.Launcher.LaunchAgent(ctx, t.RunID, t.Contract.Image, t.Tree)
+	ws, err := r.Launcher.LaunchAgent(ctx, l.runID, l.image, l.tree)
 	if err != nil {
-		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", t.Contract.Image, err)
+		return Result{ExitCode: domain.NoExitCode, Compute: r.Now().Sub(launched)}, fmt.Errorf("agent: launch %s: %w", l.image, err)
 	}
 	detached := context.WithoutCancel(ctx)
 	defer func() {
@@ -141,9 +162,9 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 		}
 		res.Compute = r.Now().Sub(launched)
 	}()
-	res, err = execute(ctx, ws, t)
-	if err == nil {
-		err = export(ctx, ws, t, &res)
+	res, err = execute(ctx, ws, l.prompt)
+	if err == nil && res.ExitCode == 0 && !res.Capped {
+		err = deliver(ctx, ws, &res)
 	}
 	return res, errors.Join(err, collect(detached, ws, &res))
 }
@@ -152,9 +173,6 @@ func (r *Runner) Run(ctx context.Context, t Task) (res Result, err error) {
 // the task's Bundle. Nothing to export is a result; so is the deadline
 // ending the export.
 func export(ctx context.Context, ws Workspace, t Task, res *Result) error {
-	if res.ExitCode != 0 || res.Capped {
-		return nil
-	}
 	err := ws.ExportCommits(ctx, t.BaseSHA, t.Branch, t.Bundle)
 	switch {
 	case err == nil:
@@ -169,9 +187,9 @@ func export(ctx context.Context, ws Workspace, t Task, res *Result) error {
 }
 
 // execute writes the prompt and runs the agent, classifying how it ended.
-func execute(ctx context.Context, ws Workspace, t Task) (Result, error) {
+func execute(ctx context.Context, ws Workspace, prompt []byte) (Result, error) {
 	res := Result{ExitCode: domain.NoExitCode}
-	if err := ws.WriteFile(ctx, PromptPath, Render(t)); err != nil {
+	if err := ws.WriteFile(ctx, PromptPath, prompt); err != nil {
 		return res, fmt.Errorf("agent: write prompt: %w", err)
 	}
 	out, capped, err := execUnderCap(ctx, ws)
