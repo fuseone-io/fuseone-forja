@@ -123,6 +123,12 @@ wire, the lists empty when nothing matched.
   without opening the section: a `TestMain` that never calls `m.Run`, an
   `init` that exits, a build tag. The PRD exempts new tests explicitly. The
   backstop is the inversions of #22, not this slice.
+- The same holds for a new file that shadows a listed one. The pilot's gates
+  are `make <target>`, and GNU make reads `GNUmakefile`, then `makefile`,
+  before `Makefile`: an added `GNUmakefile` replaces every gate without
+  touching a `proof_paths` file, and as an addition it would not count even
+  if listed there. Only `human_merge_paths`, where additions count, catches
+  it; the pilot lists neither name today.
 - The head's `.gitattributes` is in the working tree the diff runs next to,
   so the agent can make a text file count as binary (no line counts). The
   path and its kind, which decide the classification, are unaffected.
