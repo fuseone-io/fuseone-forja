@@ -109,6 +109,30 @@ func TestImplement_noPriceTable_estimateAbsent(t *testing.T) {
 	}
 }
 
+// A run whose runners measured nothing still answers its compute: the key
+// is on the wire as 0, never absent.
+func TestImplement_nothingMeasured_computeMinutesZeroOnWire(t *testing.T) {
+	t.Parallel()
+	fx := newAgentFixture(t, contractWithWallClock, nil, &fakeAgent{result: exported()})
+
+	if raw := implementWire(t, fx)["compute_minutes"]; string(raw) != "0" {
+		t.Fatalf("compute_minutes = %q, want 0 on the wire", raw)
+	}
+}
+
+// On a priced server a run that used nothing is estimated at 0, on the
+// wire: an absent key is a server with no price table.
+func TestImplement_pricedNothingUsed_estimateZeroOnWire(t *testing.T) {
+	t.Parallel()
+	fx := pricedFixture(t, agent.Result{ExitCode: 0, Exported: true})
+	fx.gates.report.Compute = 0
+
+	implemented, status := implementWire(t, fx), statusOf(t, fx)
+	if got := [2]string{string(implemented["estimated_cost_usd_micros"]), string(status["estimated_cost_usd_micros"])}; got != [2]string{"0", "0"} {
+		t.Fatalf("estimated_cost_usd_micros on implement and status = %q, want 0 on both", got)
+	}
+}
+
 // stageWire is each stage of a status wire object by name, as its raw keys.
 func stageWire(t *testing.T, wire map[string]json.RawMessage) map[string]map[string]json.RawMessage {
 	t.Helper()
@@ -263,6 +287,24 @@ func TestImplement_gatesError_computeRecordedOnRun(t *testing.T) {
 			t.Fatalf("gates stage = %+v, want failed with %v", s, gatesCompute)
 		}
 	}
+}
+
+// An agent runner that failed still had its workspace up: the tool error
+// goes back, and forja.status reads the agent's compute and its estimate.
+func TestImplement_agentError_costOnStatus(t *testing.T) {
+	t.Parallel()
+	failing := &fakeAgent{result: charged(agent.Result{ExitCode: domain.NoExitCode, Tokens: spent}), err: errors.New("daemon gone")}
+	fx := newWiredFixture(t, contractWithWallClock, fixtureWiring{
+		agent: failing,
+		deps:  func(d *forja.Deps) { d.Prices = &testPrices },
+	})
+
+	if res := callImplement(t, fx.cs, implementIssue); !res.IsError || !strings.Contains(textOf(res), "daemon gone") {
+		t.Fatalf("IsError %v text %q, want the agent failure as a tool error", res.IsError, textOf(res))
+	}
+	status := statusOf(t, fx)
+	assertCost(t, "forja.status", status, agentMinutes, agentOnlyCost)
+	assertStageCost(t, stageWire(t, status), "agent", agentMinutes, "1230", "400")
 }
 
 // A delivery that failed after both workspaces ran is a tool error; what
