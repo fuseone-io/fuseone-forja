@@ -62,26 +62,27 @@ func resolveGatewayBinary(configured, goos string, executable func() (string, er
 
 // createGateway creates the run's gateway on its network under the alias
 // the workspace's proxy variables name. It is not started.
-func createGateway(ctx context.Context, cli *client.Client, runID string, allow []string) (string, error) {
-	cmd := []string{gatewayDir + "/" + gatewayBin, "gateway", "-run", runID}
+func (c *Container) createGateway(ctx context.Context, allow []string) (string, error) {
+	cmd := []string{gatewayDir + "/" + gatewayBin, "gateway", "-run", c.runID}
 	if len(allow) > 0 {
 		cmd = append(cmd, "-allow", strings.Join(allow, ","))
 	}
-	netName := networkName(runID)
-	created, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	netName := networkName(c.runID)
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name:   netName + "-gateway",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},
 			SecurityOpt: []string{"no-new-privileges"},
+			Runtime:     c.runtime,
 		},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			netName: {Aliases: []string{gatewayAlias}},
 		}},
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: create gateway of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create gateway of run %s: %w", c.runID, err)
 	}
 	return created.ID, nil
 }

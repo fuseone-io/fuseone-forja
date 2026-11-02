@@ -212,6 +212,15 @@ func TestRegistryCommand_readyThenAccessLineThenCleanStop(t *testing.T) {
 
 func emptyEnv(string) string { return "" }
 
+// quietEnv configures nothing but the workspace runtime, whose absence is
+// the one warning an otherwise empty environment writes.
+func quietEnv(k string) string {
+	if k == EnvWorkspaceRuntime {
+		return "runc"
+	}
+	return ""
+}
+
 func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -219,7 +228,7 @@ func TestServe_contextCancelled_exitsZeroSilently(t *testing.T) {
 	_, serverTransport := sdk.NewInMemoryTransports()
 
 	var stderr bytes.Buffer
-	if code := serve(ctx, serverTransport, &stderr, emptyEnv); code != 0 {
+	if code := serve(ctx, serverTransport, &stderr, quietEnv); code != 0 {
 		t.Fatalf("serve after cancellation = %d, want 0", code)
 	}
 	if stderr.Len() != 0 {
@@ -236,7 +245,7 @@ func serveWithoutCredentials(t *testing.T) (*sdk.ClientSession, func()) {
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 	var stderr bytes.Buffer
 	exited := make(chan int, 1)
-	go func() { exited <- serve(ctx, serverTransport, &stderr, emptyEnv) }()
+	go func() { exited <- serve(ctx, serverTransport, &stderr, quietEnv) }()
 
 	client := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil)
 	cs, err := client.Connect(ctx, clientTransport, nil)
@@ -314,7 +323,7 @@ func TestServe_noCredentials_planFailsExplicitly(t *testing.T) {
 // once on stderr that a claim left by a crash is only freed by its lease.
 func TestServe_noStateDir_warnsAndServes(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev"}
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_WORKSPACE_RUNTIME": "runc"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, serverTransport := sdk.NewInMemoryTransports()
@@ -335,7 +344,7 @@ func TestServe_noStateDir_warnsAndServes(t *testing.T) {
 
 func TestServe_stateDirSetAndEmpty_servesSilently(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": t.TempDir()}
+	env := map[string]string{"FORJA_GITHUB_TOKEN": "github_pat_dev", "FORJA_STATE_DIR": t.TempDir(), "FORJA_WORKSPACE_RUNTIME": "runc"}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, serverTransport := sdk.NewInMemoryTransports()
@@ -504,6 +513,77 @@ func TestWire_wellFormedRegistryCredentials_starts(t *testing.T) {
 	env := map[string]string{"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "p"}}`)}
 	if _, _, err := wire(func(k string) string { return env[k] }, io.Discard); err != nil {
 		t.Fatalf("wire with well-formed registry credentials = %v", err)
+	}
+}
+
+// The runtime the operator names is the one every workspace is created
+// under; unset, the daemon's default applies and the operator is told so
+// once.
+func TestWorkspaceOptions_runtime_fromTheEnvironmentWarnedWhenUnset(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name, value string
+		warned      bool
+	}{
+		{name: "configured", value: "runsc"},
+		{name: "unset", value: "", warned: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			env := map[string]string{"FORJA_WORKSPACE_RUNTIME": tt.value}
+			var stderr bytes.Buffer
+
+			opts, err := workspaceOptions(func(k string) string { return env[k] }, &stderr)
+			if err != nil {
+				t.Fatalf("workspaceOptions: %v", err)
+			}
+			if opts.Runtime != tt.value {
+				t.Errorf("Options.Runtime = %q with FORJA_WORKSPACE_RUNTIME=%q, want it", opts.Runtime, tt.value)
+			}
+			warning := strings.Count(stderr.String(), "\n") == 1 && strings.Contains(stderr.String(), "FORJA_WORKSPACE_RUNTIME")
+			if warning != tt.warned || (!tt.warned && stderr.Len() != 0) {
+				t.Errorf("stderr = %q, want one warning naming FORJA_WORKSPACE_RUNTIME: %v", stderr.String(), tt.warned)
+			}
+		})
+	}
+}
+
+// The other workspace options still come through the same assembly.
+func TestWorkspaceOptions_gatewayAllowAndCredentials_fromTheEnvironment(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{
+		"FORJA_GATEWAY_BINARY":       "/opt/forja/forjad-linux",
+		"FORJA_EGRESS_ALLOW":         "proxy.golang.org:443",
+		"FORJA_REGISTRY_CREDENTIALS": registryCredentials(t, `{"ghcr.io/my-org": {"username": "u", "password": "p"}}`),
+		"FORJA_WORKSPACE_RUNTIME":    "runsc",
+	}
+	opts, err := workspaceOptions(func(k string) string { return env[k] }, io.Discard)
+	if err != nil {
+		t.Fatalf("workspaceOptions: %v", err)
+	}
+	if opts.GatewayBinary != "/opt/forja/forjad-linux" || len(opts.EgressAllow) != 1 || opts.EgressAllow[0] != "proxy.golang.org:443" {
+		t.Errorf("Options = {binary %q allow %v}, want the configured binary and allowlist", opts.GatewayBinary, opts.EgressAllow)
+	}
+	if c, ok := opts.RegistryCredentials["ghcr.io/my-org"]; !ok || c.Username != "u" || len(opts.RegistryCredentials) != 1 {
+		t.Errorf("Options.RegistryCredentials = %d entries, want the file's one", len(opts.RegistryCredentials))
+	}
+}
+
+// The server warns at startup, whatever else is configured, that its
+// workspaces run under the daemon's default runtime.
+func TestServe_noWorkspaceRuntime_warnsOnceAndServes(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, serverTransport := sdk.NewInMemoryTransports()
+
+	var stderr bytes.Buffer
+	if code := serve(ctx, serverTransport, &stderr, emptyEnv); code != 0 {
+		t.Fatalf("serve without a workspace runtime = %d, want 0: %s", code, stderr.String())
+	}
+	if strings.Count(stderr.String(), "\n") != 1 || !strings.Contains(stderr.String(), "FORJA_WORKSPACE_RUNTIME") {
+		t.Fatalf("stderr = %q, want exactly one warning naming FORJA_WORKSPACE_RUNTIME", stderr.String())
 	}
 }
 

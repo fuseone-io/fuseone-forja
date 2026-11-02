@@ -1,4 +1,4 @@
-.PHONY: build vet lint test race integration check serve
+.PHONY: build vet lint test race integration hardened check serve
 
 build:
 	go build -o bin/forjad ./cmd/forjad
@@ -19,6 +19,11 @@ race:
 # gate inside a Forja run, not in check.
 integration:
 	go test -tags integration -count=1 -run '^TestPostgresSidecar' ./internal/workspace/
+
+# The whole workspace suite under gVisor. Needs a daemon that lists runsc
+# among its runtimes, so it is not part of check.
+hardened:
+	FORJA_WORKSPACE_RUNTIME=runsc go test -count=1 ./internal/workspace/
 
 check: build vet lint test race
 

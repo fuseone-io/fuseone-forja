@@ -15,8 +15,6 @@ import (
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
-	"github.com/fuseone-io/fuseone-forja/internal/proxy/egress"
-	"github.com/fuseone-io/fuseone-forja/internal/proxy/registry"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
@@ -29,19 +27,6 @@ const (
 	// EnvClaimLease overrides the lease a run holds its issue for, as a Go
 	// duration. It must outlive the contract's wall clock.
 	EnvClaimLease = "FORJA_CLAIM_LEASE"
-	// EnvGatewayBinary is a static linux forjad for the Docker daemon's
-	// architecture, copied into every run's egress gateway. Unset, the
-	// server's own executable is used on linux and a launch is refused
-	// elsewhere.
-	EnvGatewayBinary = "FORJA_GATEWAY_BINARY"
-	// EnvEgressAllow is the comma-separated host:port a workspace may
-	// tunnel to through its gateway, matched exactly. Unset, nothing
-	// leaves.
-	EnvEgressAllow = "FORJA_EGRESS_ALLOW"
-	// EnvRegistryCredentials is the path to a JSON file, mounted from the
-	// vault, of each registry entry's read credential. Unset, a run whose
-	// contract declares a registry is refused at launch.
-	EnvRegistryCredentials = "FORJA_REGISTRY_CREDENTIALS"
 )
 
 // wire assembles the tools' dependencies from the environment. With no
@@ -49,9 +34,9 @@ const (
 // and every GitHub-backed tool answers with the error naming the variables
 // to set; the claim store is then nil. A half-configured App, a malformed
 // lease, egress allowlist or registry credentials file, or a Docker client
-// that cannot be built from
-// DOCKER_HOST and its siblings is a startup failure. The wall clock and
-// the id generator are injected here, at the edge.
+// that cannot be built from DOCKER_HOST and its siblings is a startup
+// failure; an unset workspace runtime is a warning. The wall clock and the
+// id generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
 	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
 	lease, err := claimLease(getenv)
@@ -59,15 +44,11 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		return mcp.Deps{}, nil, err
 	}
 	deps.Lease = lease
-	allow, err := egress.ParseAllow(getenv(EnvEgressAllow))
-	if err != nil {
-		return mcp.Deps{}, nil, fmt.Errorf("%s: %w", EnvEgressAllow, err)
-	}
-	creds, err := loadRegistryCredentials(getenv)
+	opts, err := workspaceOptions(getenv, stderr)
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
-	docker, err := workspace.NewDocker(workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow, RegistryCredentials: creds})
+	docker, err := workspace.NewDocker(opts)
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
@@ -104,20 +85,6 @@ func claimLease(getenv func(string) string) (time.Duration, error) {
 		return 0, fmt.Errorf("%s: %v is not a positive duration", EnvClaimLease, lease)
 	}
 	return lease, nil
-}
-
-// loadRegistryCredentials reads the file the variable names; unset, there
-// is no credential.
-func loadRegistryCredentials(getenv func(string) string) (map[string]registry.Credential, error) {
-	path := getenv(EnvRegistryCredentials)
-	if path == "" {
-		return map[string]registry.Credential{}, nil
-	}
-	creds, err := registry.LoadCredentials(path)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvRegistryCredentials, err)
-	}
-	return creds, nil
 }
 
 // journal is the claim journal under the state directory, or nil with one
