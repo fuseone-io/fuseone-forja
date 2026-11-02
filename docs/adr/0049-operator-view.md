@@ -1,4 +1,4 @@
-# ADR 9999: the platform owner's view of runs per repository
+# ADR 0049: the platform owner's view of runs per repository
 
 - **Status:** proposed (default taken by the team; awaits human ratification)
 - **Issue:** #24

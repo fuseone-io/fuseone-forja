@@ -16,4 +16,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0042](0042-implement-delivery.md) | From the agent's commits to a pull request with forja/gates | proposed |
 | [0043](0043-run-limits.md) | The run's limits, wall_clock and max_diff_lines | proposed |
 | [0045](0045-run-cost.md) | Compute minutes, tokens and estimated cost per run | proposed |
-| [9999](9999-operator-view.md) | The platform owner's view of runs per repository | proposed |
+| [0049](0049-operator-view.md) | The platform owner's view of runs per repository | proposed |
