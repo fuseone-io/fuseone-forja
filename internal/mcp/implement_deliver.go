@@ -34,10 +34,12 @@ const gatesDescription = "Every gate of the base commit's contract passed on thi
 
 // gatesStage runs the base checkout's contract, parsed before the agent
 // ran, on the agent's head in a fresh workspace, and renders the evidence.
-// A red gate ends the run without an error.
+// A red gate ends the run without an error; a runner that failed still
+// charges the run its workspace's compute.
 func (h implementer) gatesStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StageGates, func() (bool, error) {
 		report, err := h.deps.Gates.Run(ctx, f.run.ID, f.contract, f.co.Dir())
+		f.charge(report.Compute, domain.TokenUsage{})
 		if err != nil {
 			return false, err
 		}
@@ -107,13 +109,15 @@ func pullRequestTitle(issue domain.Issue) string {
 	return "Forja: issue #" + strconv.Itoa(issue.Number)
 }
 
-// implementOutput is the run as forja.implement answers it.
-func implementOutput(run domain.Run, body string) ImplementOutput {
+// implementOutput is the run as forja.implement answers it, its cost
+// estimated at prices.
+func implementOutput(run domain.Run, body string, prices *domain.PriceTable) ImplementOutput {
 	return ImplementOutput{
 		RunID: run.ID, State: string(run.State), FailureReason: string(run.Reason), FailedStep: run.Gates.FailedStep,
 		BaseSHA: run.BaseSHA, ContractSHA: run.ContractSHA, HeadSHA: run.HeadSHA, Branch: run.Branch,
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
+		ComputeMinutes: computeMinutes(run.Compute), EstimatedCostUSDMicros: estimate(prices, run),
 		Setup: stepReports(run.Gates.Setup), Gates: stepReports(run.Gates.Gates),
 	}
 }

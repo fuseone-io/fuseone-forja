@@ -8,7 +8,8 @@ import (
 )
 
 // fakeGates answers Run with a scripted report, or an error, and records
-// the run id, the contract, the tree and the deadline it was given.
+// the run id, the contract, the tree and the deadline it was given. Like
+// the real runner, an error still comes with the report's compute.
 type fakeGates struct {
 	report   domain.GateReport
 	err      error
@@ -35,7 +36,7 @@ func (f *fakeGates) Run(ctx context.Context, runID string, c domain.Contract, tr
 	f.runID, f.contract, f.tree = runID, c, tree
 	f.deadline, f.hasDL = ctx.Deadline()
 	if f.err != nil {
-		return domain.GateReport{}, f.err
+		return domain.GateReport{Compute: f.report.Compute}, f.err
 	}
 	return f.report, nil
 }

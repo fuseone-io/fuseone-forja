@@ -77,7 +77,7 @@ func (h implementer) implement(ctx context.Context, in ImplementInput) (Implemen
 	if err := h.run(ctx, f); err != nil {
 		return ImplementOutput{}, fmt.Errorf("run %s: %w", c.RunID, err)
 	}
-	return implementOutput(f.run, f.evidence), nil
+	return implementOutput(f.run, f.evidence, h.deps.Prices), nil
 }
 
 // wired refuses a server missing any dependency a run reaches, naming the

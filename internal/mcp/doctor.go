@@ -126,6 +126,7 @@ func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract,
 	defer cancel()
 	finished := deps.Now()
 	run.FinishedAt, run.State, run.Egress, run.Registry = &finished, domain.StateFailed, report.Egress, report.Registry
+	run.Compute = report.Compute
 	if err == nil && report.OK() {
 		run.State = domain.StateSucceeded
 	}

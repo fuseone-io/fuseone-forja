@@ -42,11 +42,15 @@ type ImplementOutput struct {
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
 	// Evidence is the report the pull request carries, rendered once the
 	// gates ran; absent before.
-	Evidence  string       `json:"evidence,omitempty"`
-	TokensIn  int64        `json:"tokens_in"`
-	TokensOut int64        `json:"tokens_out"`
-	Setup     []StepReport `json:"setup"`
-	Gates     []StepReport `json:"gates"`
+	Evidence  string `json:"evidence,omitempty"`
+	TokensIn  int64  `json:"tokens_in"`
+	TokensOut int64  `json:"tokens_out"`
+	// ComputeMinutes and EstimatedCostUSDMicros are as forja.status reports
+	// them.
+	ComputeMinutes         float64      `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
+	Setup                  []StepReport `json:"setup"`
+	Gates                  []StepReport `json:"gates"`
 }
 
 // PullRequestRef is a pull request a run opened.

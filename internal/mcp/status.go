@@ -47,6 +47,13 @@ type StatusOutput struct {
 	// that called no model.
 	TokensIn  int64 `json:"tokens_in"`
 	TokensOut int64 `json:"tokens_out"`
+	// ComputeMinutes is the container-minutes of the run's workspaces and
+	// service sidecars, to three decimals; 0 for a run that launched none.
+	// EstimatedCostUSDMicros prices the compute and the tokens at the
+	// server's current price table, and is absent when it has none. For a
+	// run in flight both count the stages that ended.
+	ComputeMinutes         float64 `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64  `json:"estimated_cost_usd_micros,omitempty"`
 	// FailureReason says why a failed run failed when the control plane
 	// knows more than its state; absent otherwise.
 	FailureReason string `json:"failure_reason,omitempty"`
@@ -65,11 +72,16 @@ type StatusOutput struct {
 }
 
 // StageReport is one stage of a run; FinishedAt is absent while it runs.
+// Its compute and tokens are on the wire once it ended, and 0 while it
+// runs or when it used none.
 type StageReport struct {
-	Name       string     `json:"name"`
-	StartedAt  time.Time  `json:"started_at"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Outcome    string     `json:"outcome"`
+	Name           string     `json:"name"`
+	StartedAt      time.Time  `json:"started_at"`
+	FinishedAt     *time.Time `json:"finished_at,omitempty"`
+	Outcome        string     `json:"outcome"`
+	ComputeMinutes float64    `json:"compute_minutes"`
+	TokensIn       int64      `json:"tokens_in"`
+	TokensOut      int64      `json:"tokens_out"`
 }
 
 // RegistryEvent is one request the workspace made to its registry proxy.
@@ -93,22 +105,22 @@ type EgressEvent struct {
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolStatus),
-		Description: "State, start and end of a run, the model tokens it used, what its workspace was refused on the way out, and every request it made to its registry proxy.",
+		Description: "State, start and end of a run, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy.",
 		Annotations: readClass(),
 	}
 }
 
-func statusHandler(runs RunReader) sdk.ToolHandlerFor[StatusInput, StatusOutput] {
+func statusHandler(runs RunReader, prices *domain.PriceTable) sdk.ToolHandlerFor[StatusInput, StatusOutput] {
 	return func(ctx context.Context, _ *sdk.CallToolRequest, in StatusInput) (*sdk.CallToolResult, StatusOutput, error) {
 		run, err := runs.Get(ctx, in.RunID)
 		if err != nil {
 			return nil, StatusOutput{}, fmt.Errorf("%s: %w", domain.ToolStatus, err)
 		}
-		return nil, statusOutput(run), nil
+		return nil, statusOutput(run, prices), nil
 	}
 }
 
-func statusOutput(run domain.Run) StatusOutput {
+func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 	return StatusOutput{
 		ID:         run.ID,
 		Tool:       string(run.Tool),
@@ -125,9 +137,11 @@ func statusOutput(run domain.Run) StatusOutput {
 		RegistryAccessCount: run.Registry.Count,
 		RegistryAccess:      registryEvents(run.Registry.Accesses),
 
-		TokensIn:      run.Tokens.In(),
-		TokensOut:     run.Tokens.Output,
-		FailureReason: string(run.Reason),
+		TokensIn:               run.Tokens.In(),
+		TokensOut:              run.Tokens.Output,
+		ComputeMinutes:         computeMinutes(run.Compute),
+		EstimatedCostUSDMicros: estimate(prices, run),
+		FailureReason:          string(run.Reason),
 
 		Stages:      stageReports(run.Stages),
 		Setup:       stepReports(run.Gates.Setup),
