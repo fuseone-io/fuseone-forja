@@ -72,6 +72,10 @@ func TestDocker_exportCommits_bundleOfAgentCommitOnly(t *testing.T) {
 	if !errors.Is(err, domain.ErrNoCommits) {
 		t.Fatalf("ExportCommits of a branch at the base = %v, want ErrNoCommits", err)
 	}
+	err = c.ExportCommits(ctx, co.SHA(), "forja-qa/4", filepath.Join(tmp, "missing.bundle"))
+	if !errors.Is(err, domain.ErrNoBranch) || errors.Is(err, domain.ErrNoCommits) {
+		t.Fatalf("ExportCommits of a branch the tree lacks = %v, want ErrNoBranch", err)
+	}
 	head := agentCommits(t, c, "echo proof > proof.txt && echo left > leftover.txt && "+agentGit+" add proof.txt")
 	dst := filepath.Join(tmp, "commits.bundle")
 	if err := c.ExportCommits(ctx, co.SHA(), exportBranch, dst); err != nil {
