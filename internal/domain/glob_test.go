@@ -64,6 +64,21 @@ func TestMatchPath_noPatternMatches_emptyAndFalse(t *testing.T) {
 	}
 }
 
+// A segment path.Match refuses matches nothing, even a path spelled like
+// it: a bad verify.exclude entry must never exclude production code.
+func TestMatchPath_malformedSegment_matchesNothing(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct{ pattern, path string }{
+		{"[", "["},
+		{"docs/[", "docs/x"},
+		{"a[/]b", "a[/]b"},
+	} {
+		if got, ok := domain.MatchPath([]string{tt.pattern}, tt.path); ok {
+			t.Errorf("MatchPath(%q, %q) = %q, true; want no match", tt.pattern, tt.path, got)
+		}
+	}
+}
+
 // The pattern named is one that matches, the first of them in the list.
 func TestMatchPath_severalMatch_firstNamed(t *testing.T) {
 	t.Parallel()
