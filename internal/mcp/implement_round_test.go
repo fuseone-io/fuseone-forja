@@ -292,6 +292,9 @@ func TestImplement_correctionRound_notForjaBranch_refusedNoClaimNoRun(t *testing
 		}, wantFind: true},
 		{name: "author is not Forja", breakIt: func(fx *implementFixture) { fx.prs.found.Author = "phbpx" }, wantFind: true},
 		{name: "author is Forja without the bot suffix", breakIt: func(fx *implementFixture) { fx.prs.found.Author = "forja-dev" }, wantFind: true},
+		{name: "empty login and an author as empty", breakIt: func(fx *implementFixture) {
+			fx.identity.login, fx.prs.found.Author = "", ""
+		}, wantFind: true},
 		{name: "head in another repository", breakIt: func(fx *implementFixture) { fx.prs.found.HeadRepository = "someone/fuseone-forja" }, wantFind: true},
 		{name: "base branch other than the pull request's", args: map[string]any{"base_branch": "release"}, wantFind: true},
 	}
@@ -433,6 +436,23 @@ func TestImplement_correctionRound_claimsIssueAndReleasesIt(t *testing.T) {
 				t.Fatalf("released = %+v, want the round's claim", released)
 			}
 		})
+	}
+}
+
+// A comment that fails fails the round at that stage: forja/gates is not
+// published on a head whose evidence never reached the pull request.
+func TestImplement_correctionRound_commentFails_runFailedAtCommentNoStatus(t *testing.T) {
+	t.Parallel()
+	fx := newImplementFixture(t, contractWithWallClock, nil)
+	fx.prs.comments.err = errors.New("stage down")
+
+	res := callRound(t, fx.cs, nil)
+	if !res.IsError || !strings.Contains(textOf(res), "stage down") {
+		t.Fatalf("IsError %v text %q, want the comment's failure as a tool error", res.IsError, textOf(res))
+	}
+	assertFailedAt(t, fx, "comment")
+	if got := fx.statuses.got(); len(got) != 0 {
+		t.Fatalf("statuses = %+v, want none after a failed comment", got)
 	}
 }
 
