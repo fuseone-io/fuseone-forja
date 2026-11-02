@@ -111,7 +111,7 @@ func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error
 	if err := checkRuntime(ctx, d.cli, d.opts.Runtime); err != nil {
 		return nil, err
 	}
-	binary, err :=resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
+	binary, err := resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
 	if err != nil {
 		return nil, err
 	}
