@@ -76,13 +76,18 @@ NO_PROXY=localhost,127.0.0.1,::1,forja-model   (and no_proxy)
 input, both cache fields and output. It is operator configuration, like
 `FORJA_EGRESS_ALLOW`. No contract field is added.
 
-The proxy checks the cap before it forwards. While the total is below the
-cap it forwards; once a response brings the total to the cap or past it, the
-proxy writes one cap line and refuses every later request with ADR 0029's
-429 and body, without calling upstream. The refusal is sticky. Requests
-already admitted when the cap is reached still complete, so the overshoot is
-bounded by the responses in flight at that moment. The status stays 429; 400
-remains on ADR 0029's checklist.
+The proxy forwards one request at a time. A request waits until the
+previous one's usage is counted, so requests sent in parallel cannot all be
+admitted while the total is still low.
+
+The proxy checks the cap before it forwards. A request is admitted only when
+its `max_tokens` fits what the cap leaves. Once a response brings the total
+to the cap or past it, or a request's `max_tokens` does not fit, the proxy
+writes one cap line. From then on it refuses every request with ADR 0029's
+429 and body, without calling upstream. The refusal is sticky. Output cannot
+overshoot the cap. Input can overshoot it by one request's input at most.
+The cap must therefore exceed the agent's `max_tokens`, which is 128 000 for
+Claude Code. The status stays 429; 400 remains on ADR 0029's checklist.
 
 ### 5. The upstream
 
@@ -101,6 +106,25 @@ Every other method or path gets 404 without reaching the upstream:
 variants. The workspace is untrusted, and an unmetered route would bypass
 the cap.
 
+The model API acts on the body and on `anthropic-beta`, and some of what it
+can do reaches a host the request names. The workspace could use that to get
+past its egress, so the proxy reads every body whole, up to the API's own
+32 MiB, and answers 400 without calling upstream when the body:
+
+- is not one JSON object;
+- has no positive integer `max_tokens`;
+- has `mcp_servers`;
+- has a tool whose `type` is not `custom` (a server tool);
+- has a content block, in `system`, a message, a tool result or a content
+  document, whose `source` is not `base64`, `text` or `content` (a URL or a
+  file id).
+
+The body forwarded is the one the proxy re-encoded from what it checked. A
+key that appears twice therefore reaches the upstream once, as the proxy
+read it. Of `anthropic-beta`, only the seven values Claude Code sends in
+`--bare` are forwarded, as recorded in the contract; every other value is
+dropped.
+
 The proxy drops `Authorization`, sets `x-api-key` to the real key, and sets
 `Accept-Encoding: identity`. Claude Code sends `gzip, deflate, br, zstd`;
 forwarded as is, the upstream could compress the stream and the meter would
@@ -118,6 +142,12 @@ The proxy reads the body as it streams to the client:
   shape `message_start` carries.
 
 It counts what it saw, including a stream cut short or a client that left.
+A successful response that never said its output is charged the request's
+`max_tokens`, because a stream closed before `message_delta` was still
+generated upstream. One that never said its input is charged the body's
+size in bytes. A response that is not a success is charged what it said,
+which is nothing.
+
 It writes one JSON line per forwarded response, `{event: usage, run, at,
 status, usage: {input, cache_creation, cache_read, output}}`, and one cap
 line. No body, prompt, header, key or token is written. If a line cannot be

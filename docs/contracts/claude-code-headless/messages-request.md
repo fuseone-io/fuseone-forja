@@ -55,7 +55,7 @@ What the proxy must do with each one:
 |---|---|---|
 | `x-api-key` | equal to the value of `ANTHROPIC_API_KEY`, byte for byte, in 66 of 66 `POST`; never in `authorization` | It is the **run's opaque token**. The proxy swaps it for the real key and never forwards it |
 | `anthropic-version` | `2023-06-01` in 66 of 66 | Forward as is |
-| `anthropic-beta` | list with 7 items in `--bare` (above); 10 items without `--bare` (adds `mid-conversation-tool-changes-2026-07-01`, `inline-tools-2026-09-15`, `advanced-tool-use-2025-11-20`); on the post-400 retry `thinking-token-count-2026-05-13` drops out | Forward as is; do not filter — the list varies per flag and per retry |
+| `anthropic-beta` | list with 7 items in `--bare` (above); 10 items without `--bare` (adds `mid-conversation-tool-changes-2026-07-01`, `inline-tools-2026-09-15`, `advanced-tool-use-2025-11-20`); on the post-400 retry `thinking-token-count-2026-05-13` drops out | Forward only the 7 `--bare` values; drop every other one, since a beta can enable a server-side feature that reaches another host. The list varies per flag and per retry, but only by dropping items from these 7 |
 | `x-stainless-timeout` | `600` (seconds) | The proxy cannot cut the connection before that; the run's `wall_clock` is what cuts |
 | `x-stainless-retry-count` | always `0`, even on the 11th attempt after 429 | The retries belong to Claude Code's loop, not to the SDK; the proxy cannot tell them apart by this header |
 | `x-claude-code-session-id` | one UUID per process | Not a credential; useful to correlate the run in the proxy's logs |
