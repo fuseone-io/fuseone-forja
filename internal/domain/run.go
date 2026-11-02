@@ -73,11 +73,15 @@ type Run struct {
 	// applied.
 	BaseSHA     string
 	ContractSHA string
+	// StartSHA is the tip of the branch a correction round started from;
+	// empty for a first run, which starts at BaseSHA.
+	StartSHA string
 	// HeadSHA is the agent's last commit once the control plane imported
 	// it, and Branch the branch it is pushed to.
 	HeadSHA string
 	Branch  string
-	// PullRequest is the pull request the run opened; zero when none.
+	// PullRequest is the pull request the run opened, or the one a
+	// correction round works on; zero when none.
 	PullRequest PullRequest
 }
 

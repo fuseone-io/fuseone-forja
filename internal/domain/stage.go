@@ -9,7 +9,9 @@ import (
 // it.
 type StageName string
 
-// The stages of a forja.implement run, in the order they happen.
+// The stages of a forja.implement run, in the order they happen. A first
+// run opens its pull request; a correction round comments on the one it
+// found instead.
 const (
 	StageClaim       StageName = "claim"
 	StageClone       StageName = "clone"
@@ -17,6 +19,7 @@ const (
 	StageGates       StageName = "gates"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
+	StageComment     StageName = "comment"
 	StageStatus      StageName = "status"
 	StageRelease     StageName = "release"
 )
@@ -42,10 +45,16 @@ type Stage struct {
 	Outcome    StageOutcome
 }
 
-// PullRequest is the pull request a run opened. The zero value is none.
+// PullRequest is the pull request a run opened or a correction round works
+// on. The zero value is none. Author is the login that opened it, Base the
+// branch it targets and HeadRepository the owner/name its head lives in;
+// they are known only for a pull request read back from GitHub.
 type PullRequest struct {
-	Number int
-	URL    string
+	Number         int
+	URL            string
+	Author         string
+	Base           string
+	HeadRepository string
 }
 
 // ErrNoCommits means the agent's branch holds no commit beyond the base.
