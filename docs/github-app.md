@@ -33,7 +33,7 @@ and of the PRD; none beyond.
 | Permission (API) | Level | For what |
 |---|---|---|
 | `contents` | read & write | clone the repository, push to the run's own branch, create and remove `refs/forja/claims/<n>` |
-| `pull_requests` | write | open and update the run's PR |
+| `pull_requests` | write | open and update the run's PR, and label it `forja/human-merge` (ADR 9999) |
 | `statuses` | write | publish `forja/gates` and `forja/qa` as commit statuses |
 | `issues` | read | read the title and body of the issue that `forja.plan` and `forja.implement` hand to the agent |
 | `metadata` | read | mandatory on every App; lists the repository and its metadata |
