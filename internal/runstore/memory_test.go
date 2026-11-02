@@ -233,6 +233,38 @@ func TestMemory_get_egressListNotShared(t *testing.T) {
 	}
 }
 
+// The changed paths are evidence: neither list is shared with the writer
+// after Put nor with a reader after Get.
+func TestMemory_proofLists_notSharedWithCaller(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	proof := domain.FileChange{Path: "Makefile", Kind: domain.ChangeModified, Added: 1}
+	human := domain.FileChange{Path: ".github/CODEOWNERS", Kind: domain.ChangeAdded, Added: 2}
+	original := sampleRun("run-1")
+	original.Proof = domain.Proof{ProofPaths: []domain.FileChange{proof}, HumanMergePaths: []domain.FileChange{human}}
+	if err := store.Put(ctx, original); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	original.Proof.ProofPaths[0].Path, original.Proof.HumanMergePaths[0].Path = "after-put", "after-put"
+
+	got, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if len(got.Proof.ProofPaths) != 1 || got.Proof.ProofPaths[0] != proof || len(got.Proof.HumanMergePaths) != 1 || got.Proof.HumanMergePaths[0] != human {
+		t.Fatalf("proof after the writer's change = %+v, want [%+v] and [%+v]", got.Proof, proof, human)
+	}
+	got.Proof.ProofPaths[0].Path, got.Proof.HumanMergePaths[0].Path = "after-get", "after-get"
+	again, err := store.Get(ctx, "run-1")
+	if err != nil {
+		t.Fatalf("Get again: %v", err)
+	}
+	if again.Proof.ProofPaths[0] != proof || again.Proof.HumanMergePaths[0] != human {
+		t.Fatalf("proof after a reader's change = %+v", again.Proof)
+	}
+}
+
 // The excluded paths are what a verify run's verdict was reached on: no
 // writer after Put nor reader after Get changes them through a shared list.
 func TestMemory_get_qaExcludedListNotShared(t *testing.T) {

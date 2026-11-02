@@ -69,6 +69,12 @@ type StatusOutput struct {
 	ContractSHA string          `json:"contract_sha,omitempty"`
 	HeadSHA     string          `json:"head_sha,omitempty"`
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// HumanMerge, ProofApparatus and HumanMergePaths are what of the agent's
+	// head asks for a human merge, as forja.implement reports them; always
+	// on the wire, false and empty before the head is adopted.
+	HumanMerge      bool          `json:"human_merge"`
+	ProofApparatus  []ChangedPath `json:"proof_apparatus"`
+	HumanMergePaths []ChangedPath `json:"human_merge_paths"`
 	// Verdict and VerdictReason are a verify run's, absent until it reached
 	// one; Excluded the changed paths verify.exclude matched, always on the
 	// wire, empty for any other run.
@@ -163,13 +169,13 @@ func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 		HeadSHA:     run.HeadSHA,
 		PullRequest: pullRequestRef(run.PullRequest),
 
+		HumanMerge: run.Proof.HumanMerge(), ProofApparatus: changedPaths(run.Proof.ProofPaths), HumanMergePaths: changedPaths(run.Proof.HumanMergePaths),
+
 		Verdict:       string(run.QA.Verdict),
 		VerdictReason: string(run.QA.Reason),
 		Excluded:      excludedOf(run.QA),
 
-		WallClockSeconds: run.Limits.WallClock.Seconds(),
-		MaxDiffLines:     run.Limits.MaxDiffLines,
-		DiffLines:        run.DiffLines,
+		WallClockSeconds: run.Limits.WallClock.Seconds(), MaxDiffLines: run.Limits.MaxDiffLines, DiffLines: run.DiffLines,
 	}
 }
 

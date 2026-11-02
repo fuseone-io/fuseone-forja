@@ -141,9 +141,10 @@ func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, err
 	})
 }
 
-// adopt brings the exported commits into the checkout and counts what the
-// head changes against the base on the control plane's own clone; a head
-// at the branch's start is no commit at all.
+// adopt brings the exported commits into the checkout, counts what the
+// head changes against the base on the control plane's own clone, and
+// classifies those changes by the base contract's lists; a head at the
+// branch's start is no commit at all.
 func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 	head, err := f.co.Adopt(ctx, f.bundle, f.run.Branch)
 	if errors.Is(err, domain.ErrNoCommits) {
@@ -159,6 +160,11 @@ func (h implementer) adopt(ctx context.Context, f *flight) (bool, error) {
 		return false, err
 	}
 	f.run.DiffLines = &lines
+	changes, err := f.co.Diff(ctx, head)
+	if err != nil {
+		return false, err
+	}
+	f.run.Proof = domain.ClassifyProof(f.contract, changes)
 	return true, nil
 }
 

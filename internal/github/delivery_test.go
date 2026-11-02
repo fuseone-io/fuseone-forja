@@ -106,6 +106,68 @@ func TestPullRequests_badInput_refusedBeforeAnyMint(t *testing.T) {
 	}
 }
 
+func labelRequest() github.LabelRequest {
+	return github.LabelRequest{Repository: fakeRepo, Number: 41, Labels: []string{"forja/human-merge"}}
+}
+
+func TestPullRequests_label_postsLabelsMintsPullRequestsWrite(t *testing.T) {
+	t.Parallel()
+	fake := newFakeDelivery(t, deliveryToken)
+	fake.open[agentBranch] = 41
+	prs, tokens := pullRequests(fake)
+
+	if err := prs.Label(context.Background(), labelRequest()); err != nil {
+		t.Fatalf("Label: %v", err)
+	}
+	if got := fake.labelsOf(41); !reflect.DeepEqual(got, []string{"forja/human-merge"}) {
+		t.Fatalf("labels on 41 = %q, want forja/human-merge", got)
+	}
+	if !reflect.DeepEqual(tokens.mints(), []string{fakeRepo}) {
+		t.Fatalf("mints = %q, want one for %s", tokens.mints(), fakeRepo)
+	}
+	assertEveryMint(t, tokens, github.WritePullRequests)
+}
+
+func TestPullRequests_labelRefused_statusErrorWithoutToken(t *testing.T) {
+	t.Parallel()
+	fake := newFakeDelivery(t, deliveryToken)
+	fake.open[agentBranch] = 40
+	prs, _ := pullRequests(fake)
+
+	err := prs.Label(context.Background(), labelRequest())
+	var se *github.StatusError
+	if !errors.As(err, &se) || se.Status != http.StatusNotFound {
+		t.Fatalf("Label error = %v, want a *StatusError 404", err)
+	}
+	assertNoDeliveryLeak(t, err)
+	if got := fake.labelsOf(40); len(got) != 0 {
+		t.Fatalf("labels on 40 = %q, want none", got)
+	}
+}
+
+func TestPullRequests_labelBadInput_refusedBeforeAnyMint(t *testing.T) {
+	t.Parallel()
+	fake := newFakeDelivery(t, deliveryToken)
+	fake.open[agentBranch] = 41
+	prs, tokens := pullRequests(fake)
+	for name, mutate := range map[string]func(*github.LabelRequest){
+		"malformed repo":  func(r *github.LabelRequest) { r.Repository = "a/b/c" },
+		"no number":       func(r *github.LabelRequest) { r.Number = 0 },
+		"negative number": func(r *github.LabelRequest) { r.Number = -41 },
+		"no labels":       func(r *github.LabelRequest) { r.Labels = nil },
+		"empty label":     func(r *github.LabelRequest) { r.Labels = []string{"forja/human-merge", ""} },
+	} {
+		req := labelRequest()
+		mutate(&req)
+		if err := prs.Label(context.Background(), req); err == nil {
+			t.Errorf("%s: Label = nil error", name)
+		}
+	}
+	if n := len(tokens.mints()); n != 0 {
+		t.Fatalf("bad input minted %d tokens", n)
+	}
+}
+
 // forjaLogin is the login a Forja App's pull requests are authored by.
 const forjaLogin = "forja-dev[bot]"
 

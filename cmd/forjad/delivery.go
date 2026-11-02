@@ -65,6 +65,8 @@ func (u unavailableDelivery) Find(context.Context, string, string) (domain.PullR
 
 func (u unavailableDelivery) Comment(context.Context, github.CommentRequest) error { return u.err }
 
+func (u unavailableDelivery) Label(context.Context, github.LabelRequest) error { return u.err }
+
 func (u unavailableDelivery) Publish(context.Context, github.StatusRequest) error { return u.err }
 
 func (u unavailableDelivery) Read(context.Context, string, int) (domain.PullRequestDiff, error) {

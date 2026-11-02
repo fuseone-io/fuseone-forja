@@ -53,6 +53,13 @@ type ImplementOutput struct {
 	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
 	Setup                  []StepReport `json:"setup"`
 	Gates                  []StepReport `json:"gates"`
+	// HumanMerge says the agent's head changed an existing file of the base
+	// contract's proof_paths, listed in ProofApparatus, or a path under its
+	// human_merge_paths, listed in HumanMergePaths. All three are always on
+	// the wire, the lists empty when nothing matched.
+	HumanMerge      bool          `json:"human_merge"`
+	ProofApparatus  []ChangedPath `json:"proof_apparatus"`
+	HumanMergePaths []ChangedPath `json:"human_merge_paths"`
 }
 
 // PullRequestRef is a pull request a run opened.

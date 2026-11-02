@@ -26,7 +26,7 @@ type Cloner interface {
 // the agent's workspace exported, refuses a head that does not descend
 // from Start, and checks it out in Dir, while every read still answers for
 // the pinned commit. DiffLines counts the lines an adopted head adds and
-// deletes against the pinned commit.
+// deletes against the pinned commit; Diff lists every path it changes.
 type Checkout interface {
 	SHA() string
 	Start() string
@@ -38,6 +38,7 @@ type Checkout interface {
 	StartBranch(ctx context.Context, name string) error
 	Adopt(ctx context.Context, bundle, branch string) (string, error)
 	DiffLines(ctx context.Context, head string) (int, error)
+	Diff(ctx context.Context, head string) ([]domain.FileChange, error)
 	Close() error
 }
 

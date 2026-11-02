@@ -12,11 +12,12 @@ import (
 	"testing"
 )
 
-// fakeDelivery serves the two endpoints a green run writes to and
-// enforces the API's invariants: a bearer token that is not the minted one
-// is 401, a pull request needs a head that exists and a base, one head has
-// at most one open pull request, and a status needs a known commit and one
-// of the four states. Every refusal is 422 with the validation-error shape
+// fakeDelivery serves the endpoints a green run writes to and enforces the
+// API's invariants: a bearer token that is not the minted one is 401, a
+// pull request needs a head that exists and a base, one head has at most
+// one open pull request, a status needs a known commit and one of the four
+// states, and a label goes only on a pull request that exists. Every other
+// refusal is 422 with the validation-error shape
 // of the REST description: {message, documentation_url, errors: [{code,
 // ...}]}.
 //
@@ -54,6 +55,7 @@ type fakeDelivery struct {
 	open     map[string]int
 	pulls    []map[string]any
 	statuses []fakeStatus
+	labels   map[int][]string
 	queries  []url.Values
 	comments []fakeComment
 	server   *httptest.Server
@@ -81,12 +83,13 @@ type fakeStatus struct {
 
 func newFakeDelivery(t *testing.T, token string) *fakeDelivery {
 	t.Helper()
-	f := &fakeDelivery{t: t, token: token, branches: map[string]bool{"main": true}, commits: map[string]bool{}, nextPR: 41, open: map[string]int{}, login: "phbpx"}
+	f := &fakeDelivery{t: t, token: token, branches: map[string]bool{"main": true}, commits: map[string]bool{}, nextPR: 41, open: map[string]int{}, labels: map[int][]string{}, login: "phbpx"}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /repos/{owner}/{name}/pulls", f.handle(f.createPull))
 	mux.HandleFunc("GET /repos/{owner}/{name}/pulls", f.handleGet(f.listPulls))
 	mux.HandleFunc("POST /repos/{owner}/{name}/issues/{number}/comments", f.handle(f.createComment))
 	mux.HandleFunc("POST /repos/{owner}/{name}/statuses/{sha}", f.handle(f.createStatus))
+	mux.HandleFunc("POST /repos/{owner}/{name}/issues/{number}/labels", f.handle(f.addLabels))
 	mux.HandleFunc("GET /user", f.user)
 	f.server = httptest.NewServer(mux)
 	t.Cleanup(f.server.Close)
@@ -200,6 +203,55 @@ func (f *fakeDelivery) createStatus(w http.ResponseWriter, r *http.Request, body
 		f.t.Fatalf("marshal status: %v", err)
 	}
 	writeJSON(w, http.StatusCreated, string(raw))
+}
+
+// addLabels adds labels to a pull request the fake opened; any other
+// number is 404. The 200 body is the issue's labels in the shape `gh api
+// repos/fuseone-io/fuseone-forja/issues/18/labels` answered, nine fields
+// per label; the POST's own 200 was documented, not observed. An empty
+// list's refusal was not measured; nothing decides on its text.
+func (f *fakeDelivery) addLabels(w http.ResponseWriter, r *http.Request, body map[string]any) {
+	number, err := strconv.Atoi(r.PathValue("number"))
+	if err != nil || !f.opened(number) {
+		writeJSON(w, http.StatusNotFound, `{"message":"Not Found","documentation_url":"https://docs.github.com/rest/issues/labels#add-labels-to-an-issue","status":"404"}`)
+		return
+	}
+	names, _ := body["labels"].([]any)
+	if len(names) == 0 {
+		validationFailed(w, "Label", "labels", "missing_field", "")
+		return
+	}
+	for _, n := range names {
+		name, _ := n.(string)
+		f.labels[number] = append(f.labels[number], name)
+	}
+	out := make([]map[string]any, 0, len(f.labels[number]))
+	for i, name := range f.labels[number] {
+		out = append(out, map[string]any{
+			"id": 12912477867 + i, "node_id": "LA_kwDOVekxTM8AAAADAaTGqw", "url": "https://api.github.com/repos/" + fakeRepo + "/labels/" + url.PathEscape(name),
+			"name": name, "color": "ededed", "default": false, "description": nil, "archived_at": nil, "archived_by": nil,
+		})
+	}
+	raw, err := json.Marshal(out)
+	if err != nil {
+		f.t.Fatalf("marshal labels: %v", err)
+	}
+	writeJSON(w, http.StatusOK, string(raw))
+}
+
+func (f *fakeDelivery) opened(number int) bool {
+	for _, n := range f.open {
+		if n == number {
+			return true
+		}
+	}
+	return false
+}
+
+func (f *fakeDelivery) labelsOf(number int) []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.labels[number]...)
 }
 
 // listPulls filters as the measured listing does: by state, open when

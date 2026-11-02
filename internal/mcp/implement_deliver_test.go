@@ -83,6 +83,7 @@ func assertGreenOutput(t *testing.T, out forja.ImplementOutput) {
 		RunID: "run-1", State: "succeeded", BaseSHA: planSHA, ContractSHA: checkoutContractSHA, HeadSHA: agentHead, Branch: runBranch,
 		PullRequest: &forja.PullRequestRef{Number: 41, URL: prURL}, Evidence: greenEvidence(), TokensIn: 1230, TokensOut: 400,
 		WallClockSeconds: 1200, MaxDiffLines: 400,
+		ProofApparatus: []forja.ChangedPath{}, HumanMergePaths: []forja.ChangedPath{},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("output = %+v\nwant %+v", got, want)

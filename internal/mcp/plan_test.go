@@ -54,6 +54,11 @@ type fakeCheckout struct {
 	adoptedDir string
 	adoptErr   error
 	adopted    []string
+	// changes is what Diff reports between the base and head; changesErr
+	// fails it; diffed the heads it was asked for.
+	changes    []domain.FileChange
+	changesErr error
+	diffed     []string
 	// diffLines is what DiffLines counts for the adopted head; diffErr
 	// fails it.
 	diffLines   int
@@ -118,6 +123,19 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 	}
 	f.adoptedHead = f.head
 	return f.head, nil
+}
+
+// Diff answers, as the real one, only for a head it holds: the one Adopt
+// imported.
+func (f *fakeCheckout) Diff(_ context.Context, head string) ([]domain.FileChange, error) {
+	f.diffed = append(f.diffed, head)
+	if len(f.adopted) == 0 || head != f.head {
+		return nil, fmt.Errorf("fake: diff against %q, adopted %q", head, f.head)
+	}
+	if f.changesErr != nil {
+		return nil, f.changesErr
+	}
+	return append([]domain.FileChange(nil), f.changes...), nil
 }
 
 func (f *fakeCheckout) ReadFile(_ context.Context, path string) ([]byte, error) {

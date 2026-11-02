@@ -222,6 +222,7 @@ func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementF
 		pusher: &fakePusher{deliveryLog[github.PushRequest]{calls: calls, name: "push"}},
 		prs: &fakePullRequests{
 			deliveryLog: deliveryLog[github.PullRequestRequest]{calls: calls, name: "pull_request"},
+			labels:      deliveryLog[github.LabelRequest]{calls: calls, name: "label"},
 			finds:       deliveryLog[string]{calls: calls, name: "find"},
 			comments:    deliveryLog[github.CommentRequest]{calls: calls, name: "comment"},
 			found:       foundPR,
@@ -489,8 +490,8 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	if !present || string(raw) != `"run-expired"` {
 		t.Fatalf("supersedes on the wire = %s (present %v), want \"run-expired\"", raw, present)
 	}
-	if len(wire) != 26 {
-		t.Fatalf("wire object has %d keys, want the 25 of a delivered run on a server with no price table plus supersedes: %s", len(wire), structuredJSON(t, res))
+	if len(wire) != 29 {
+		t.Fatalf("wire object has %d keys, want the 28 of a delivered run on a server with no price table plus supersedes: %s", len(wire), structuredJSON(t, res))
 	}
 }
 
