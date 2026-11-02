@@ -391,6 +391,22 @@ func TestRunner_timedOut_computeStillReported(t *testing.T) {
 	}
 }
 
+// An agent run that ended in an error still had its workspace up until
+// Close: the compute comes back with the error.
+func TestRunner_execError_computeStillReported(t *testing.T) {
+	t.Parallel()
+	c, ws := newClock(), newFakeWorkspace()
+	ws.exec = func(context.Context) (agent.ExecResult, error) {
+		c.advance(agentTakes)
+		return agent.ExecResult{ExitCode: -1}, errors.New("daemon: connection reset")
+	}
+
+	res, err := timed(c, ws).Run(context.Background(), task)
+	if err == nil || res.Compute != wholeWindow {
+		t.Fatalf("Run = compute %v, %v; want the exec failure with %v", res.Compute, err, wholeWindow)
+	}
+}
+
 // A launch that failed may still have created containers before it gave
 // up: the attempt is compute, up to when the launch returned.
 func TestRunner_launchFails_computeOfTheAttempt(t *testing.T) {
