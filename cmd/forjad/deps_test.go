@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
+	"github.com/fuseone-io/fuseone-forja/internal/github"
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
 
@@ -114,6 +116,41 @@ func TestWire_modelKey_decidesTheAgent(t *testing.T) {
 	deps, _, err = wire(agentEnv(t, map[string]string{"FORJA_MODEL_API_KEY": "", "FORJA_MODEL_TOKEN_CAP": "", "FORJA_AGENT_BINARY": ""}), io.Discard)
 	if err != nil || deps.Agent != nil {
 		t.Fatalf("wire without a key = agent %v, %v; want none and no error", deps.Agent, err)
+	}
+}
+
+// With a credential, a green run is delivered by the control plane's own
+// GitHub clients; without one, each delivery call answers with the
+// missing credential.
+func TestWire_delivery_controlPlaneClientsOrTheMissingCredential(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	if _, ok := deps.Pusher.(*github.Pusher); !ok {
+		t.Errorf("Pusher = %T, want *github.Pusher", deps.Pusher)
+	}
+	if _, ok := deps.PullRequests.(*github.PullRequests); !ok {
+		t.Errorf("PullRequests = %T, want *github.PullRequests", deps.PullRequests)
+	}
+	if _, ok := deps.Statuses.(*github.CommitStatuses); !ok {
+		t.Errorf("Statuses = %T, want *github.CommitStatuses", deps.Statuses)
+	}
+	bare, _, err := wire(func(string) string { return "" }, io.Discard)
+	if err != nil {
+		t.Fatalf("wire without credentials: %v", err)
+	}
+	ctx := context.Background()
+	errs := []error{
+		bare.Pusher.Push(ctx, github.PushRequest{}),
+		func() error { _, err := bare.PullRequests.Open(ctx, github.PullRequestRequest{}); return err }(),
+		bare.Statuses.Publish(ctx, github.StatusRequest{}),
+	}
+	for i, err := range errs {
+		if !errors.Is(err, github.ErrNoCredentials) {
+			t.Errorf("delivery call %d without credentials = %v, want ErrNoCredentials", i, err)
+		}
 	}
 }
 

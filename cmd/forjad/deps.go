@@ -61,6 +61,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		deps.Claims = unavailableClaims{err: err}
 		deps.Cloner = unavailablePlan{err: err}
 		deps.Issues = unavailablePlan{err: err}
+		withoutDelivery(&deps, err)
 		if deps.Agent == nil {
 			deps.Agent = unavailableAgent{err: err}
 		}
@@ -72,6 +73,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	deps.Contracts = &github.ContractReader{Tokens: tokens}
 	deps.Cloner = cloner{&github.Cloner{Tokens: tokens}}
 	deps.Issues = &github.IssueReader{Tokens: tokens}
+	withDelivery(&deps, tokens)
 	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
