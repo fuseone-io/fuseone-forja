@@ -77,6 +77,10 @@ type Run struct {
 	// it, and Branch the branch it is pushed to.
 	HeadSHA string
 	Branch  string
+	// Proof is what of the agent's head, against the base commit, falls
+	// under the base contract's proof_paths and human_merge_paths; empty
+	// until the head was adopted.
+	Proof Proof
 	// PullRequest is the pull request the run opened; zero when none.
 	PullRequest PullRequest
 }
