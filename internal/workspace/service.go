@@ -85,7 +85,7 @@ func (c *Container) createSidecar(ctx context.Context, name string, svc domain.S
 			Labels:      map[string]string{labelRun: c.runID},
 			Healthcheck: probe,
 		},
-		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(c.network)},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(c.network), Runtime: c.runtime},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{
 			c.network: {Aliases: []string{name}},
 		}},

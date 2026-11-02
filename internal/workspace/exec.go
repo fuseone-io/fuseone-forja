@@ -40,6 +40,9 @@ type Container struct {
 	// registry is empty for a run that declares no registry.
 	registry string
 	network  string
+	// runtime is the daemon runtime every container of the run is created
+	// under; empty is the daemon's default.
+	runtime string
 
 	mu       sync.Mutex
 	sidecars []string

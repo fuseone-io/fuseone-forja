@@ -51,6 +51,10 @@ type Options struct {
 	// entries its contract declares; a declared entry with none refuses the
 	// launch.
 	RegistryCredentials map[string]registry.Credential
+	// Runtime is the daemon runtime every container of a run is created
+	// under: the workspace, its sidecars and its proxies. Empty means the
+	// daemon's default; a name the daemon does not list refuses the launch.
+	Runtime string
 }
 
 // Docker launches containers on the daemon the environment points at.
@@ -104,7 +108,10 @@ func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error
 	if err != nil {
 		return nil, err
 	}
-	binary, err := resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
+	if err := checkRuntime(ctx, d.cli, d.opts.Runtime); err != nil {
+		return nil, err
+	}
+	binary, err :=resolveGatewayBinary(d.opts.GatewayBinary, runtime.GOOS, os.Executable)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +120,7 @@ func (d *Docker) Launch(ctx context.Context, spec LaunchSpec) (*Container, error
 			return nil, fmt.Errorf("workspace: image %s: %w", img, err)
 		}
 	}
-	c := &Container{cli: d.cli, runID: spec.RunID}
+	c := &Container{cli: d.cli, runID: spec.RunID, runtime: d.opts.Runtime}
 	if err := d.assemble(ctx, c, launchPlan{spec: spec, binary: binary, creds: creds}); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
@@ -141,7 +148,7 @@ func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) er
 	if c.network, err = createNetwork(ctx, d.cli, c.runID); err != nil {
 		return err
 	}
-	if c.gateway, err = createGateway(ctx, d.cli, c.runID, d.opts.EgressAllow); err != nil {
+	if c.gateway, err = c.createGateway(ctx, d.opts.EgressAllow); err != nil {
 		return err
 	}
 	if err := startGateway(ctx, d.cli, gatewaySpec{id: c.gateway, runID: c.runID, binary: plan.binary, allow: d.opts.EgressAllow}); err != nil {
@@ -149,14 +156,14 @@ func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) er
 	}
 	withRegistry := len(plan.spec.Registries) > 0
 	if withRegistry {
-		if c.registry, err = createRegistry(ctx, d.cli, c.runID, plan.spec.Registries); err != nil {
+		if c.registry, err = c.createRegistry(ctx, plan.spec.Registries); err != nil {
 			return err
 		}
 		if err := startRegistry(ctx, d.cli, registrySpec{id: c.registry, runID: c.runID, binary: plan.binary, creds: plan.creds}); err != nil {
 			return err
 		}
 	}
-	if c.id, err = d.createWorkspace(ctx, c.runID, plan.spec.Image, withRegistry); err != nil {
+	if c.id, err = c.createWorkspace(ctx, plan.spec.Image, withRegistry); err != nil {
 		return err
 	}
 	return c.startWithTree(ctx, plan.spec.Tree)
@@ -165,18 +172,18 @@ func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) er
 // createWorkspace creates the workspace container on the run's network
 // alone, never on the default bridge. The network is set at creation: a
 // container connected afterwards does not get the embedded DNS.
-func (d *Docker) createWorkspace(ctx context.Context, runID, image string, withRegistry bool) (string, error) {
-	netName := networkName(runID)
-	created, err := d.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+func (c *Container) createWorkspace(ctx context.Context, image string, withRegistry bool) (string, error) {
+	netName := networkName(c.runID)
+	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: netName + "-workspace",
 		Config: &container.Config{
 			Image:      image,
 			Cmd:        []string{"sleep", "infinity"},
 			WorkingDir: workDir,
 			Env:        proxyEnv(withRegistry),
-			Labels:     map[string]string{labelRun: runID},
+			Labels:     map[string]string{labelRun: c.runID},
 		},
-		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName), Runtime: c.runtime},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}},
 	})
 	if err != nil {

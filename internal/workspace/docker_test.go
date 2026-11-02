@@ -88,7 +88,9 @@ func newDocker(t *testing.T, allow ...string) *workspace.Docker {
 	return newDockerWith(t, workspace.Options{EgressAllow: allow})
 }
 
-// newDockerWith is newDocker with opts, the gateway binary filled in.
+// newDockerWith is newDocker with opts, the gateway binary filled in. A
+// runtime left empty is FORJA_WORKSPACE_RUNTIME's, so the whole suite runs
+// under the runtime that variable names.
 func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
 	t.Helper()
 	probe, err := workspace.NewDocker(workspace.Options{})
@@ -99,6 +101,9 @@ func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
 	defer cancel()
 	if err := probe.Ping(ctx); err != nil {
 		t.Skipf("no Docker daemon: %v", err)
+	}
+	if opts.Runtime == "" {
+		opts.Runtime = suiteRuntime(t)
 	}
 	opts.GatewayBinary = gatewayBinary(t)
 	d, err := workspace.NewDocker(opts)
