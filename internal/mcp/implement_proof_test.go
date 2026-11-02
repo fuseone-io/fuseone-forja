@@ -11,6 +11,7 @@ import (
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/evidence"
+	"github.com/fuseone-io/fuseone-forja/internal/github"
 	forja "github.com/fuseone-io/fuseone-forja/internal/mcp"
 )
 
@@ -125,6 +126,102 @@ func TestImplement_newTestFileOnly_noSectionNoLabel(t *testing.T) {
 		if strings.Contains(body, absent) {
 			t.Fatalf("body carries %q:\n%s", absent, body)
 		}
+	}
+	if got := fx.prs.labels.got(); len(got) != 0 {
+		t.Fatalf("labels = %+v, want none", got)
+	}
+	assertDeliveryOrder(t, fx, "push", "pull_request", "status")
+}
+
+// assertDeliveryOrder checks the delivery calls of the run, in order.
+func assertDeliveryOrder(t *testing.T, fx *implementFixture, want ...string) {
+	t.Helper()
+	var got []string
+	for _, c := range fx.calls.list() {
+		switch c {
+		case "push", "pull_request", "label", "status":
+			got = append(got, c)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("delivery calls = %q, want %q", got, want)
+	}
+}
+
+func assertHumanMergeLabel(t *testing.T, fx *implementFixture) {
+	t.Helper()
+	want := []github.LabelRequest{{Repository: doctorRepo, Number: 41, Labels: []string{"forja/human-merge"}}}
+	if got := fx.prs.labels.got(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("labels = %+v, want %+v", got, want)
+	}
+	assertDeliveryOrder(t, fx, "push", "pull_request", "label", "status")
+}
+
+// AC1: the Makefile is proof. The pull request carries the section and the
+// label, applied before forja/gates, which stays the gates' alone.
+func TestImplement_agentChangedMakefile_proofSectionLabelAndGatesStatusUnchanged(t *testing.T) {
+	t.Parallel()
+	fx := newProofFixture(t, makefileChanged)
+
+	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	assertHumanMergeLabel(t, fx)
+	body := fx.prs.got()[0].Body
+	if !strings.Contains(body, "\n## Proof apparatus\n") || !strings.Contains(body, "| `Makefile` | modified | +3 -1 |") {
+		t.Fatalf("body lacks the Makefile in the proof apparatus:\n%s", body)
+	}
+	wantStatus := []github.StatusRequest{{
+		Repository: doctorRepo, SHA: agentHead, State: github.StateSuccess, Context: "forja/gates",
+		Description: "Every gate of the base commit's contract passed on this commit.", TargetURL: prURL,
+	}}
+	if got := fx.statuses.got(); !reflect.DeepEqual(got, wantStatus) {
+		t.Fatalf("statuses = %+v, want %+v", got, wantStatus)
+	}
+	if out.State != "succeeded" || !out.HumanMerge {
+		t.Fatalf("state %q human_merge %v, want succeeded and marked", out.State, out.HumanMerge)
+	}
+}
+
+// AC3: a change under .github/** marks the human merge without touching
+// proof_paths: label and its own section, no proof section.
+func TestImplement_githubDirChanged_labelWithoutProofSection(t *testing.T) {
+	t.Parallel()
+	fx := newProofFixture(t, codeownersAdded, productionChange)
+
+	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	assertHumanMergeLabel(t, fx)
+	body := fx.prs.got()[0].Body
+	if !strings.Contains(body, "\n## Human merge paths\n") || strings.Contains(body, "## Proof apparatus") {
+		t.Fatalf("body, want the human merge section only:\n%s", body)
+	}
+	if !out.HumanMerge || len(out.ProofApparatus) != 0 {
+		t.Fatalf("human_merge %v proof_apparatus %+v, want marked with no proof", out.HumanMerge, out.ProofApparatus)
+	}
+	if got := decodeProof(t, statusOf(t, fx)); !got.HumanMerge || !reflect.DeepEqual(got.HumanMergePaths, []forja.ChangedPath{changedPath(codeownersAdded)}) {
+		t.Fatalf("forja.status proof = %+v, want marked by CODEOWNERS", got)
+	}
+}
+
+// Fail closed: a pull request that needs a human merge never gets a green
+// forja/gates without its label. The run fails at the pull request stage,
+// the pull request it opened still recorded, and the issue is freed.
+func TestImplement_labelRefused_noStatusRunFailedClaimReleased(t *testing.T) {
+	t.Parallel()
+	fx := newProofFixture(t, makefileChanged)
+	fx.prs.labels.err = errors.New("label down")
+
+	res := callImplement(t, fx.cs, implementIssue)
+	if !res.IsError || !strings.Contains(textOf(res), "label down") {
+		t.Fatalf("IsError %v text %q, want the label's failure as a tool error", res.IsError, textOf(res))
+	}
+	if got := fx.statuses.got(); len(got) != 0 {
+		t.Fatalf("statuses = %+v, want none", got)
+	}
+	assertFailedAt(t, fx, "pull_request")
+	if released := fx.claims.releasedClaims(); len(released) != 1 {
+		t.Fatalf("released %d claims, want 1", len(released))
+	}
+	if wire := statusOf(t, fx); !strings.Contains(string(wire["pull_request"]), `"number":41`) {
+		t.Fatalf("pull_request on forja.status = %s, want the one opened", wire["pull_request"])
 	}
 }
 

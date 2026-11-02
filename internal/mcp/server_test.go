@@ -48,7 +48,7 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 		Agent:  &fakeAgent{err: errors.New("no agent in this test")},
 		NewID:  ids.next, Now: startedAt, Version: "test",
 		Pusher:       &fakePusher{deliveryLog[github.PushRequest]{err: errors.New("no pusher in this test")}},
-		PullRequests: &fakePullRequests{deliveryLog[github.PullRequestRequest]{err: errors.New("no pull requests in this test")}},
+		PullRequests: &fakePullRequests{deliveryLog: deliveryLog[github.PullRequestRequest]{err: errors.New("no pull requests in this test")}},
 		Statuses:     &fakeStatuses{deliveryLog[github.StatusRequest]{err: errors.New("no statuses in this test")}},
 	}
 }

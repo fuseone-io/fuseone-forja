@@ -16,9 +16,10 @@ type Pusher interface {
 }
 
 // PullRequests is what forja.implement needs to open the run's pull
-// request.
+// request and mark it for a human merge.
 type PullRequests interface {
 	Open(ctx context.Context, req github.PullRequestRequest) (domain.PullRequest, error)
+	Label(ctx context.Context, req github.LabelRequest) error
 }
 
 // CommitStatuses is what forja.implement needs to publish forja/gates.
@@ -31,6 +32,10 @@ const gatesContext = "forja/gates"
 
 // gatesDescription is the status's one line; GitHub keeps it short.
 const gatesDescription = "Every gate of the base commit's contract passed on this commit."
+
+// humanMergeLabel marks a pull request whose head changed the proof or a
+// human-merge path.
+const humanMergeLabel = "forja/human-merge"
 
 // gatesStage runs the base checkout's contract, parsed before the agent
 // ran, on the agent's head in a fresh workspace, and renders the evidence.
@@ -72,7 +77,9 @@ func (h implementer) pushStage(ctx, done context.Context, f *flight) (bool, erro
 }
 
 // pullRequestStage opens the pull request from the run's branch into the
-// base branch, with the evidence as its body.
+// base branch, with the evidence as its body, and labels it when it needs
+// a human merge. The label comes before forja/gates: a failed label fails
+// the stage, so no green status ever sits on an unmarked pull request.
 func (h implementer) pullRequestStage(ctx, done context.Context, f *flight) (bool, error) {
 	return f.stage(done, domain.StagePullRequest, func() (bool, error) {
 		pr, err := h.deps.PullRequests.Open(ctx, github.PullRequestRequest{
@@ -82,7 +89,11 @@ func (h implementer) pullRequestStage(ctx, done context.Context, f *flight) (boo
 			return false, err
 		}
 		f.run.PullRequest = pr
-		return true, nil
+		if !f.run.Proof.HumanMerge() {
+			return true, nil
+		}
+		err = h.deps.PullRequests.Label(ctx, github.LabelRequest{Repository: f.run.Repository, Number: pr.Number, Labels: []string{humanMergeLabel}})
+		return err == nil, err
 	})
 }
 

@@ -84,6 +84,7 @@ func (acceptingGitHub) Push(context.Context, github.PushRequest) error { return 
 func (acceptingGitHub) Open(context.Context, github.PullRequestRequest) (domain.PullRequest, error) {
 	return domain.PullRequest{Number: 1, URL: "https://github.com/fuseone-io/fuseone-forja/pull/1"}, nil
 }
+func (acceptingGitHub) Label(context.Context, github.LabelRequest) error     { return nil }
 func (acceptingGitHub) Publish(context.Context, github.StatusRequest) error { return nil }
 
 type checkoutCloner struct{ co Checkout }

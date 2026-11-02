@@ -36,4 +36,6 @@ func (u unavailableDelivery) Open(context.Context, github.PullRequestRequest) (d
 	return domain.PullRequest{}, u.err
 }
 
+func (u unavailableDelivery) Label(context.Context, github.LabelRequest) error { return u.err }
+
 func (u unavailableDelivery) Publish(context.Context, github.StatusRequest) error { return u.err }

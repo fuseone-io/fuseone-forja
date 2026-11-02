@@ -214,7 +214,10 @@ func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementF
 		cloner: &fakeCloner{co: implementCheckout(), log: calls}, issues: &fakeIssues{issue: implementStatement},
 		gates:    &fakeGates{report: greenReport(), log: calls},
 		pusher:   &fakePusher{deliveryLog[github.PushRequest]{calls: calls, name: "push"}},
-		prs:      &fakePullRequests{deliveryLog[github.PullRequestRequest]{calls: calls, name: "pull_request"}},
+		prs: &fakePullRequests{
+			deliveryLog: deliveryLog[github.PullRequestRequest]{calls: calls, name: "pull_request"},
+			labels:      deliveryLog[github.LabelRequest]{calls: calls, name: "label"},
+		},
 		statuses: &fakeStatuses{deliveryLog[github.StatusRequest]{calls: calls, name: "status"}},
 	}
 	deps.Cloner, deps.Issues, deps.Agent, deps.Gates = fx.cloner, fx.issues, agent, fx.gates

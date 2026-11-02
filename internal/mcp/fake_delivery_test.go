@@ -65,9 +65,11 @@ func (f *fakePusher) Push(ctx context.Context, req github.PushRequest) error {
 }
 
 // fakePullRequests opens one pull request, numbered as the API numbered
-// the pilot's, or fails with err.
+// the pilot's, or fails with err; labels records each Label, or fails it
+// with its own err.
 type fakePullRequests struct {
 	deliveryLog[github.PullRequestRequest]
+	labels deliveryLog[github.LabelRequest]
 }
 
 const prURL = "https://github.com/" + doctorRepo + "/pull/41"
@@ -77,6 +79,18 @@ func (f *fakePullRequests) Open(ctx context.Context, req github.PullRequestReque
 		return domain.PullRequest{}, err
 	}
 	return domain.PullRequest{Number: 41, URL: prURL}, nil
+}
+
+// Label refuses, as the API and the client do, a pull request other than
+// the one it opened and an empty list.
+func (f *fakePullRequests) Label(ctx context.Context, req github.LabelRequest) error {
+	if err := f.labels.record(ctx, req); err != nil {
+		return err
+	}
+	if req.Number != 41 || len(req.Labels) == 0 {
+		return errLabelRefused
+	}
+	return nil
 }
 
 // fakeStatuses accepts every status, or fails with err.
@@ -92,4 +106,7 @@ type refusal string
 
 func (r refusal) Error() string { return string(r) }
 
-const errPushRefused = refusal("fake: push to a branch that is not the run's")
+const (
+	errPushRefused  = refusal("fake: push to a branch that is not the run's")
+	errLabelRefused = refusal("fake: label on a pull request the run did not open")
+)
