@@ -117,6 +117,20 @@ func TestRender_retryNoExitCode_noneWithReason(t *testing.T) {
 	}
 }
 
+// The agent is told a stream is a tail only when the workspace cut it.
+func TestRender_retryTruncated_saysStreamsAreTails(t *testing.T) {
+	t.Parallel()
+	for _, truncated := range []bool{false, true} {
+		prompt := string(agent.Render(retryTask(domain.GateResult{
+			Name: "lint", Command: "make lint", Status: domain.StepFailed, ExitCode: 1,
+			Stderr: []byte("x\n"), Truncated: truncated,
+		})))
+		if got := strings.Contains(prompt, "is its tail"); got != truncated {
+			t.Errorf("Truncated %v: prompt says the streams are tails = %v", truncated, got)
+		}
+	}
+}
+
 func TestRender_firstAttempt_noRetrySection(t *testing.T) {
 	t.Parallel()
 	tk := retryTask(domain.GateResult{})
