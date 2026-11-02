@@ -91,6 +91,7 @@ func newDocker(t *testing.T, allow ...string) *workspace.Docker {
 // newDockerWith is newDocker with opts, the gateway binary filled in.
 func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
 	t.Helper()
+	requireDocker(t)
 	probe, err := workspace.NewDocker(workspace.Options{})
 	if err != nil {
 		t.Fatalf("NewDocker: %v", err)
@@ -98,7 +99,7 @@ func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := probe.Ping(ctx); err != nil {
-		t.Skipf("no Docker daemon: %v", err)
+		t.Fatalf("Docker tests requested but no daemon answered: %v", err)
 	}
 	opts.GatewayBinary = gatewayBinary(t)
 	d, err := workspace.NewDocker(opts)
@@ -106,6 +107,16 @@ func newDockerWith(t *testing.T, opts workspace.Options) *workspace.Docker {
 		t.Fatalf("NewDocker: %v", err)
 	}
 	return d
+}
+
+// requireDocker skips unless the Docker tests were asked for. Once asked
+// for, a missing daemon fails instead of skipping, so a run that wanted them
+// cannot pass without them.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	if os.Getenv("FORJA_DOCKER_TEST") != "1" && os.Getenv("FORJA_PILOT_TEST") != "1" {
+		t.Skip("set FORJA_DOCKER_TEST=1 (make docker-test) to run the tests against the Docker Engine")
+	}
 }
 
 // newRunID is a fresh id, so parallel tests and leftovers of an earlier
