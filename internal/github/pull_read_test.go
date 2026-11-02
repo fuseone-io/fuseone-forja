@@ -104,6 +104,9 @@ func TestPullRequests_read_listedFewerThanChanged_errorNotADiff(t *testing.T) {
 	tests := map[string]func(*fakePulls){
 		"over the 3000 cap": func(f *fakePulls) { f.withFiles(3001) },
 		"one short":         func(f *fakePulls) { f.withFiles(5); f.changedFiles = 6 },
+		// The pull request moved between the two calls: the files are not
+		// the diff of the head that was read.
+		"more listed than changed": func(f *fakePulls) { f.withFiles(5); f.changedFiles = 4 },
 	}
 	for name, setUp := range tests {
 		t.Run(name, func(t *testing.T) {
