@@ -10,7 +10,6 @@ import (
 
 	"github.com/fuseone-io/fuseone-forja/internal/contract"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
-	"github.com/fuseone-io/fuseone-forja/internal/gates"
 )
 
 // GateRunner is what forja.doctor needs to run a contract as run runID:
@@ -149,10 +148,7 @@ func runGates(ctx context.Context, runner GateRunner, runID string, c domain.Con
 // wallClock is the contract's limits.wall_clock, or the default when it
 // sets none.
 func wallClock(c domain.Contract) time.Duration {
-	if c.Limits.WallClock == 0 {
-		return gates.DefaultWallClock
-	}
-	return c.Limits.WallClock
+	return c.Limits.Effective().WallClock
 }
 
 func emptyDoctorOutput(repo, sha, contractSHA string) DoctorOutput {
