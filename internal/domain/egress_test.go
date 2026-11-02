@@ -46,6 +46,38 @@ func TestEgressReport_record_countExactListBounded(t *testing.T) {
 	}
 }
 
+// Two workspaces of one run, the agent's and the gates', merge into the
+// report one gateway would have kept had it refused both in turn.
+func TestEgressReport_merge_sameAsRecordingBothInOrder(t *testing.T) {
+	t.Parallel()
+	property := func(n1, n2 uint16) bool {
+		a, b := int(n1%(2*domain.MaxEgressDenials)), int(n2%(2*domain.MaxEgressDenials))
+		var first, second, both domain.EgressReport
+		for i := range a {
+			first.Record(denial(i))
+			both.Record(denial(i))
+		}
+		for i := range b {
+			second.Record(denial(a + i))
+			both.Record(denial(a + i))
+		}
+		merged := first.Merge(second)
+		if merged.Count != both.Count || len(merged.Denied) != len(both.Denied) {
+			t.Logf("a=%d b=%d: merged count %d kept %d, want %d %d", a, b, merged.Count, len(merged.Denied), both.Count, len(both.Denied))
+			return false
+		}
+		for i := range merged.Denied {
+			if merged.Denied[i] != both.Denied[i] {
+				return false
+			}
+		}
+		return true
+	}
+	if err := quick.Check(property, &quick.Config{MaxCount: 300}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestEgressReport_boundaries_truncatedOnlyPastTheCap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
