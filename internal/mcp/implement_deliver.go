@@ -113,6 +113,7 @@ func implementOutput(run domain.Run, body string) ImplementOutput {
 		RunID: run.ID, State: string(run.State), FailureReason: string(run.Reason), FailedStep: run.Gates.FailedStep,
 		BaseSHA: run.BaseSHA, ContractSHA: run.ContractSHA, HeadSHA: run.HeadSHA, Branch: run.Branch,
 		PullRequest: pullRequestRef(run.PullRequest), Evidence: body,
+		WallClockSeconds: run.Limits.WallClock.Seconds(), MaxDiffLines: run.Limits.MaxDiffLines, DiffLines: run.DiffLines,
 		TokensIn: run.Tokens.In(), TokensOut: run.Tokens.Output,
 		Setup: stepReports(run.Gates.Setup), Gates: stepReports(run.Gates.Gates),
 	}

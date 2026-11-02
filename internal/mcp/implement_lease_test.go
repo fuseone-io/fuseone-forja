@@ -80,6 +80,18 @@ func TestImplement_checkoutOutlivesHeldLease_agentNeverRuns(t *testing.T) {
 	}
 }
 
+// The default wall clock fills the run's limits, not the lease's: a
+// contract without limits still reserves the issue for the flat hour.
+func TestImplement_contractWithoutLimits_defaultLeaseOfAnHour(t *testing.T) {
+	t.Parallel()
+	fx := newLeaseFixture(t, leaseCase{api: apiContractNoLimits, checkout: checkoutWithWallClock("")})
+
+	decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	if reqs := fx.claims.requested(); len(reqs) != 1 || reqs[0].Lease != time.Hour {
+		t.Fatalf("requested = %+v, want one claim with the default lease of 1h", reqs)
+	}
+}
+
 // Within the lease, the agent's deadline is the checkout's wall clock
 // counted from the claim, whatever lease the claim holds.
 func TestImplement_checkoutWithinHeldLease_deadlineIsWallClockFromClaim(t *testing.T) {
