@@ -296,6 +296,24 @@ func TestImplement_retryNoNewCommit_noCommitsWithoutRerunningGates(t *testing.T)
 	if out.State != "failed" || out.FailureReason != "no_commits" || out.HeadSHA != firstHead || len(out.Attempts) != 1 {
 		t.Fatalf("state %q reason %q head %s attempts %d, want failed no_commits on attempt 1's head with one attempt", out.State, out.FailureReason, out.HeadSHA, len(out.Attempts))
 	}
+	if wire := statusOf(t, fx); out.Attempt != 2 || string(wire["attempt"]) != "2" {
+		t.Fatalf("forja.implement attempt %d, forja.status %s; want both on attempt 2, whose agent ended the run", out.Attempt, wire["attempt"])
+	}
+}
+
+// A red setup step goes back to the agent like a red gate: attempt 2 is
+// handed that step, its exit code and its raw streams as they were kept.
+func TestImplement_setupRed_nextAttemptHandedTheSetupStep(t *testing.T) {
+	t.Parallel()
+	fx := retryFixture(t)
+	red := domain.GateResult{Name: "setup[0]", Command: "go mod download", Status: domain.StepFailed, ExitCode: 2, Stdout: []byte("fetching\n"), Stderr: []byte("module not found\n")}
+	fx.gates.reports[0] = domain.GateReport{Setup: []domain.GateResult{red}, FailedStep: "setup[0]"}
+
+	decodeImplement(t, callImplement(t, fx.cs, implementIssue))
+	tasks := fx.agent.taskList()
+	if len(tasks) != 2 || tasks[1].Retry == nil || !reflect.DeepEqual(tasks[1].Retry.Failed, red) {
+		t.Fatalf("tasks = %+v, want attempt 2 handed the red setup step %+v", tasks, red)
+	}
 }
 
 // Only a red gate goes back to the agent: an attempt whose agent was
