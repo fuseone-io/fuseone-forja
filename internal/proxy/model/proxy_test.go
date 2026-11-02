@@ -28,7 +28,7 @@ const (
 	runToken = "f0e1d2c3b4a5968778695a4b3c2d1e0ff0e1d2c3b4a5968778695a4b3c2d1e0f"
 )
 
-// capBody is the refusal ADR 0029 fixes, byte for byte.
+// capBody is the agent's contract for the cap refusal, byte for byte.
 const capBody = `{"type":"error","error":{"type":"rate_limit_error","message":"forja: run token cap reached"}}`
 
 var meteredAt = time.Date(2026, 11, 2, 10, 0, 0, 0, time.UTC)
@@ -380,7 +380,7 @@ func TestProxy_capReached_429WithoutUpstreamAndSticky(t *testing.T) {
 	}
 }
 
-// assertCapRefusal sends the i-th request and checks it got ADR 0029's
+// assertCapRefusal sends the i-th request and checks it got the cap
 // refusal.
 func assertCapRefusal(t *testing.T, p *proxyUnderTest, i int) {
 	t.Helper()

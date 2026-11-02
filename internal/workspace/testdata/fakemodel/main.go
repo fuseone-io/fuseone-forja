@@ -2,7 +2,7 @@
 // tests run on the default bridge, where a run's model proxy reaches it as
 // its upstream. Its responses copy the stream Claude Code accepted in
 // docs/contracts/claude-code-headless/streaming-and-usage.md and, for the
-// tool turn, the sequence the measurer recorded for issue #11.
+// tool turn, Claude Code's own Bash tool_use sequence.
 //
 // It answers POST /v1/messages only when x-api-key equals FAKE_KEY. With
 // FAKE_BASH set, a request with no assistant turn yet gets one Bash
