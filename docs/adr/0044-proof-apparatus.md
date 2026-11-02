@@ -51,7 +51,8 @@ well. A file that matches both lists appears in both.
 
 ### 5. Glob semantics
 
-`domain.MatchPath(pattern, path)`:
+`domain.MatchPath(patterns, path)`, which names the first pattern that
+matches:
 
 - a pattern is anchored at the repository root and split on `/`;
 - a `**` segment matches zero or more whole segments;
@@ -61,7 +62,7 @@ well. A file that matches both lists appears in both.
 - a malformed pattern matches nothing (the contract parser already refused
   it).
 
-`verify.exclude` (#21) is meant to reuse the same matcher.
+`verify.exclude` uses the same matcher.
 
 ### 6. The label
 
@@ -158,8 +159,8 @@ From the measurer, before any code; nothing was written to GitHub.
   add-labels call creates it, a run that needs a human merge may fail at the
   label with no status published. That is the fail-closed choice.
 - What happens to an existing label on a correction round on the same branch
-  is #20's. `max_diff_lines` (#19) is meant to reuse `Checkout.Diff` and
-  `domain.FileChange`.
+  is #20's. `max_diff_lines` counts with its own `Checkout.DiffLines`, which
+  reads text and binary from the base's attributes; `Checkout.Diff` does not.
 
 ## What only the human can do
 

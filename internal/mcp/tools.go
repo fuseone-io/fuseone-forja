@@ -1,24 +1,20 @@
 package mcp
 
 import (
-	"context"
-	"errors"
-	"fmt"
-
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
-// ErrNotImplemented is returned by every tool whose behaviour has not landed
-// yet. It travels as a tool error, never as a protocol error.
-var ErrNotImplemented = errors.New("not implemented")
-
-// ImplementInput is the argument of forja.implement.
+// ImplementInput is the argument of forja.implement. Branch and Finding
+// together make a correction round on the pull request Forja opened from
+// forja/<issue>; both empty is a first run.
 type ImplementInput struct {
 	Repository string `json:"repository" jsonschema:"repository in owner/name form"`
 	Issue      int    `json:"issue" jsonschema:"issue number to implement"`
 	BaseBranch string `json:"base_branch" jsonschema:"branch the PR targets"`
+	Branch     string `json:"branch,omitempty" jsonschema:"for a correction round: forja/<issue>, the branch of the pull request Forja opened; set together with finding"`
+	Finding    string `json:"finding,omitempty" jsonschema:"for a correction round: the review finding to address, at most 64 KiB; set together with branch"`
 }
 
 // ImplementOutput is the result of forja.implement: how the run ended,
@@ -42,11 +38,21 @@ type ImplementOutput struct {
 	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
 	// Evidence is the report the pull request carries, rendered once the
 	// gates ran; absent before.
-	Evidence  string       `json:"evidence,omitempty"`
-	TokensIn  int64        `json:"tokens_in"`
-	TokensOut int64        `json:"tokens_out"`
-	Setup     []StepReport `json:"setup"`
-	Gates     []StepReport `json:"gates"`
+	Evidence string `json:"evidence,omitempty"`
+	// WallClockSeconds and MaxDiffLines are the limits the run worked
+	// under, absent before it read its contract; DiffLines is what its head
+	// adds and deletes against the base, absent until counted.
+	WallClockSeconds float64 `json:"wall_clock_seconds,omitempty"`
+	MaxDiffLines     int     `json:"max_diff_lines,omitempty"`
+	DiffLines        *int    `json:"diff_lines,omitempty"`
+	TokensIn         int64   `json:"tokens_in"`
+	TokensOut        int64   `json:"tokens_out"`
+	// ComputeMinutes and EstimatedCostUSDMicros are as forja.status reports
+	// them.
+	ComputeMinutes         float64      `json:"compute_minutes"`
+	EstimatedCostUSDMicros *int64       `json:"estimated_cost_usd_micros,omitempty"`
+	Setup                  []StepReport `json:"setup"`
+	Gates                  []StepReport `json:"gates"`
 	// HumanMerge says the agent's head changed an existing file of the base
 	// contract's proof_paths, listed in ProofApparatus, or a path under its
 	// human_merge_paths, listed in HumanMergePaths. All three are always on
@@ -68,9 +74,31 @@ type VerifyInput struct {
 	PullRequest int    `json:"pull_request" jsonschema:"pull request number to verify"`
 }
 
-// VerifyOutput is the result of forja.verify.
+// VerifyOutput is the result of forja.verify: how the run ended, what the
+// verdict was reached on, and the verdict. A diff that only an inversion
+// can verify is a result, not a tool error. Excluded is always on the
+// wire, empty when no changed path matched verify.exclude.
 type VerifyOutput struct {
 	RunID string `json:"run_id"`
+	State string `json:"state"`
+	// Verdict and VerdictReason are absent until the run reached a verdict.
+	Verdict       string   `json:"verdict,omitempty"`
+	VerdictReason string   `json:"verdict_reason,omitempty"`
+	Excluded      []string `json:"excluded"`
+	// FailureReason is absent unless the run failed for a reason the
+	// control plane names.
+	FailureReason string `json:"failure_reason,omitempty"`
+	// BaseSHA is the base commit the contract was read at, ContractSHA the
+	// blob of .forja.yaml there, HeadSHA the pull request's head.
+	BaseSHA     string          `json:"base_sha,omitempty"`
+	ContractSHA string          `json:"contract_sha,omitempty"`
+	HeadSHA     string          `json:"head_sha,omitempty"`
+	PullRequest *PullRequestRef `json:"pull_request,omitempty"`
+	// Evidence is the report of the run, rendered once the diff was
+	// classified; absent before.
+	Evidence  string `json:"evidence,omitempty"`
+	TokensIn  int64  `json:"tokens_in"`
+	TokensOut int64  `json:"tokens_out"`
 }
 
 // readClass marks a tool as read in FuseOne's Gate.
@@ -95,17 +123,7 @@ func implementTool() *sdk.Tool {
 func verifyTool() *sdk.Tool {
 	return &sdk.Tool{
 		Name:        string(domain.ToolVerify),
-		Description: "Verify a pull request: QA agent, inversions and gates; publishes forja/qa.",
+		Description: "Verify a pull request a run opened against the base commit's contract; publishes forja/qa on its head.",
 		Annotations: writeClass(),
-	}
-}
-
-// notImplemented is the handler of a tool whose slice has not landed. In and
-// Out are constrained by any because sdk.AddTool fixes them per call site;
-// the concrete types are the typed inputs and outputs declared above.
-func notImplemented[In, Out any](name domain.Tool) sdk.ToolHandlerFor[In, Out] {
-	return func(context.Context, *sdk.CallToolRequest, In) (*sdk.CallToolResult, Out, error) {
-		var zero Out
-		return nil, zero, fmt.Errorf("%s: %w", name, ErrNotImplemented)
 	}
 }

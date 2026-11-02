@@ -60,8 +60,11 @@ type fakeWorkspace struct {
 	events  []string
 	starts  map[string]startCall
 	running map[string]bool
-	// onStart runs on every start, under no lock.
+	// onStart runs on every start, onExec on every command and onClose on
+	// every Close, under no lock, as the time each call takes.
 	onStart func()
+	onExec  func()
+	onClose func()
 	// closeErr is what Close returns the first time.
 	closeErr error
 	// egress is what the gateway refused; egressErr fails reading it.
@@ -129,6 +132,9 @@ func (w *fakeWorkspace) reads() int {
 }
 
 func (w *fakeWorkspace) Exec(ctx context.Context, command string) (gates.ExecResult, error) {
+	if w.onExec != nil {
+		w.onExec()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if err := w.usable("exec"); err != nil {
@@ -203,6 +209,9 @@ func (w *fakeWorkspace) Close(ctx context.Context) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("fake: close: %w", err)
 	}
+	if w.onClose != nil {
+		w.onClose()
+	}
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.closed++
@@ -255,9 +264,15 @@ type fakeLauncher struct {
 	// registries is what the last Launch was asked to proxy.
 	registries []string
 	calls      int
+	// onLaunch runs inside Launch, as the time a launch takes, whether it
+	// fails or not.
+	onLaunch func()
 }
 
 func (l *fakeLauncher) Launch(_ context.Context, spec gates.LaunchSpec) (gates.Workspace, error) {
+	if l.onLaunch != nil {
+		l.onLaunch()
+	}
 	l.calls++
 	l.runID, l.image, l.tree, l.registries = spec.RunID, spec.Image, spec.Tree, spec.Registries
 	if l.err != nil {

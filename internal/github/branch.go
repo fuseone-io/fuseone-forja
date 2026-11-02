@@ -31,12 +31,12 @@ func (c *Checkout) StartBranch(ctx context.Context, name string) error {
 
 // Adopt imports branch from the bundle file the agent's workspace
 // exported and checks its head out in Dir. The bundle is not trusted: it
-// must verify against this clone, and its head must descend from the
-// pinned commit and differ from it, or the import is refused with Dir
-// untouched; a head that is the pinned commit wraps domain.ErrNoCommits.
-// Only objects and the one ref cross over, never a configuration or a
-// hook. SHA, ReadFile, ListFiles and BlobSHA still answer for the pinned
-// commit afterwards.
+// must verify against this clone, and its head must descend from Start
+// and differ from it, or the import is refused with Dir untouched; a head
+// that is Start wraps domain.ErrNoCommits. A history rewritten below Start
+// is therefore refused. Only objects and the one ref cross over, never a
+// configuration or a hook. SHA, ReadFile, ListFiles and BlobSHA still
+// answer for the pinned commit afterwards.
 func (c *Checkout) Adopt(ctx context.Context, bundle, branch string) (string, error) {
 	if err := validBranch(branch); err != nil {
 		return "", fmt.Errorf("github: adopt: %w", err)
@@ -45,11 +45,11 @@ func (c *Checkout) Adopt(ctx context.Context, bundle, branch string) (string, er
 	if err != nil {
 		return "", fmt.Errorf("github: adopt %s: %w", branch, err)
 	}
-	if head == c.sha {
+	if head == c.start {
 		return "", fmt.Errorf("github: adopt %s: %w", branch, domain.ErrNoCommits)
 	}
-	if _, err := c.git.run(ctx, c.dir, c.env, "merge-base", "--is-ancestor", c.sha, head); err != nil {
-		return "", fmt.Errorf("github: adopt %s: head %s does not descend from %s: %w", branch, head, c.sha, err)
+	if _, err := c.git.run(ctx, c.dir, c.env, "merge-base", "--is-ancestor", c.start, head); err != nil {
+		return "", fmt.Errorf("github: adopt %s: head %s does not descend from %s: %w", branch, head, c.start, err)
 	}
 	args := append(append([]string{}, noHooks...), "checkout", "-q", "--force", "-B", branch, head)
 	if _, err := c.git.run(ctx, c.dir, c.env, args...); err != nil {

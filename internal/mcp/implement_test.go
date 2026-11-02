@@ -161,18 +161,24 @@ func (r *failingRuns) Put(ctx context.Context, run domain.Run) error {
 // contract with wall_clock 30m, a base checkout, an issue, an agent that
 // exits 0 with a commit, green gates, and a push, a pull request and a
 // status that all succeed.
+//
+// For a correction round it also holds the branch's checkout, at the tip
+// an earlier run pushed, the open pull request of forja/12 opened by
+// Forja's own login, and that login.
 type implementFixture struct {
-	calls    *callLog
-	claims   *fakeClaims
-	runs     *recordingRuns
-	agent    *fakeAgent
-	cloner   *fakeCloner
-	issues   *fakeIssues
-	gates    *fakeGates
-	pusher   *fakePusher
-	prs      *fakePullRequests
-	statuses *fakeStatuses
-	cs       *sdk.ClientSession
+	calls        *callLog
+	claims       *fakeClaims
+	runs         *recordingRuns
+	agent        *fakeAgent
+	cloner       *fakeCloner
+	branchCloner *fakeBranchCloner
+	identity     *fakeIdentity
+	issues       *fakeIssues
+	gates        *fakeGates
+	pusher       *fakePusher
+	prs          *fakePullRequests
+	statuses     *fakeStatuses
+	cs           *sdk.ClientSession
 }
 
 func newImplementFixture(t *testing.T, contract []byte, mutate func(*fakeClaims)) *implementFixture {
@@ -212,16 +218,22 @@ func newWiredFixture(t *testing.T, contract []byte, w fixtureWiring) *implementF
 	fx := &implementFixture{
 		calls: calls, claims: claims, runs: runs, agent: agent,
 		cloner: &fakeCloner{co: implementCheckout(), log: calls}, issues: &fakeIssues{issue: implementStatement},
-		gates:    &fakeGates{report: greenReport(), log: calls},
-		pusher:   &fakePusher{deliveryLog[github.PushRequest]{calls: calls, name: "push"}},
+		gates:  &fakeGates{report: greenReport(), log: calls},
+		pusher: &fakePusher{deliveryLog[github.PushRequest]{calls: calls, name: "push"}},
 		prs: &fakePullRequests{
 			deliveryLog: deliveryLog[github.PullRequestRequest]{calls: calls, name: "pull_request"},
 			labels:      deliveryLog[github.LabelRequest]{calls: calls, name: "label"},
+			finds:       deliveryLog[string]{calls: calls, name: "find"},
+			comments:    deliveryLog[github.CommentRequest]{calls: calls, name: "comment"},
+			found:       foundPR,
 		},
-		statuses: &fakeStatuses{deliveryLog[github.StatusRequest]{calls: calls, name: "status"}},
+		statuses:     &fakeStatuses{deliveryLog[github.StatusRequest]{calls: calls, name: "status"}},
+		branchCloner: &fakeBranchCloner{co: branchCheckout(), log: calls},
+		identity:     &fakeIdentity{login: forjaLogin, calls: calls},
 	}
 	deps.Cloner, deps.Issues, deps.Agent, deps.Gates = fx.cloner, fx.issues, agent, fx.gates
 	deps.Pusher, deps.PullRequests, deps.Statuses = fx.pusher, fx.prs, fx.statuses
+	deps.BranchCloner, deps.Identity = fx.branchCloner, fx.identity
 	if w.deps != nil {
 		w.deps(&deps)
 	}
@@ -478,8 +490,8 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	if !present || string(raw) != `"run-expired"` {
 		t.Fatalf("supersedes on the wire = %s (present %v), want \"run-expired\"", raw, present)
 	}
-	if len(wire) != 24 {
-		t.Fatalf("wire object has %d keys, want the 23 of a delivered run plus supersedes: %s", len(wire), structuredJSON(t, res))
+	if len(wire) != 29 {
+		t.Fatalf("wire object has %d keys, want the 28 of a delivered run on a server with no price table plus supersedes: %s", len(wire), structuredJSON(t, res))
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/evidence"
@@ -69,19 +70,6 @@ func decodeProof(t *testing.T, wire map[string]json.RawMessage) proofOnWire {
 	return p
 }
 
-func implementWire(t *testing.T, fx *implementFixture) map[string]json.RawMessage {
-	t.Helper()
-	res := callImplement(t, fx.cs, implementIssue)
-	if res.IsError {
-		t.Fatalf("IsError = true, content: %s", textOf(res))
-	}
-	var wire map[string]json.RawMessage
-	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
-		t.Fatalf("decode wire object: %v", err)
-	}
-	return wire
-}
-
 // The classification of the agent's head reaches every reader the same:
 // forja.implement, forja.status and the evidence the pull request carries.
 func TestImplement_proofChanges_listedOnOutputStatusAndEvidence(t *testing.T) {
@@ -100,6 +88,7 @@ func TestImplement_proofChanges_listedOnOutputStatusAndEvidence(t *testing.T) {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: gitBlobSHA(proofContract), HeadSHA: agentHead,
 		Gates: greenReport(), Tokens: spent,
+		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 		Proof: domain.Proof{ProofPaths: []domain.FileChange{makefileChanged, binaryTestdata}, HumanMergePaths: []domain.FileChange{codeownersAdded}},
 	})
 	if prs := fx.prs.got(); len(prs) != 1 || prs[0].Body != wantBody {
@@ -251,7 +240,7 @@ func TestImplement_agentEmptiedProofPathsInContract_baseListsStillApply(t *testi
 func TestImplement_diffFails_toolErrorNoGates(t *testing.T) {
 	t.Parallel()
 	fx := newProofFixture(t, makefileChanged)
-	fx.cloner.co.diffErr = errors.New("diff down")
+	fx.cloner.co.changesErr = errors.New("diff down")
 
 	res := callImplement(t, fx.cs, implementIssue)
 	if !res.IsError || !strings.Contains(textOf(res), "diff down") {

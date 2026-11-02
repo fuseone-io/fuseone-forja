@@ -17,6 +17,7 @@ import (
 	"github.com/moby/moby/client"
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/fuseone-io/fuseone-forja/internal/agent"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/gates"
 	"github.com/fuseone-io/fuseone-forja/internal/github"
@@ -119,6 +120,42 @@ func TestWire_modelKey_decidesTheAgent(t *testing.T) {
 	}
 }
 
+// The agent runner refuses to run without a clock, so the one served must
+// carry one, and a monotonic one: its compute is a difference of readings.
+func TestWire_agentRunner_measuresWithTheMonotonicClock(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	runner, ok := deps.Agent.(*agent.Runner)
+	if !ok || runner.Now == nil {
+		t.Fatalf("Agent = %T, want an *agent.Runner with a clock", deps.Agent)
+	}
+	// time.Time.String ends in m=±<seconds> only when the reading has a
+	// monotonic clock reading.
+	if reading := runner.Now(); !strings.Contains(reading.String(), " m=") {
+		t.Fatalf("clock reading %v carries no monotonic reading", reading)
+	}
+}
+
+// The gates runner's compute is a difference of readings too: a wall
+// clock stepped mid-run would bill the step.
+func TestWire_gatesRunner_measuresWithTheMonotonicClock(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	runner, ok := deps.Gates.(*gates.Runner)
+	if !ok || runner.Now == nil {
+		t.Fatalf("Gates = %T, want a *gates.Runner with a clock", deps.Gates)
+	}
+	if reading := runner.Now(); !strings.Contains(reading.String(), " m=") {
+		t.Fatalf("clock reading %v carries no monotonic reading", reading)
+	}
+}
+
 // With a credential, a green run is delivered by the control plane's own
 // GitHub clients; without one, each delivery call answers with the
 // missing credential.
@@ -151,6 +188,83 @@ func TestWire_delivery_controlPlaneClientsOrTheMissingCredential(t *testing.T) {
 		if !errors.Is(err, github.ErrNoCredentials) {
 			t.Errorf("delivery call %d without credentials = %v, want ErrNoCredentials", i, err)
 		}
+	}
+}
+
+// With a credential, forja.verify reads the pull request with the control
+// plane's own client; without one, the read answers with the missing
+// credential.
+func TestWire_pullRequestReader_controlPlaneClientOrTheMissingCredential(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	reader, ok := deps.PullRequestReader.(*github.PullRequests)
+	if !ok || reader.Tokens == nil {
+		t.Fatalf("PullRequestReader = %T %+v, want *github.PullRequests with a token source", deps.PullRequestReader, deps.PullRequestReader)
+	}
+	bare, _, err := wire(func(string) string { return "" }, io.Discard)
+	if err != nil {
+		t.Fatalf("wire without credentials: %v", err)
+	}
+	if bare.PullRequestReader == nil {
+		t.Fatal("PullRequestReader is nil without credentials, want one that names the missing credential")
+	}
+	if _, err := bare.PullRequestReader.Read(context.Background(), "fuseone-io/fuseone-forja", 57); !errors.Is(err, github.ErrNoCredentials) {
+		t.Fatalf("Read without credentials = %v, want ErrNoCredentials", err)
+	}
+}
+
+// With a credential, a correction round clones the branch with the same
+// cloner as forja.plan and knows Forja's login from that credential;
+// without one, each of its calls answers with the missing credential.
+func TestWire_round_branchClonerAndIdentityOrTheMissingCredential(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	if c, ok := deps.BranchCloner.(cloner); !ok || c.Cloner == nil {
+		t.Errorf("BranchCloner = %T, want the cloner adapter over *github.Cloner", deps.BranchCloner)
+	}
+	if id, ok := deps.Identity.(*github.StaticTokenSource); !ok || id.Value != "github_pat_dev" {
+		t.Errorf("Identity = %T, want the PAT's own token source", deps.Identity)
+	}
+	bare, _, err := wire(func(string) string { return "" }, io.Discard)
+	if err != nil {
+		t.Fatalf("wire without credentials: %v", err)
+	}
+	ctx := context.Background()
+	errs := map[string]error{
+		"clone branch": func() error { _, err := bare.BranchCloner.CloneBranch(ctx, "o/r", "main", "forja/1"); return err }(),
+		"login":        func() error { _, err := bare.Identity.Login(ctx); return err }(),
+		"find":         func() error { _, err := bare.PullRequests.Find(ctx, "o/r", "forja/1"); return err }(),
+		"comment":      bare.PullRequests.Comment(ctx, github.CommentRequest{}),
+	}
+	for name, err := range errs {
+		if !errors.Is(err, github.ErrNoCredentials) {
+			t.Errorf("%s without credentials = %v, want ErrNoCredentials", name, err)
+		}
+	}
+}
+
+// opaqueTokens is a token source that cannot say whose login it acts as.
+type opaqueTokens struct{}
+
+func (opaqueTokens) Token(context.Context, string, github.Permissions) (github.Token, error) {
+	return github.Token{}, nil
+}
+
+// A credential whose login cannot be read would serve rounds that refuse
+// every branch: forjad does not start.
+func TestIdentityOf_tokenSourceWithoutLogin_startupError(t *testing.T) {
+	t.Parallel()
+	if _, err := identityOf(opaqueTokens{}); err == nil {
+		t.Fatal("identityOf a token source without Login = nil error, want a startup failure")
+	}
+	if id, err := identityOf(&github.StaticTokenSource{Value: "x"}); err != nil || id == nil {
+		t.Fatalf("identityOf the PAT source = %v, %v; want it", id, err)
 	}
 }
 

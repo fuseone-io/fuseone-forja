@@ -2,6 +2,8 @@ package mcp_test
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -66,10 +68,16 @@ func (f *fakePusher) Push(ctx context.Context, req github.PushRequest) error {
 
 // fakePullRequests opens one pull request, numbered as the API numbered
 // the pilot's, or fails with err; labels records each Label, or fails it
-// with its own err.
+// with its own err. Find answers found for the run's branch,
+// ErrNoPullRequest when found is zero, or fails with finds.err; Comment
+// records the comment or fails with comments.err. Like the real one, a
+// comment needs a number and a body.
 type fakePullRequests struct {
 	deliveryLog[github.PullRequestRequest]
-	labels deliveryLog[github.LabelRequest]
+	labels   deliveryLog[github.LabelRequest]
+	finds    deliveryLog[string]
+	comments deliveryLog[github.CommentRequest]
+	found    domain.PullRequest
 }
 
 const prURL = "https://github.com/" + doctorRepo + "/pull/41"
@@ -89,6 +97,26 @@ func (f *fakePullRequests) Label(ctx context.Context, req github.LabelRequest) e
 	}
 	if req.Number != 41 || len(req.Labels) == 0 {
 		return errLabelRefused
+	}
+	return nil
+}
+
+func (f *fakePullRequests) Find(ctx context.Context, repo, branch string) (domain.PullRequest, error) {
+	if err := f.finds.record(ctx, repo+" "+branch); err != nil {
+		return domain.PullRequest{}, err
+	}
+	if f.found.Number == 0 {
+		return domain.PullRequest{}, fmt.Errorf("fake: %s: %w", branch, github.ErrNoPullRequest)
+	}
+	return f.found, nil
+}
+
+func (f *fakePullRequests) Comment(ctx context.Context, req github.CommentRequest) error {
+	if err := f.comments.record(ctx, req); err != nil {
+		return err
+	}
+	if req.Number <= 0 || req.Body == "" {
+		return errors.New("fake: a comment needs a pull request number and a body")
 	}
 	return nil
 }

@@ -53,10 +53,6 @@ func ClassifyProof(c Contract, changes []FileChange) Proof {
 }
 
 func matchAny(patterns []string, name string) bool {
-	for _, pattern := range patterns {
-		if MatchPath(pattern, name) {
-			return true
-		}
-	}
-	return false
+	_, ok := MatchPath(patterns, name)
+	return ok
 }

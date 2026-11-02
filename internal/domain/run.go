@@ -59,6 +59,10 @@ type Run struct {
 	// Tokens is what the run's model proxy metered; zero for a run that
 	// called no model.
 	Tokens TokenUsage
+	// Compute is the container time the run's workspaces and their service
+	// sidecars were up, as the control plane's clock measured it; zero for
+	// a run that launched none.
+	Compute time.Duration
 	// Reason is why a failed run failed, when that is more than its
 	// outcome; empty otherwise.
 	Reason FailureReason
@@ -73,16 +77,29 @@ type Run struct {
 	// applied.
 	BaseSHA     string
 	ContractSHA string
+	// StartSHA is the tip of the branch a correction round started from;
+	// empty for a first run, which starts at BaseSHA.
+	StartSHA string
 	// HeadSHA is the agent's last commit once the control plane imported
-	// it, and Branch the branch it is pushed to.
+	// it, or the head of the pull request a verify run reads; Branch the
+	// branch an implement run pushes to.
 	HeadSHA string
 	Branch  string
 	// Proof is what of the agent's head, against the base commit, falls
 	// under the base contract's proof_paths and human_merge_paths; empty
 	// until the head was adopted.
 	Proof Proof
-	// PullRequest is the pull request the run opened; zero when none.
+	// PullRequest is the pull request the run opened, the one a correction
+	// round works on, or the one a verify run verifies; zero when none.
 	PullRequest PullRequest
+	// QA is the verdict of a verify run; zero for any other run.
+	QA QA
+	// Limits are the limits the run works under, its base contract's with
+	// the defaults filled; zero until the contract was read.
+	Limits Limits
+	// DiffLines is the lines the agent's head adds and deletes against the
+	// base, as the control plane counted them; nil until counted.
+	DiffLines *int
 }
 
 // Validate reports whether the run is well formed: a non-empty ID, a known
