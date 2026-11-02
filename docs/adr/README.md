@@ -19,3 +19,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0045](0045-run-cost.md) | Compute minutes, tokens and estimated cost per run | proposed |
 | [0047](0047-correction-round.md) | Correction round: forja.implement on Forja's own branch | proposed |
 | [0048](0048-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |
+| [9999](9999-verify-inversions.md) | forja.verify inversions, the QA agent and the verdict "bites / does not bite" | proposed |
