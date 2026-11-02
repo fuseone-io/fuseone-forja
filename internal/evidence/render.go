@@ -38,6 +38,9 @@ type Run struct {
 	HeadSHA string
 	Gates   domain.GateReport
 	Tokens  domain.TokenUsage
+	// Proof is what of the head's change falls under the base contract's
+	// proof_paths and human_merge_paths.
+	Proof domain.Proof
 	// Elapsed is the run's wall time so far, from the control plane's clock.
 	Elapsed time.Duration
 }
@@ -63,10 +66,12 @@ func Render(r Run) string {
 	return cut(head+logs.String()+foot, foot)
 }
 
-// header is the reference, the identifiers and the table of steps.
+// header is the reference, the human-merge marking, the identifiers, the
+// changed paths that ask for a human merge and the table of steps.
 func header(r Run) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Refs #%d\n\n", r.Issue)
+	b.WriteString(humanMergeLine(r.Proof))
 	b.WriteString("Forja ran the gates of the base commit's contract on the agent's head.\n\n")
 	b.WriteString("| | |\n|---|---|\n")
 	rows := [][2]string{
@@ -81,6 +86,7 @@ func header(r Run) string {
 	for _, row := range rows {
 		fmt.Fprintf(&b, "| %s | %s |\n", row[0], row[1])
 	}
+	proofSections(&b, r.Proof, r.RunID)
 	b.WriteString("\n## Steps\n\n| Step | Command | Status | Exit code | Duration |\n|---|---|---|---|---|\n")
 	for _, s := range append(append([]domain.GateResult(nil), r.Gates.Setup...), r.Gates.Gates...) {
 		fmt.Fprintf(&b, "| %s | %s | %s | %s | %s |\n", cell(s.Name), code(s.Command), s.Status, exitCode(s), duration(s))
