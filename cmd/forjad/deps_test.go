@@ -139,6 +139,23 @@ func TestWire_agentRunner_measuresWithTheMonotonicClock(t *testing.T) {
 	}
 }
 
+// The gates runner's compute is a difference of readings too: a wall
+// clock stepped mid-run would bill the step.
+func TestWire_gatesRunner_measuresWithTheMonotonicClock(t *testing.T) {
+	t.Parallel()
+	deps, _, err := wire(agentEnv(t, nil), io.Discard)
+	if err != nil {
+		t.Fatalf("wire: %v", err)
+	}
+	runner, ok := deps.Gates.(*gates.Runner)
+	if !ok || runner.Now == nil {
+		t.Fatalf("Gates = %T, want a *gates.Runner with a clock", deps.Gates)
+	}
+	if reading := runner.Now(); !strings.Contains(reading.String(), " m=") {
+		t.Fatalf("clock reading %v carries no monotonic reading", reading)
+	}
+}
+
 // With a credential, a green run is delivered by the control plane's own
 // GitHub clients; without one, each delivery call answers with the
 // missing credential.
