@@ -132,9 +132,7 @@ func TestImplement_correctionRound_gatesGreen_pushCommentThenStatusOnNewHead(t *
 		t.Fatalf("a round opened %d pull requests, want none", n)
 	}
 	assertRoundDelivered(t, fx)
-	if out.State != "succeeded" || out.HeadSHA != roundHead || out.PullRequest == nil || out.PullRequest.Number != 57 {
-		t.Fatalf("output state %q head %q pr %+v, want succeeded on the new head with the found PR", out.State, out.HeadSHA, out.PullRequest)
-	}
+	assertRoundOutput(t, out)
 	assertRoundStages(t, statusOf(t, fx))
 	assertFindingNowhere(t, fx, out)
 }
@@ -161,6 +159,16 @@ func assertRoundDelivered(t *testing.T, fx *implementFixture) {
 	}}
 	if got := fx.statuses.got(); !reflect.DeepEqual(got, wantStatus) {
 		t.Fatalf("statuses = %+v, want %+v", got, wantStatus)
+	}
+}
+
+func assertRoundOutput(t *testing.T, out forja.ImplementOutput) {
+	t.Helper()
+	if out.State != "succeeded" || out.HeadSHA != roundHead || out.BaseSHA != planSHA || out.Evidence != roundEvidence() {
+		t.Fatalf("output state %q head %q base %q, want succeeded on the new head over the base with the round's evidence", out.State, out.HeadSHA, out.BaseSHA)
+	}
+	if out.PullRequest == nil || *out.PullRequest != (forja.PullRequestRef{Number: 57, URL: foundURL}) {
+		t.Fatalf("output pull request %+v, want the found #57", out.PullRequest)
 	}
 }
 

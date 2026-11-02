@@ -60,6 +60,7 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 		deps.Contracts = unavailableContracts{err: err}
 		deps.Claims = unavailableClaims{err: err}
 		deps.Cloner = unavailablePlan{err: err}
+		deps.BranchCloner = unavailablePlan{err: err}
 		deps.Issues = unavailablePlan{err: err}
 		withoutDelivery(&deps, err)
 		if deps.Agent == nil {
@@ -70,13 +71,23 @@ func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store,
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
-	deps.Contracts = &github.ContractReader{Tokens: tokens}
-	deps.Cloner = cloner{&github.Cloner{Tokens: tokens}}
-	deps.Issues = &github.IssueReader{Tokens: tokens}
-	withDelivery(&deps, tokens)
+	if err := withGitHub(&deps, tokens); err != nil {
+		return mcp.Deps{}, nil, err
+	}
 	store := claim.NewStore(&github.Refs{Tokens: tokens}, utcNow, journal(getenv, stderr))
 	deps.Claims = store
 	return deps, store, nil
+}
+
+// withGitHub gives the tools the control plane's GitHub clients, all
+// minting from tokens: the contract, both clones, the issue and the
+// delivery.
+func withGitHub(deps *mcp.Deps, tokens github.TokenSource) error {
+	deps.Contracts = &github.ContractReader{Tokens: tokens}
+	c := cloner{&github.Cloner{Tokens: tokens}}
+	deps.Cloner, deps.BranchCloner = c, c
+	deps.Issues = &github.IssueReader{Tokens: tokens}
+	return withDelivery(deps, tokens)
 }
 
 // driverOptions is the workspace driver's configuration: the workspaces'
@@ -165,6 +176,15 @@ func (c cloner) Clone(ctx context.Context, repo, branch string) (mcp.Checkout, e
 	return co, nil
 }
 
+// CloneBranch is the correction round's clone, adapted the same way.
+func (c cloner) CloneBranch(ctx context.Context, repo, base, branch string) (mcp.Checkout, error) {
+	co, err := c.Cloner.CloneBranch(ctx, repo, base, branch)
+	if err != nil {
+		return nil, err
+	}
+	return co, nil
+}
+
 // launcher adapts workspace.Docker, which returns its own types, to the
 // interfaces the gates runner declares.
 type launcher struct {
@@ -226,6 +246,10 @@ type unavailablePlan struct {
 }
 
 func (u unavailablePlan) Clone(context.Context, string, string) (mcp.Checkout, error) {
+	return nil, u.err
+}
+
+func (u unavailablePlan) CloneBranch(context.Context, string, string, string) (mcp.Checkout, error) {
 	return nil, u.err
 }
 
