@@ -92,14 +92,7 @@ func TestFold_property_bitesIffEveryInversionBit(t *testing.T) {
 	t.Parallel()
 	property := func(invs ran) bool {
 		verdict, escaped, ok := verify.Fold(invs)
-		every, conclusive, firstEscaped := len(invs) > 0, len(invs) > 0, ""
-		for _, inv := range invs {
-			every = every && inv.Outcome == domain.InversionBit
-			conclusive = conclusive && inv.Outcome != ""
-			if inv.Outcome == domain.InversionEscaped && firstEscaped == "" {
-				firstEscaped = inv.Branch
-			}
-		}
+		every, conclusive, firstEscaped := summary(invs)
 		switch {
 		case !conclusive:
 			return !ok && verdict == "" && escaped == ""
@@ -112,6 +105,20 @@ func TestFold_property_bitesIffEveryInversionBit(t *testing.T) {
 	if err := quick.Check(property, &quick.Config{MaxCount: 2000, Rand: rand.New(rand.NewSource(22))}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// summary says, of a non-empty list, whether every inversion bit and
+// whether every one is conclusive, and names the first that escaped.
+func summary(invs ran) (every, conclusive bool, firstEscaped string) {
+	every, conclusive = len(invs) > 0, len(invs) > 0
+	for _, inv := range invs {
+		every = every && inv.Outcome == domain.InversionBit
+		conclusive = conclusive && inv.Outcome != ""
+		if inv.Outcome == domain.InversionEscaped && firstEscaped == "" {
+			firstEscaped = inv.Branch
+		}
+	}
+	return every, conclusive, firstEscaped
 }
 
 // A red setup or a service that never became ready never bites, whatever
