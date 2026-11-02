@@ -113,6 +113,7 @@ func roundEvidence() string {
 		Issue: implementIssue, RunID: "run-1", BaseBranch: "main",
 		BaseSHA: planSHA, ContractSHA: checkoutContractSHA, StartSHA: branchTip, HeadSHA: roundHead,
 		Gates: greenReport(), Tokens: spent,
+		Limits: domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, DiffLines: agentDiffLines,
 	})
 }
 
@@ -182,7 +183,7 @@ func assertRoundStages(t *testing.T, wire map[string]json.RawMessage) {
 	for _, s := range stages {
 		names = append(names, s.Name)
 	}
-	if want := []string{"claim", "clone", "agent", "gates", "push", "comment", "status", "release"}; !reflect.DeepEqual(names, want) {
+	if want := []string{"claim", "clone", "agent", "gates", "diff", "push", "comment", "status", "release"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("stages = %q, want %q", names, want)
 	}
 }

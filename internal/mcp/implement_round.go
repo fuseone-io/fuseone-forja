@@ -118,9 +118,9 @@ func (h implementer) clone(ctx context.Context, f *flight) (Checkout, error) {
 // request, a round comments on the one it found.
 func (h implementer) steps(f *flight) []runStep {
 	if f.round == nil {
-		return []runStep{h.agentStage, h.gatesStage, h.pushStage, h.pullRequestStage, h.statusStage}
+		return []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.pullRequestStage, h.statusStage}
 	}
-	return []runStep{h.agentStage, h.gatesStage, h.pushStage, h.commentStage, h.statusStage}
+	return []runStep{h.agentStage, h.gatesStage, h.diffStage, h.pushStage, h.commentStage, h.statusStage}
 }
 
 // finding is what the agent is handed besides the issue.

@@ -25,7 +25,8 @@ type Cloner interface {
 // new branch out at the commit; Adopt imports that branch from a bundle
 // the agent's workspace exported, refuses a head that does not descend
 // from Start, and checks it out in Dir, while every read still answers for
-// the pinned commit.
+// the pinned commit. DiffLines counts the lines an adopted head adds and
+// deletes against the pinned commit.
 type Checkout interface {
 	SHA() string
 	Start() string
@@ -36,6 +37,7 @@ type Checkout interface {
 	BlobSHA(ctx context.Context, path string) (string, error)
 	StartBranch(ctx context.Context, name string) error
 	Adopt(ctx context.Context, bundle, branch string) (string, error)
+	DiffLines(ctx context.Context, head string) (int, error)
 	Close() error
 }
 

@@ -33,18 +33,16 @@ const (
 // credentials at all the server still serves the tools that need none,
 // and every GitHub-backed tool answers with the error naming the variables
 // to set; the claim store is then nil. A half-configured App, a malformed
-// lease, egress allowlist, registry credentials file or model
+// lease, price table, egress allowlist, registry credentials file or model
 // configuration, or a Docker client that cannot be built from DOCKER_HOST
 // and its siblings is a startup failure; an unset workspace runtime is a
 // warning. The wall clock and the
 // id generator are injected here, at the edge.
 func wire(getenv func(string) string, stderr io.Writer) (mcp.Deps, *claim.Store, error) {
-	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
-	lease, err := claimLease(getenv)
+	deps, err := baseDeps(getenv)
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
-	deps.Lease = lease
 	opts, agentOn, err := driverOptions(getenv, stderr)
 	if err != nil {
 		return mcp.Deps{}, nil, err
@@ -88,6 +86,20 @@ func withGitHub(deps *mcp.Deps, tokens github.TokenSource) error {
 	deps.Cloner, deps.BranchCloner = c, c
 	deps.Issues = &github.IssueReader{Tokens: tokens}
 	return withDelivery(deps, tokens)
+}
+
+// baseDeps is what every server has, however it is configured: the run
+// store, the clock and the ids, and the operator's lease and price table.
+func baseDeps(getenv func(string) string) (mcp.Deps, error) {
+	deps := mcp.Deps{Runs: runstore.NewMemory(), NewID: newRunID, Now: utcNow, Version: version}
+	var err error
+	if deps.Lease, err = claimLease(getenv); err != nil {
+		return mcp.Deps{}, err
+	}
+	if deps.Prices, err = priceTable(getenv); err != nil {
+		return mcp.Deps{}, err
+	}
+	return deps, nil
 }
 
 // driverOptions is the workspace driver's configuration: the workspaces'

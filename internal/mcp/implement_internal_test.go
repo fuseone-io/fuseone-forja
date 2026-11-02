@@ -69,6 +69,7 @@ func (oneFileCheckout) StartBranch(context.Context, string) error           { re
 func (oneFileCheckout) Adopt(context.Context, string, string) (string, error) {
 	return "04915d552e6e507929c4c734b4f4a3a31ae05820", nil
 }
+func (oneFileCheckout) DiffLines(context.Context, string) (int, error) { return 1, nil }
 
 // greenGates passes every step.
 type greenGates struct{}
@@ -110,6 +111,49 @@ type exitingAgent struct{}
 
 func (exitingAgent) Run(context.Context, agent.Task) (agent.Result, error) {
 	return agent.Result{Exported: true}, nil
+}
+
+// cancelledAgent works until its context ends and, as the real runner
+// does on a cancellation, fails with it.
+type cancelledAgent struct{}
+
+func (cancelledAgent) Run(ctx context.Context, _ agent.Task) (agent.Result, error) {
+	<-ctx.Done()
+	return agent.Result{ExitCode: domain.NoExitCode}, ctx.Err()
+}
+
+// A caller that goes away is not the wall clock: the run fails as a tool
+// error with no reason, and the issue is still freed.
+func TestImplement_callerCancels_toolErrorNoWallClockReason(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	claims := &cancellingClaims{cancel: cancel, now: now}
+	runs := runstore.NewMemory()
+	body := []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\nlimits:\n  wall_clock: 30m\n")
+	deps := Deps{
+		Runs: runs, Claims: claims, Contracts: fixedContracts{body: body},
+		Cloner: checkoutCloner{co: oneFileCheckout{contract: body}}, Issues: staticIssues{},
+		BranchCloner: checkoutCloner{co: oneFileCheckout{contract: body}}, Identity: acceptingGitHub{},
+		Agent: cancelledAgent{}, Gates: greenGates{},
+		Pusher: acceptingGitHub{}, PullRequests: acceptingGitHub{}, Statuses: acceptingGitHub{},
+		NewID: func() string { return "run-cancelled" }, Now: func() time.Time { return now },
+	}
+
+	_, _, err := implementHandler(deps)(ctx, nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("handler error = %v, want the cancellation as a tool error", err)
+	}
+	run, getErr := runs.Get(context.Background(), "run-cancelled")
+	if getErr != nil || run.State != domain.StateFailed || run.Reason != "" {
+		t.Fatalf("run = %+v, %v; want failed with no reason", run, getErr)
+	}
+	claims.mu.Lock()
+	defer claims.mu.Unlock()
+	if claims.releases != 1 {
+		t.Fatalf("releases = %d, want 1", claims.releases)
+	}
 }
 
 // The caller going away between the claim and the release must not leave

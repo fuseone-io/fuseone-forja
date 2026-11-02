@@ -17,6 +17,7 @@ const (
 	StageClone       StageName = "clone"
 	StageAgent       StageName = "agent"
 	StageGates       StageName = "gates"
+	StageDiff        StageName = "diff"
 	StagePush        StageName = "push"
 	StagePullRequest StageName = "pull_request"
 	StageComment     StageName = "comment"
@@ -43,6 +44,10 @@ type Stage struct {
 	// FinishedAt is nil while the stage runs.
 	FinishedAt *time.Time
 	Outcome    StageOutcome
+	// Compute and Tokens are what the stage consumed, recorded when it
+	// ends; zero while it runs and for a stage that uses neither.
+	Compute time.Duration
+	Tokens  TokenUsage
 }
 
 // PullRequest is the pull request a run opened or a correction round works

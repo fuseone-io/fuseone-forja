@@ -185,6 +185,38 @@ func TestRender_underBodyCap_noNote(t *testing.T) {
 	}
 }
 
+// The limits the run worked under are cited next to what it measured: the
+// wall clock, and the diff's lines against their cap, whichever side of it
+// they fell.
+func TestRender_limits_wallClockAndDiffLinesAgainstLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		wallClock time.Duration
+		measured  int
+		limit     int
+		want      []string
+	}{
+		{name: "under the limit", wallClock: 20 * time.Minute, measured: 120, limit: 400,
+			want: []string{"| Wall clock limit | 20m0s |", "| Diff lines (measured / limit) | 120 / 400 |"}},
+		{name: "over the limit", wallClock: 90 * time.Second, measured: 401, limit: 400,
+			want: []string{"| Wall clock limit | 1m30s |", "| Diff lines (measured / limit) | 401 / 400 |"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			run := greenRun()
+			run.Limits, run.DiffLines = domain.Limits{WallClock: tt.wallClock, MaxDiffLines: tt.limit}, tt.measured
+
+			body := evidence.Render(run)
+			assertLines(t, body, tt.want...)
+			if again := evidence.Render(run); again != body {
+				t.Fatalf("two renders of the same limits differ:\n%s\n---\n%s", body, again)
+			}
+		})
+	}
+}
+
 func TestRender_sameRun_sameBody(t *testing.T) {
 	t.Parallel()
 	if a, b := evidence.Render(greenRun()), evidence.Render(greenRun()); a != b {

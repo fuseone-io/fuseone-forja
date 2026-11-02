@@ -27,13 +27,14 @@ type services struct {
 	declared  map[string]domain.Service
 	readiness time.Duration
 	started   map[string]bool
+	meter     *meter
 }
 
-func newServices(ws Workspace, declared map[string]domain.Service, readiness time.Duration) *services {
+func newServices(ws Workspace, declared map[string]domain.Service, readiness time.Duration, m *meter) *services {
 	if readiness == 0 {
 		readiness = DefaultReadiness
 	}
-	return &services{ws: ws, declared: declared, readiness: readiness, started: map[string]bool{}}
+	return &services{ws: ws, declared: declared, readiness: readiness, started: map[string]bool{}, meter: m}
 }
 
 // start starts, in order, each of needs not started yet, and stops at the
@@ -47,6 +48,7 @@ func (s *services) start(ctx context.Context, needs []string) (ServiceResult, er
 		if !ok {
 			return ServiceResult{}, fmt.Errorf("service %s is not declared under services", name)
 		}
+		s.meter.sidecar()
 		res, err := s.ws.StartService(ctx, name, svc, s.readiness)
 		if err != nil {
 			return res, fmt.Errorf("start service %s: %w", name, err)
