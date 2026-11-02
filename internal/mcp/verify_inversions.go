@@ -201,7 +201,7 @@ func (v verifier) inversionStage(ctx, done context.Context, f *verifyFlight, i i
 		if err != nil {
 			return false, err
 		}
-		f.run.Egress = f.run.Egress.Merge(report.Egress)
+		f.run.Egress, f.run.Registry = f.run.Egress.Merge(report.Egress), f.run.Registry.Merge(report.Registry)
 		inv.Gates = report
 		inv.Outcome, _ = verify.Judge(report)
 		return true, nil

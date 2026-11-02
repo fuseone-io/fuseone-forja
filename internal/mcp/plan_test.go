@@ -75,6 +75,9 @@ type fakeCheckout struct {
 	changeSets     map[[2]string]domain.Change
 	changed        [][2]string
 	candidateHeads map[string]bool
+	// readopted maps a candidate's branch to the commit Adopt imports for it
+	// once it was imported before, as a bundle rewritten in between would.
+	readopted map[string]string
 }
 
 // Changes answers, as the real one, only for commits the clone holds: the
@@ -160,6 +163,9 @@ func (f *fakeCheckout) Adopt(_ context.Context, bundle, branch string) (string, 
 		return "", f.adoptErr
 	}
 	if head, ok := f.candidates[branch]; ok {
+		if again, ok := f.readopted[branch]; ok && f.candidateHeads[head] {
+			head = again
+		}
 		return f.adoptCandidate(bundle, branch, head)
 	}
 	if _, err := os.Stat(bundle); err != nil {

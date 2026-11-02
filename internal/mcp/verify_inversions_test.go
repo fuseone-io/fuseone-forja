@@ -452,6 +452,80 @@ func assertVerifyStageCost(t *testing.T, stages []forja.StageReport) {
 	}
 }
 
+// What every workspace of a verify run was refused, the baseline's, the
+// QA agent's and each inversion's, is the run's, as forja.status reads it.
+func TestVerify_egressOfEveryWorkspace_inStatus(t *testing.T) {
+	t.Parallel()
+	denial := func(destination string) domain.EgressReport {
+		return domain.EgressReport{Count: 1, Denied: []domain.EgressDenial{{Kind: domain.EgressHTTP, Destination: destination}}}
+	}
+	destinations := []string{"baseline.example:80", "qa.example:80", "inversion-1.example:80", "inversion-2.example:80"}
+	fx := newVerifyFixture(t, verifyWiring{pr: coveredPull(), fakes: func(fx *verifyFixture) {
+		invert(fx, bitAt("test"), bitAt("test"))
+		fx.gates.report.Egress = denial(destinations[0])
+		fx.qa.result.Egress = denial(destinations[1])
+		for k := 1; k <= 2; k++ {
+			r := fx.gates.byTree[candidateTree(k)]
+			r.Egress = denial(destinations[k+1])
+			fx.gates.byTree[candidateTree(k)] = r
+		}
+	}})
+
+	decodeVerify(t, callVerify(t, fx.cs, verifyPR))
+	wire := statusWire(t, fx.cs, "run-1")
+	if string(wire["egress_denied_count"]) != "4" {
+		t.Errorf("egress_denied_count = %s, want one from each of the 4 workspaces", wire["egress_denied_count"])
+	}
+	for _, d := range destinations {
+		if !strings.Contains(string(wire["egress_denied"]), d) {
+			t.Errorf("egress_denied = %s, lacks %s", wire["egress_denied"], d)
+		}
+	}
+}
+
+// What the registry proxy served and refused to every gates run of a
+// verify run, the baseline's and each inversion's, is the run's, as
+// forja.status reads it.
+func TestVerify_registryOfEveryGatesRun_inStatus(t *testing.T) {
+	t.Parallel()
+	fx := newVerifyFixture(t, verifyWiring{pr: coveredPull(), fakes: func(fx *verifyFixture) {
+		invert(fx, bitAt("test"), bitAt("test"))
+		fx.gates.report.Registry = registryAccess()
+		for k := 1; k <= 2; k++ {
+			r := fx.gates.byTree[candidateTree(k)]
+			r.Registry = registryAccess()
+			fx.gates.byTree[candidateTree(k)] = r
+		}
+	}})
+
+	decodeVerify(t, callVerify(t, fx.cs, verifyPR))
+	if got := string(statusWire(t, fx.cs, "run-1")["registry_access_count"]); got != "12" {
+		t.Fatalf("registry_access_count = %s, want the baseline's 4 and each inversion's 4", got)
+	}
+}
+
+// A candidate whose bundle imports another commit than the one admitted is
+// not the inversion that was judged: the run fails at its inversion stage
+// before its gates, with nothing published.
+func TestVerify_readoptedCandidateNotAdmittedCommit_failsBeforeGates(t *testing.T) {
+	t.Parallel()
+	moved := fmt.Sprintf("%040x", 0xbad)
+	fx := newVerifyFixture(t, verifyWiring{pr: coveredPull(), fakes: func(fx *verifyFixture) {
+		invert(fx, bitAt("test"), bitAt("test"))
+		fx.cloner.co.readopted = map[string]string{candidateBranch(1): moved}
+	}})
+
+	res := callVerify(t, fx.cs, verifyPR)
+	if !res.IsError || !strings.Contains(textOf(res), moved) || !strings.Contains(textOf(res), candidateHead(1)) {
+		t.Fatalf("IsError %v text %q, want a tool error naming both commits", res.IsError, textOf(res))
+	}
+	assertNoStatus(t, fx)
+	if fx.gates.calls != 1 {
+		t.Fatalf("gates ran %d times, want the baseline only", fx.gates.calls)
+	}
+	assertVerifyFailedAt(t, fx, "inversion")
+}
+
 // An inversion of a red head proves nothing: the run fails at the
 // baseline, the QA agent never runs and nothing is published.
 func TestVerify_headRed_gateFailedNoStatus(t *testing.T) {
