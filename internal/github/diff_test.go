@@ -147,7 +147,8 @@ func TestCheckout_diffLines_headNotACommitName_refused(t *testing.T) {
 	co, _ := adoptedCheckout(t, func(ws string) {
 		agentCommit(t, ws, map[string]string{"x": "x\n"}, "one")
 	})
-	for _, head := range []string{"", "--output=/tmp/x", "HEAD", agentBranch, co.SHA() + "..HEAD"} {
+	option := "--output=" + filepath.Join(t.TempDir(), "out")
+	for _, head := range []string{"", option, "HEAD", agentBranch, co.SHA() + "..HEAD"} {
 		if n, err := co.DiffLines(context.Background(), head); err == nil {
 			t.Errorf("DiffLines(%q) = %d, nil; want a refusal", head, n)
 		}
