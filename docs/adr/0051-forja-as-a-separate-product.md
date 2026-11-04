@@ -1,7 +1,7 @@
-# ADR 9999: Forja as a separate product, with FuseOne as its reference client
+# ADR 0051: Forja as a separate product, with FuseOne as its reference client
 
 - **Status:** proposed
-- **Issue:** none yet
+- **Issue:** none yet (PR #51)
 - **Refines:** `docs/PRD.md`, Summary and goal 4. It does not decide whether
   FuseOne adopts Forja as its official Level 2, which the PRD leaves for later.
   It supersedes nothing.
