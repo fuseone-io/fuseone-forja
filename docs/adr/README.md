@@ -22,3 +22,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0048](0048-verify-not-verifiable.md) | forja.verify, the "not verifiable" verdict and forja/qa pending | proposed |
 | [0049](0049-operator-view.md) | The platform owner's view of runs per repository | proposed |
 | [0050](0050-verify-inversions.md) | forja.verify inversions, the QA agent and the verdict "bites / does not bite" | proposed |
+| [9999](9999-forja-as-a-separate-product.md) | Forja as a separate product, with FuseOne as its reference client | proposed |
