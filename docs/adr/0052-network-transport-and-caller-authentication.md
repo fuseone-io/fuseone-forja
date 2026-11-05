@@ -127,6 +127,37 @@ GitHub App:
 The claim in git (`refs/forja/claims/<n>`, ADR 0033) is still the one lock
 per issue across every client and every replica.
 
+#### What a response may name
+
+A run is *the caller's* when the run store records the calling client as its
+owner. A run the store does not know (a crash before the durable store, or
+another replica's in-memory store) is treated as another client's: deny by
+default.
+
+| Response | When the run is the caller's | When it is another client's |
+|---|---|---|
+| `forja.status` with a `run_id` | The full record | The same tool error as an id that never existed, byte for byte |
+| `forja.status` list | Included | Never included; the page size, the cursor and `next_cursor` behave as if the run did not exist |
+| A claim refused because it is held (`domain.ClaimHeldError`) | Repository, issue, the holder's `run_id`, lease expiry | Repository, issue, lease expiry. No `run_id`, no client name |
+| `supersedes` on the caller's run (the expired claim it took over) | The superseded `run_id` | Omitted, as if the issue had been free |
+| Operator logs and the operator view (ADR 0049) | Client name, tool, `run_id` | The same: the operator sees every client |
+
+Today `ClaimHeldError.Error()` always names the holder's run
+(`internal/domain/claim.go`). The tool layer gets a caller-aware rendering;
+the domain error keeps the holder for the control plane's own use.
+
+**The limit of this confidentiality is the repository.** When two clients
+reach the same repository, everything Forja writes *into the repository* is
+visible to whoever can read it, whatever client they use: the claim ref and
+its commit (run id, SHA, lease expiry, `internal/claim/file.go`), the branch,
+the PR, the evidence report, which renders the run id
+(`internal/evidence/render.go`), and the commit statuses. Forja does not hide
+these, and could not. So a `run_id` is an identifier, not a secret, and not a
+capability: knowing another client's `run_id` gets nothing through Forja's
+tools. What Forja keeps per client is the run *record*: state, reason, cost,
+tokens, egress and registry events, and the client's name. Two clients whose
+work must stay mutually confidential must not share a repository.
+
 ### 5. The client on the run, not in the evidence
 
 `domain.Run` gains the client's name. It is returned by `forja.status` and
@@ -140,15 +171,74 @@ correction round's `finding`.
 
 ### 6. Request bounds
 
-The HTTP listener caps a request body at 1 MiB, the largest legitimate
-input being a 64 KiB `finding`. `ReadHeaderTimeout` and `ReadTimeout` are
-set on the server; `WriteTimeout` is **not**. A tool call's own duration is
-bounded by the run's `wall_clock` (ADR 0043), not by the listener.
+The handler caps a request body at 1 MiB
+(`StreamableHTTPOptions.MaxRequestBodyBytes = 1 << 20`, answered `413`; the
+SDK's default is 4 MiB). The largest legitimate input is a 64 KiB `finding`
+(`internal/mcp/implement_round.go`). `ReadHeaderTimeout` and `ReadTimeout`
+are set on the server; `WriteTimeout` is **not**. A tool call's own duration
+is bounded by the run's `wall_clock` (ADR 0043), not by the listener.
 
 While `forja.implement` blocks (until M2), a write timeout on the server or a
-read timeout on the ingress drops the request. The run works on the request's
-context, so it is cancelled with it. The ingress's proxy read timeout is
-therefore set above the largest `limits.wall_clock` the deployment allows.
+read timeout on the ingress drops the response. What happens to the run then
+depends on the protocol version (§7). The ingress's proxy read timeout is
+set above the largest `limits.wall_clock` the deployment allows.
+
+### 7. Protocol versions, and a caller that goes away
+
+The HTTP server negotiates exactly two protocol versions:
+`ServerOptions.SupportedProtocolVersions = ["2026-07-28", "2025-11-25"]`.
+stdio keeps the SDK's full list. In go-sdk v1.8.0, a request whose
+`MCP-Protocol-Version` header names an older version is answered `400`. A
+legacy `initialize` asking for an older version is answered with
+`2025-11-25`, and the client either speaks it or disconnects.
+
+The handler sets `StreamableHTTPOptions.PropagateRequestCancellation = true`.
+In v1.8.0 that option ties the tool handler's context to the HTTP request
+**only on 2026-07-28** (`mcp/streamable.go`, `shouldPropagateCancellation`).
+On 2025-11-25 the jsonrpc2 layer hides the request's cancellation from the
+handler (`internal/jsonrpc2/conn.go`, `notDone`), and `session.Close` waits
+for the handler to return. A `notifications/cancelled` cannot reach it
+either: in stateless mode it arrives on another POST, in another ephemeral
+session. So:
+
+| Version | The caller goes away during `forja.implement` or `forja.verify` |
+|---|---|
+| 2026-07-28 | The run's context is cancelled. The workspace is torn down, the claim released and the run recorded `failed` on the detached context (`internal/mcp/lifecycle.go`) |
+| 2025-11-25, or a request with no version header | The run continues to its end or its `wall_clock`. The response is lost, the claim is released at the end, and the outcome is in `forja.status` |
+
+Neither row leaves a claim or a run in `running` behind. On 2025-11-25,
+nothing short of `wall_clock` stops a run until `forja.cancel` exists
+(roadmap, M2). A caller that retries meanwhile gets a held claim naming its
+own run (§4) and can follow that run in `forja.status`.
+
+### 8. Origin validation
+
+The MCP transport spec requires a server to validate `Origin` on every
+incoming connection and to answer `403` when it is invalid; go-sdk v1.8.0
+does not do this by default (`StreamableHTTPOptions.CrossOriginProtection` is
+nil by default and deprecated). Forja wraps the handler itself:
+
+- **Allowed origins** come from `FORJA_MCP_ALLOWED_ORIGINS`, a comma-separated
+  list of exact `scheme://host[:port]` values, compared after lower-casing
+  the scheme and host. No wildcards. The default is empty.
+- **A request with an `Origin` header** whose value is not in the list is
+  answered `403 Forbidden`, with no MCP body and no `WWW-Authenticate`. That
+  includes `Origin: null`. It is refused **before** the bearer is checked, so
+  a browser page cannot use Forja's answers to probe a token.
+- **A request without `Origin`** passes this check. Service clients such as
+  FuseOne's worker send none, and the bearer still applies. A browser always
+  sends `Origin` on a cross-origin POST, which is the case this check exists
+  for.
+- The SDK's localhost protection stays on (`DisableLocalhostProtection` is
+  false), so a loopback listener still refuses a non-loopback `Host`.
+
+`http.CrossOriginProtection` is not used: it trusts any `Origin` that
+matches `Host`, exempts `GET`, `HEAD` and `OPTIONS`, and has no explicit
+allowlist. A failed check is logged with the client address and the
+`Origin`, never the bearer.
+
+The handler stack, outermost first: Origin check, bearer check
+(`auth.RequireBearerToken`), the SDK's Streamable HTTP handler.
 
 ## Alternatives considered
 
@@ -169,14 +259,16 @@ therefore set above the largest `limits.wall_clock` the deployment allows.
 - `domain.Run` and the run store carry the client's name; `forja.status`
   filters by it. On stdio the client is a fixed name, so the filter never
   hides a run from the process that started it.
-- A blocking `forja.implement` over HTTP lasts as long as the run. The
-  work runs on the request's context, as on stdio, so a client that goes
-  away stops it; the claim release and the terminal record run on a context
+- A blocking `forja.implement` over HTTP lasts as long as the run. Whether
+  a client that goes away stops it depends on the protocol version (§7);
+  either way the claim release and the terminal record run on a context
   detached from the caller's (`internal/mcp/lifecycle.go`), so nothing is
-  left behind. Making runs
-  outlive the request — `run_id` at start, outcome in `forja.status`, a
-  `forja.cancel` — changes the tool schemas and gets its own ADR, before the
-  first tagged major (`docs/roadmap.md`, M2).
+  left behind. Making runs outlive the request — `run_id` at start, outcome
+  in `forja.status`, a `forja.cancel`, an idempotency key — changes the tool
+  schemas and gets its own ADR, before the first tagged major
+  (`docs/roadmap.md`, M2).
+- The tool layer renders a held claim and `supersedes` according to who owns
+  the run (§4); `domain.ClaimHeldError` itself is unchanged.
 - The in-memory run store answers `forja.status` only for the replica and
   the process that ran the run. Several replicas, or a restart that keeps
   history, need the durable run store (roadmap, M1). Until then the chart
@@ -187,9 +279,44 @@ therefore set above the largest `limits.wall_clock` the deployment allows.
   (`FORJA_METRICS_ADDR`), which today serves only `/metrics`. They are
   unauthenticated and answer nothing about runs.
 
+## Acceptance criteria
+
+Each is observable from outside `forjad`: an SDK client (`mcp.ClientOptions.
+ProtocolVersion` pins the version) or plain HTTP against a real listener.
+
+| # | Scenario | Observable result |
+|---|---|---|
+| A1 | Bearer whose hash is in the clients file, no expiration | `tools/list` returns the five tools |
+| A2 | Missing or unknown bearer | `401`, no tool runs |
+| A3 | Non-loopback `FORJA_MCP_ADDR` without a certificate, or with no or an empty clients file | `forjad` exits non-zero at start, naming the variable |
+| A4 | Request body over 1 MiB | `413` |
+| C1 | Client on 2026-07-28 closes the connection during `forja.implement` | The workspace container is gone; `refs/forja/claims/<n>` is deleted within the release bound (`finishTimeout`, 30 s per step, `internal/mcp/implement.go`); and `forja.status` (new connection, same client) shows the run `failed` |
+| C2 | Client on 2025-11-25 closes the connection during `forja.implement` | The run reaches its own end; then the claim ref is deleted and `forja.status` shows its terminal state. Never `running` after `wall_clock` plus the lease margin |
+| C3 | `MCP-Protocol-Version: 2025-06-18` on a non-initialize request | `400` |
+| P1 | Client B calls `forja.status` with client A's `run_id` | The error is identical to that for a random id |
+| P2 | Client B lists runs of a repository both reach | None of A's runs appear; pagination is unaffected |
+| P3 | Client B calls `forja.implement` on an issue A's run holds | A tool error naming repository, issue and expiry; the text contains no `run_id` |
+| P4 | Client A retries the same issue while its own run holds it | The error names A's `run_id` |
+| P5 | B's run takes over A's expired claim | B's `forja.status` has no `supersedes`; A's run id appears in neither the response nor B's logs |
+| O1 | `Origin` not in `FORJA_MCP_ALLOWED_ORIGINS`, valid bearer | `403`, no tool runs, no `WWW-Authenticate` |
+| O2 | `Origin: null`, valid bearer | `403` |
+| O3 | No `Origin`, valid bearer | `200` |
+| O4 | `Origin` in the list, valid bearer | `200` |
+| O5 | `Origin` not in the list, no bearer | `403` (the Origin check runs first) |
+
 ## What only the human can do
 
 - [ ] Ratify this ADR and change its status to `accepted`.
+- [ ] Confirm which protocol version fuseone-agents' MCP client negotiates.
+      On 2025-11-25 a disconnect does not stop a run (§7). Decide whether
+      that is acceptable until `forja.cancel` lands, or whether the HTTP
+      server drops 2025-11-25.
+- [ ] Confirm that FuseOne's worker sends no `Origin`, and whether any
+      browser-based client is expected (it would need an entry in
+      `FORJA_MCP_ALLOWED_ORIGINS`).
+- [ ] Confirm that repository-level visibility of run ids (claim refs,
+      evidence report) is acceptable for repositories shared between
+      clients (§4).
 - [ ] Decide where TLS ends in the pilot's cluster: internal ingress that
       re-encrypts, or the Service with an internal CA that FuseOne trusts.
 - [ ] Generate FuseOne's bearer, put its hash in the clients file through the
