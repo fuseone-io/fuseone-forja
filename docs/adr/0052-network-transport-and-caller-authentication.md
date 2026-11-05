@@ -233,11 +233,20 @@ released and the run recorded `failed` on the detached context
 (`internal/mcp/lifecycle.go`). No claim and no run in `running` is left
 behind.
 
-A legacy `initialize` is answered by the SDK with `2025-11-25`, which the
-client cannot then use: its next request carries that version and is
-refused `400`. A client that cannot speak 2026-07-28 fails at connection
-time, not in the middle of a run. Widening the list later is a decision for
-this ADR, not a configuration change.
+A go-sdk v1.8.0 client pinned to an older version sends its `initialize`
+without the header, so the middleware refuses that first request `400`.
+Behind the middleware the SDK would answer it with `2025-11-25`, and the
+client's next request, carrying that version, would be refused `400`. Either
+way a client that cannot speak 2026-07-28 fails at connection time, not in
+the middle of a run. Widening the list later is a decision for this ADR,
+not a configuration change.
+
+A stop of `forjad serve` cancels the calls in flight the same way: every
+request's context ends with the server's (`http.Server.BaseContext`), and
+the drain outlasts the bound of each teardown step (`FinishTimeout`), so a
+cancelled run removes its workspace, releases its claim and is recorded
+`failed` before the process exits. The pod's termination grace period is set
+above that drain.
 
 ### 8. Origin validation
 
@@ -326,8 +335,8 @@ ProtocolVersion` pins the version) or plain HTTP against a real listener.
 | A2 | Missing or unknown bearer | `401`, no tool runs |
 | A3 | Non-loopback `FORJA_MCP_ADDR` without a certificate, or with no or an empty clients file | `forjad` exits non-zero at start, naming the variable |
 | A4 | Request body over 1 MiB | `413` |
-| C1 | Client on 2026-07-28 closes the connection during `forja.implement` | The workspace container is gone; `refs/forja/claims/<n>` is deleted within the release bound (`finishTimeout`, 30 s per step, `internal/mcp/implement.go`); and `forja.status` (new connection, same client) shows the run `failed` |
-| C2 | Client pinned to 2025-11-25 | Refused at connection time (`400` on its first request after `initialize`); no tool runs, no claim ref created |
+| C1 | Client on 2026-07-28 closes the connection during `forja.implement` | The workspace container is gone; `refs/forja/claims/<n>` is deleted within the release bound (`FinishTimeout`, 30 s per step, `internal/mcp/implement.go`); and `forja.status` (new connection, same client) shows the run `failed` |
+| C2 | Client pinned to 2025-11-25 | Refused at connection time (`400` on its `initialize`, which carries no `MCP-Protocol-Version`); no tool runs, no claim ref created |
 | C3 | `MCP-Protocol-Version: 2025-06-18` or `2025-11-25` on any request | `400` |
 | C4 | POST with a valid bearer and no `MCP-Protocol-Version` header | `400`; no tool runs |
 | P1 | Client B calls `forja.status` with client A's `run_id` | The error is identical to that for a random id |
