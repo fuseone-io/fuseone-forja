@@ -153,7 +153,7 @@ is installed.
 
 | Slice | Notes |
 |---|---|
-| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS up to `forjad` (ingress re-encrypts, or internal CA), which repositories a client may name, what a response may name, protocol versions 2026-07-28 and 2025-11-25 with cancellation per version, `Origin` allowlist |
+| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS up to `forjad` (ingress re-encrypts, or internal CA), which repositories a client may name, what a response may name, HTTP accepts protocol 2026-07-28 only so a dropped caller cancels its run, `Origin` allowlist (empty in the pilot), a pilot release gate (G1–G7) |
 | `forjad serve` over HTTP (`FORJA_MCP_ADDR`) with caller authentication | Same tools, same schemas; stdio unchanged |
 | Durable run store on Postgres | Real container in tests; claim recovery reads it |
 | Health and readiness endpoints | `/healthz` and `/readyz` on the metrics listener (ADR 0052) |
@@ -195,8 +195,10 @@ These change tool schemas. ADR 0051 freezes them under semver, so they land
   (ADR 0052 §4).
 - The implementation-then-correction scenario above yields two runs with one
   `caller_ref`, and `forja.status` filtered by that `caller_ref` lists both.
-- `forja.cancel` stops a run on both protocol versions, which closes the
-  2025-11-25 gap of ADR 0052 §7.
+- `forja.cancel` stops a run that a caller started and no longer waits on.
+  With asynchronous runs, a dropped request no longer cancels anything (ADR
+  0052 §7). Whether HTTP then widens beyond 2026-07-28 is decided in the M2
+  ADR.
 
 ### M3 · The factory uses Forja (Gate 1)
 
@@ -211,6 +213,9 @@ Mostly fuseone-agents work; Forja's part is #15, rewritten for HTTP.
 | Cost per card includes Forja's minutes and tokens, joined on `caller_ref` | fuseone-agents |
 | Ruleset requires `forja/gates` and `forja/qa` pinned to the Forja App's `integration_id`, beside the role's review | fuseone-agents #207 |
 | Register Forja in the pilot area's FuseOne; one card end to end in copilot mode | Forja #15 |
+
+**Before the pilot is released:** ADR 0052's pilot release gate (G1–G7)
+passes in the pilot's environment, with the real worker and the real ingress.
 
 **Done when (PRD Gate 1):** `forja.doctor` green on the pilot, and PRs opened
 by Forja merged without rework.
@@ -237,7 +242,7 @@ failures, two areas beyond the pilot.
 | Risk | Mitigation |
 |---|---|
 | The async change slips past v1.0.0 and becomes a major | M2 is ordered before the tag; golden tests catch it |
-| FuseOne's 60 s call ceiling and 2-minute worker lease under a blocking call | Async runs (M2); until then, `CallTimeout` raised on the Forja entry and a short pilot `wall_clock`. A timed-out call stops the run on 2026-07-28; on 2025-11-25 the run finishes and is read in `forja.status` (ADR 0052 §7) |
+| FuseOne's 60 s call ceiling and 2-minute worker lease under a blocking call | Async runs (M2); until then, `CallTimeout` raised on the Forja entry and a short pilot `wall_clock`. A timed-out call cancels the run, since HTTP accepts 2026-07-28 only (ADR 0052 §7), so `CallTimeout` must exceed the pilot's `wall_clock` |
 | A shared `forjad` serving several clients leaks one client's repository or runs to another | ADR 0052 §4: a per-client repository allowlist; `forja.status`, held-claim errors and `supersedes` name only the caller's runs; the App's installations remain the outer bound (ADR 0051 §4). What is written into a shared repository (claim refs, PR, evidence) is visible to its readers by design |
 | A browser page reaches `forjad` through a user's network position | ADR 0052 §8: `Origin` allowlist, `403` before the bearer check |
 | Polling `forja.status` from the agent loop costs tokens | The factory's scheduled passes poll once per pass; a role that only needs the verdict reads the commit status |
