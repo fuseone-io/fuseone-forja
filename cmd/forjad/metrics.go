@@ -39,6 +39,9 @@ func listenTCP(ctx context.Context, addr string) (net.Listener, error) {
 type host struct {
 	getenv func(string) string
 	listen listenFunc
+	// startup bounds opening the run store and recovering claims; zero is
+	// defaultStartupTimeout.
+	startup time.Duration
 }
 
 // metricsAddr is the configured address, empty when unset; one that is not

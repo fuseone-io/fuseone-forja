@@ -53,7 +53,8 @@ func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, geten
 }
 
 // serve locks the state directory, opens the run store, recovers the
-// claims a previous process left and closes their runs, opens the metrics
+// claims a previous process left and closes their runs, both within the
+// startup deadline, opens the metrics
 // listener when one is configured, then runs the server until the
 // transport closes or ctx is cancelled, and closes the listener, the
 // store and the lock with it. The lock comes before everything else: the
@@ -75,19 +76,11 @@ func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writ
 	if err != nil {
 		return fail(stderr, err)
 	}
-	deps, store, err := wire(h.getenv, stderr)
-	if err != nil {
-		return fail(stderr, err)
-	}
-	runs, closeRuns, err := openRuns(ctx, h.getenv)
+	deps, closeRuns, err := h.start(ctx, stderr)
 	if err != nil {
 		return fail(stderr, err)
 	}
 	defer closeRuns()
-	deps.Runs = runs
-	if err := recoverClaims(ctx, store, deps, stderr); err != nil {
-		return fail(stderr, err)
-	}
 	stop, ready, err := h.startMetrics(ctx, stderr, addr, deps)
 	if err != nil {
 		return fail(stderr, err)
