@@ -68,8 +68,8 @@ func newMCPServer(h http.Handler, tlsCfg *tls.Config) *http.Server {
 	}
 }
 
-// httpSinks is where serveMCPHTTP reports: every tool call is logged on
-// log, and ready is what /readyz answers.
+// httpSinks is where serveMCPHTTP reports: every tool call and every
+// refused Origin is logged on log, and ready is what /readyz answers.
 type httpSinks struct {
 	log   io.Writer
 	ready *readiness

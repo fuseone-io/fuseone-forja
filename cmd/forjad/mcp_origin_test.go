@@ -197,6 +197,10 @@ func TestMCPHTTPConfig_allowedOriginsMalformed_errorNamingTheVariable(t *testing
 		"https://console.example.com:443",
 		"http://console.example.com:80",
 		"https://bücher.example",
+		"https://console.example.com:0443",
+		"https://console.example.com:08443",
+		"https://console.example.com:0",
+		"https://console.example.com:65536",
 		allowedOrigin + ",",
 		allowedOrigin + ",,http://127.0.0.1:3000",
 		allowedOrigin + " http://127.0.0.1:3000",
@@ -229,7 +233,7 @@ func TestMCPHTTPConfig_allowedOrigins_readFromTheVariable(t *testing.T) {
 		{name: "unset", raw: "", allowed: false},
 		{name: "blank", raw: "  ", allowed: false},
 		{name: "listed", raw: "http://127.0.0.1:3000 , " + allowedOrigin, allowed: true},
-		{name: "ports not the scheme's default", raw: "https://console.example.com:80, http://console.example.com:443, " + allowedOrigin, allowed: true},
+		{name: "ports not the scheme's default", raw: "https://console.example.com:80, http://console.example.com:443, http://console.example.com:65535, " + allowedOrigin, allowed: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

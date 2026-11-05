@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -67,13 +68,24 @@ func serialisedOrigin(entry string) (string, bool) {
 		return "", false
 	}
 	u, err := url.Parse(entry)
-	if err != nil || u.Hostname() == "" || (u.Port() != "" && u.Port() == defaultPort(u.Scheme)) {
+	if err != nil || u.Hostname() == "" || !browserPort(u.Scheme, u.Port()) {
 		return "", false
 	}
 	// Whatever url.Parse put outside scheme and host makes the rebuilt
 	// value differ from the entry.
 	origin := u.Scheme + "://" + strings.ToLower(u.Host)
 	return origin, origin == strings.ToLower(entry)
+}
+
+// browserPort is a port as a browser writes it in an Origin of scheme:
+// absent, or a decimal in range with no leading zero that is not the
+// scheme's default.
+func browserPort(scheme, port string) bool {
+	if port == "" {
+		return true
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n > 0 && n <= 65535 && strconv.Itoa(n) == port && port != defaultPort(scheme)
 }
 
 func isASCII(s string) bool {
