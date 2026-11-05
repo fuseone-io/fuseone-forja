@@ -129,18 +129,20 @@ func TestServeMCPHTTP_stoppedDuringImplement_runTornDownBeforeReturn(t *testing.
 		t.Fatalf("serveMCPHTTP = %v, want a clean stop once the run was torn down", err)
 	}
 	run, getErr := fx.runs.Get(context.Background(), cancelRunID)
-	if !fx.ws.isClosed() || fx.claims.isHeld() || getErr != nil || run.State != domain.StateFailed {
-		t.Fatalf("at return: workspace closed %v, claim held %v, run %q (%v); want closed, released, failed",
-			fx.ws.isClosed(), fx.claims.isHeld(), run.State, getErr)
+	if !fx.ws.halted.Load() || !fx.ws.isClosed() || fx.claims.isHeld() || getErr != nil || run.State != domain.StateFailed {
+		t.Fatalf("at return: workspace halted %v, closed %v, claim held %v, run %q (%v); want halted, closed, released, failed",
+			fx.ws.halted.Load(), fx.ws.isClosed(), fx.claims.isHeld(), run.State, getErr)
 	}
 }
 
-// The drain outlasts the bound of each step of a cancelled run's
-// teardown, so the stop waits for it instead of cutting it off.
+// The drain outlasts a cancelled run's teardown, six steps one after the
+// other, each bounded by FinishTimeout: the proxies' reads, the
+// workspace's removal, the stage record, the release's start, the release
+// and the terminal record. The stop waits for it instead of cutting it off.
 func TestMCPHTTPConfig_drain_outlastsTheTeardownBound(t *testing.T) {
 	t.Parallel()
 	cfg, err := mcpHTTPConfig(envOf(map[string]string{EnvMCPAddr: "127.0.0.1:0", EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}))
-	if err != nil || cfg.drain <= mcp.FinishTimeout {
-		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a drain over %v", cfg.drain, err, mcp.FinishTimeout)
+	if want := 6 * mcp.FinishTimeout; err != nil || cfg.drain < want {
+		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a drain of at least %v", cfg.drain, err, want)
 	}
 }

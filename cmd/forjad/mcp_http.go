@@ -27,14 +27,19 @@ const maxRequestBody = 1 << 20
 // The MCP server's bounds. Reading a request is bounded; writing a
 // response is not, since a tool call lasts as long as its run and the
 // run's own deadline bounds it. A stop cancels every call in flight, and
-// the shutdown waits for a cancelled run's teardown: halting and removing
-// its workspace, releasing its claim and recording its end, each step
-// bounded by mcp.FinishTimeout.
+// the shutdown waits for a cancelled run's teardown.
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
-	mcpShutdownTimeout   = 4 * mcp.FinishTimeout
+	mcpShutdownTimeout   = teardownSteps * mcp.FinishTimeout
 )
+
+// teardownSteps is how many steps a cancelled run takes, one after the
+// other, to end: reading its workspace's proxies, removing the workspace,
+// recording the stage, recording the release's start, releasing the claim
+// and recording the run's end. Each is bounded by mcp.FinishTimeout or by
+// the workspace drivers' close bound of the same length.
+const teardownSteps = 6
 
 // mcpHandler serves server statelessly to the clients in reg: a request
 // without a bearer whose hash is in reg is answered 401, and then one not

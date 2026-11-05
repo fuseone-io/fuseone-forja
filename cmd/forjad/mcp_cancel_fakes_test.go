@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -75,8 +76,10 @@ func (r liveRuns) Put(ctx context.Context, run domain.Run) error {
 // a second claim on a held issue is refused, releasing a claim not held
 // is an error, and neither reaches GitHub on a context that has ended.
 type heldClaims struct {
-	mu       sync.Mutex
-	held     map[string]domain.Claim
+	mu          sync.Mutex
+	held        map[string]domain.Claim
+	releaseOnce sync.Once
+	// released closes on the first release.
 	released chan struct{}
 }
 
@@ -108,7 +111,7 @@ func (h *heldClaims) Release(ctx context.Context, c domain.Claim) error {
 		return fmt.Errorf("fake: release %s by %s: not held by it", key, c.RunID)
 	}
 	delete(h.held, key)
-	close(h.released)
+	h.releaseOnce.Do(func() { close(h.released) })
 	return nil
 }
 
@@ -119,11 +122,13 @@ func (h *heldClaims) isHeld() bool {
 }
 
 // agentUntilCancelled is an agent workspace whose agent runs until its
-// context ends: entered closes when the agent starts, closed when the
-// workspace is destroyed.
+// context ends: entered closes when the agent starts, halted is set when
+// its processes are stopped, closed closes when the workspace is
+// destroyed.
 type agentUntilCancelled struct {
 	enterOnce, closeOnce sync.Once
 	entered, closed      chan struct{}
+	halted               atomic.Bool
 }
 
 func (w *agentUntilCancelled) Exec(ctx context.Context, _ string) (agent.ExecResult, error) {
@@ -139,19 +144,34 @@ func (w *agentUntilCancelled) AwaitCap(ctx context.Context) error {
 
 func (w *agentUntilCancelled) WriteFile(context.Context, string, []byte) error { return nil }
 
-func (w *agentUntilCancelled) Model(context.Context) (agent.ModelReport, error) {
-	return agent.ModelReport{}, nil
+// Model, Egress and Halt, as the driver's, cannot reach the daemon on a
+// context that has ended; Halt marks the workspace halted when it does.
+func (w *agentUntilCancelled) Model(ctx context.Context) (agent.ModelReport, error) {
+	return agent.ModelReport{}, live(ctx, "read usage")
 }
 
-func (w *agentUntilCancelled) Egress(context.Context) (domain.EgressReport, error) {
-	return domain.EgressReport{}, nil
+func (w *agentUntilCancelled) Egress(ctx context.Context) (domain.EgressReport, error) {
+	return domain.EgressReport{}, live(ctx, "read egress")
 }
 
 func (w *agentUntilCancelled) ExportCommits(context.Context, string, string, string) error {
 	return errNotReached
 }
 
-func (w *agentUntilCancelled) Halt(context.Context) error { return nil }
+func (w *agentUntilCancelled) Halt(ctx context.Context) error {
+	if err := live(ctx, "halt workspace"); err != nil {
+		return err
+	}
+	w.halted.Store(true)
+	return nil
+}
+
+func live(ctx context.Context, what string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: %s: %w", what, err)
+	}
+	return nil
+}
 
 // Close, as the driver's, cannot reach the daemon on a context that has
 // ended, and leaves the workspace running.

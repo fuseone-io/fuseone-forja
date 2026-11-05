@@ -243,10 +243,15 @@ not a configuration change.
 
 A stop of `forjad serve` cancels the calls in flight the same way: every
 request's context ends with the server's (`http.Server.BaseContext`), and
-the drain outlasts the bound of each teardown step (`FinishTimeout`), so a
-cancelled run removes its workspace, releases its claim and is recorded
-`failed` before the process exits. The pod's termination grace period is set
-above that drain.
+the drain (three minutes) outlasts a cancelled run's teardown, six steps one
+after the other, each bounded by `FinishTimeout` or the workspace drivers'
+close bound of the same length. So a cancelled run removes its workspace,
+releases its claim and is recorded `failed` before the process exits. That
+holds only if the process is given the drain: the deployment's termination
+grace period must exceed it (Kubernetes' default of 30 s does not), and the
+chart sets it when it lands. A stop also cancels short read-only calls in
+flight, and a run cancelled between its push and its pull request leaves
+the pushed branch behind.
 
 ### 8. Origin validation
 
