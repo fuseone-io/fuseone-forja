@@ -154,6 +154,17 @@ func TestMCPStack_originRefused_loggedWithAddressAndOriginNeverTheBearer(t *test
 	}
 }
 
+func TestMCPStack_longOriginRefused_logLineBounded(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	var logs bytes.Buffer
+	long := "https://" + strings.Repeat("a", 64<<10) + ".example"
+	rec := send(t, originStack(t, allowedOrigin, &calls, &logs), http.MethodPost, []string{long}, "Bearer "+testBearer)
+	if rec.Code != http.StatusForbidden || logs.Len() > 1024 || !strings.Contains(logs.String(), "https://aaaa") {
+		t.Fatalf("status %d, log of %d bytes: a refused Origin is logged, and bounded", rec.Code, logs.Len())
+	}
+}
+
 func TestMCPStack_originAllowedOrAbsent_notLogged(t *testing.T) {
 	t.Parallel()
 	for _, origins := range [][]string{nil, {allowedOrigin}} {
