@@ -31,6 +31,33 @@ func TestStatus_noClientOnTheContext_noRunAnswered(t *testing.T) {
 	}
 }
 
+// countingClaims counts every claim it is asked for and refuses them all.
+type countingClaims struct{ claims int }
+
+func (c *countingClaims) Claim(context.Context, domain.ClaimRequest) (domain.Claim, error) {
+	c.claims++
+	return domain.Claim{}, errors.New("countingClaims: refused")
+}
+
+func (c *countingClaims) Release(context.Context, domain.Claim) error { return nil }
+
+// A run reached with no client on its context claims nothing: the claim
+// ref would otherwise be created for a run no store can record.
+func TestLifecycle_noClientOnTheContext_noClaimAttempted(t *testing.T) {
+	t.Parallel()
+	claims := &countingClaims{}
+	body := []byte("version: 1\nimage: golang:1.25\ngates:\n  - name: build\n    run: make build\n")
+	l := lifecycle{deps: Deps{Claims: claims, Contracts: fixedContracts{body: body}, NewID: func() string { return "r" }, Now: time.Now}}
+	_, err := l.claim(context.Background(), runTarget{tool: domain.ToolImplement, repo: "acme/api", issue: 3})
+	if !errors.Is(err, errNoClient) || claims.claims != 0 {
+		t.Fatalf("claim = %v after %d claims, want errNoClient and none", err, claims.claims)
+	}
+	_, err = l.claim(withClient(context.Background(), domain.Client{Name: "client-a"}), runTarget{tool: domain.ToolImplement, repo: "acme/api", issue: 3})
+	if errors.Is(err, errNoClient) || claims.claims != 1 {
+		t.Fatalf("claim with a client = %v after %d claims, want the claim tried once", err, claims.claims)
+	}
+}
+
 // unownedReader is a store holding a run recorded under no client, as a
 // store that does not validate its rows could hand one back.
 type unownedReader struct{}

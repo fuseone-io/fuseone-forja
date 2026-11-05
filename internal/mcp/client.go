@@ -38,7 +38,8 @@ func clientOf(ctx context.Context) domain.Client {
 }
 
 // repositoryOf is the repository a tool's input names, and whether it
-// names one; only forja.status may leave it out.
+// names one; only forja.status may leave it out. In is any tool input
+// struct, as sdk.ToolHandlerFor allows.
 type repositoryOf[In any] func(In) (string, bool)
 
 // scoped serves h only to a call whose client callers can name and which
@@ -56,6 +57,8 @@ func scoped[In, Out any](tool domain.Tool, callers Callers, repo repositoryOf[In
 	}
 }
 
+// admit names the call's client and checks the repository its input names
+// against it; In is the tool's input, any struct the SDK decodes.
 func admit[In any](callers Callers, req *sdk.CallToolRequest, repo repositoryOf[In], in In) (domain.Client, error) {
 	if callers == nil {
 		return domain.Client{}, errors.New("not wired: callers required")
@@ -73,7 +76,8 @@ func admit[In any](callers Callers, req *sdk.CallToolRequest, repo repositoryOf[
 	return c, nil
 }
 
-// named is the repository of a tool that always names one.
+// named is the repository of a tool that always names one; In is the
+// tool's input, any struct the SDK decodes.
 func named[In any](field func(In) string) repositoryOf[In] {
 	return func(in In) (string, bool) { return field(in), true }
 }

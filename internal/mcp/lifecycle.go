@@ -37,6 +37,10 @@ type runStep func(ctx, done context.Context, f *flight) (bool, error)
 // run's flight with its claim stage over. A refused claim is the error and
 // records nothing.
 func (l lifecycle) claim(ctx context.Context, t runTarget) (*flight, error) {
+	t.client = clientOf(ctx).Name
+	if t.client == "" {
+		return nil, errNoClient
+	}
 	lease, err := l.lease(ctx, t.repo)
 	if err != nil {
 		return nil, err
@@ -48,7 +52,6 @@ func (l lifecycle) claim(ctx context.Context, t runTarget) (*flight, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.client = clientOf(ctx).Name
 	return newFlight(l.deps, t, c, claimStage(started, l.deps.Now())), nil
 }
 
