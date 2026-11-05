@@ -32,6 +32,12 @@ nothing with the caller.
    either, in every store. The columns only narrow the list: the filter itself decides,
    and the sort is `domain.CompareNewestFirst` in Go. That keeps the window
    exact to the nanosecond, where `timestamptz` keeps microseconds.
+   `client` (migration 0002, ADR 0052 §4) is the exception that also
+   decides. It is the run's client on read, and a client's list narrows on
+   it in SQL, so that list never decodes another client's rows. A row from
+   before the column existed belongs to the stdio client, since stdio was
+   the only transport that wrote to the store before then. `Put` refuses,
+   in the same statement, to move a run to another client.
 4. **Migrations.** Embedded SQL files, numbered, recorded in
    `forja_schema_migrations`. `forjad migrate` applies the pending ones in one
    transaction under an advisory lock: run twice, or twice at once, it
