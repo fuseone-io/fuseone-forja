@@ -70,9 +70,17 @@ and no certificate is configured (`FORJA_TLS_CERT_FILE`,
 `FORJA_TLS_KEY_FILE`). It fails loudly rather than serving a bearer in clear
 text. The same rule FuseOne applies on its side.
 
-Where TLS ends is a deployment choice, not a code path: behind an internal
-ingress that re-encrypts to the pod, or with clients calling the Service
-directly over a certificate from an internal CA. Both keep TLS up to `forjad`.
+Where TLS ends is a deployment choice, not a code path. Either way TLS goes
+all the way to `forjad`:
+
+- **Preferred: an internal ingress, with HTTPS to `forjad` as well.** Use it
+  where the cluster already offers an ingress and certificate management.
+  The ingress validates the backend's certificate, both the CA and the name
+  (the Service's DNS name). Without that check, re-encryption does not
+  authenticate the pod.
+- **Fallback: clients call the Service directly** over a certificate from an
+  internal CA they trust. Use it where that infrastructure does not exist.
+  No ingress is built for the pilot alone.
 
 ### 3. A bearer per client, stored as a hash
 
@@ -81,10 +89,16 @@ clients from a file named by `FORJA_CLIENTS_FILE`, mounted from the vault:
 
 ```yaml
 clients:
-  - name: fuseone-pilot              # appears on runs and in logs
+  - name: fuseone-pilot              # appears on runs and in logs; stable across rotations
     token_sha256: 3f1c…              # hex SHA-256 of the bearer; the bearer is not stored
     repositories: [acme/payments]    # owner/name, or owner/* for an owner's repositories
+    rotation_owner: platform-team    # a team or role, never a person's name; not logged
 ```
+
+- **One bearer per integration and environment.** FuseOne's pilot and
+  FuseOne's staging are two clients with two bearers, never one shared
+  bearer. A client in the pilot names its repositories explicitly, not with
+  `owner/*`.
 
 - The `TokenVerifier` hashes the presented bearer and compares it with
   `crypto/subtle.ConstantTimeCompare` against every entry. A miss is
@@ -97,7 +111,9 @@ clients:
   An unsalted SHA-256 is safe only for a high-entropy secret: a leaked
   clients file must not let anyone brute-force the bearer.
 - Rotation is two entries with the same `name` and different hashes, then
-  removing the old one. The file is read at start; a change is a restart.
+  removing the old one. The `name` never changes on a rotation, so runs and
+  `forja.status` scoping carry over. The file is read at start; a change is
+  a restart. `rotation_owner` says who performs it.
 - The operator generates the bearer outside Forja and hands it to the
   client's credential store, for FuseOne the `Token` of its `http` server.
   Forja never sees the bearer at rest.
@@ -179,37 +195,49 @@ are set on the server; `WriteTimeout` is **not**. A tool call's own duration
 is bounded by the run's `wall_clock` (ADR 0043), not by the listener.
 
 While `forja.implement` blocks (until M2), a write timeout on the server or a
-read timeout on the ingress drops the response. What happens to the run then
-depends on the protocol version (§7). The ingress's proxy read timeout is
+read timeout on the ingress drops the response, and with it the run, which
+is cancelled (§7). The ingress's proxy read timeout is
 set above the largest `limits.wall_clock` the deployment allows.
 
 ### 7. Protocol versions, and a caller that goes away
 
-The HTTP server negotiates exactly two protocol versions:
-`ServerOptions.SupportedProtocolVersions = ["2026-07-28", "2025-11-25"]`.
-stdio keeps the SDK's full list. In go-sdk v1.8.0, a request whose
-`MCP-Protocol-Version` header names an older version is answered `400`. A
-legacy `initialize` asking for an older version is answered with
-`2025-11-25`, and the client either speaks it or disconnects.
+**The HTTP server accepts protocol version 2026-07-28 only.** stdio keeps the
+SDK's full list. Until `forja.cancel` exists (roadmap, M2), a caller that
+goes away must stop the work it started. 2026-07-28 makes the closing of the
+request's stream the cancellation of that request (MCP specification,
+2026-07-28, Streamable HTTP transport), and go-sdk v1.8.0 honours that only
+with propagation turned on. Configuration:
 
-The handler sets `StreamableHTTPOptions.PropagateRequestCancellation = true`.
-In v1.8.0 that option ties the tool handler's context to the HTTP request
-**only on 2026-07-28** (`mcp/streamable.go`, `shouldPropagateCancellation`).
-On 2025-11-25 the jsonrpc2 layer hides the request's cancellation from the
-handler (`internal/jsonrpc2/conn.go`, `notDone`), and `session.Close` waits
-for the handler to return. A `notifications/cancelled` cannot reach it
-either: in stateless mode it arrives on another POST, in another ephemeral
-session. So:
+- `ServerOptions.SupportedProtocolVersions = ["2026-07-28"]` on the HTTP
+  server.
+- `StreamableHTTPOptions.PropagateRequestCancellation = true`. In v1.8.0
+  that option ties the tool handler's context to the HTTP request on
+  2026-07-28 (`mcp/streamable.go`, `shouldPropagateCancellation`).
+- A Forja middleware answers `400` to any POST whose `MCP-Protocol-Version`
+  header is missing or is not `2026-07-28`. The SDK alone is not enough:
+  it rejects an older header value, but it serves a request **without** the
+  header on the pre-2026 path (as 2025-03-26), where the cancellation does
+  not propagate. A 2026-07-28 client sends the header on every request
+  (`mcp/streamable.go`, client side).
 
-| Version | The caller goes away during `forja.implement` or `forja.verify` |
-|---|---|
-| 2026-07-28 | The run's context is cancelled. The workspace is torn down, the claim released and the run recorded `failed` on the detached context (`internal/mcp/lifecycle.go`) |
-| 2025-11-25, or a request with no version header | The run continues to its end or its `wall_clock`. The response is lost, the claim is released at the end, and the outcome is in `forja.status` |
+Why 2025-11-25 is refused rather than tolerated: in v1.8.0, on that version
+the jsonrpc2 layer hides the request's cancellation from the handler
+(`internal/jsonrpc2/conn.go`, `notDone`), and `session.Close` waits for the
+handler to return. A `notifications/cancelled` cannot reach it either: in
+stateless mode it arrives on another POST, in another ephemeral session. A
+run there would outlive a dropped caller until its `wall_clock`.
 
-Neither row leaves a claim or a run in `running` behind. On 2025-11-25,
-nothing short of `wall_clock` stops a run until `forja.cancel` exists
-(roadmap, M2). A caller that retries meanwhile gets a held claim naming its
-own run (§4) and can follow that run in `forja.status`.
+When the caller goes away during `forja.implement` or `forja.verify`, the
+run's context is cancelled. The workspace is torn down, and the claim is
+released and the run recorded `failed` on the detached context
+(`internal/mcp/lifecycle.go`). No claim and no run in `running` is left
+behind.
+
+A legacy `initialize` is answered by the SDK with `2025-11-25`, which the
+client cannot then use: its next request carries that version and is
+refused `400`. A client that cannot speak 2026-07-28 fails at connection
+time, not in the middle of a run. Widening the list later is a decision for
+this ADR, not a configuration change.
 
 ### 8. Origin validation
 
@@ -220,7 +248,14 @@ nil by default and deprecated). Forja wraps the handler itself:
 
 - **Allowed origins** come from `FORJA_MCP_ALLOWED_ORIGINS`, a comma-separated
   list of exact `scheme://host[:port]` values, compared after lower-casing
-  the scheme and host. No wildcards. The default is empty.
+  the scheme and host. No wildcards. The default is empty, and **the pilot
+  keeps it empty**: requests without `Origin` are served once authenticated,
+  and any `Origin` that is sent is refused. That serves the current worker
+  with a `Token` credential.
+- **No CORS.** Forja answers no preflight and sets no
+  `Access-Control-*` header; an `OPTIONS` carrying an `Origin` is refused
+  like any other. When a concrete browser client is needed, its origins and
+  CORS support are decided together, as a change to this ADR.
 - **A request with an `Origin` header** whose value is not in the list is
   answered `403 Forbidden`, with no MCP body and no `WWW-Authenticate`. That
   includes `Origin: null`. It is refused **before** the bearer is checked, so
@@ -259,11 +294,12 @@ The handler stack, outermost first: Origin check, bearer check
 - `domain.Run` and the run store carry the client's name; `forja.status`
   filters by it. On stdio the client is a fixed name, so the filter never
   hides a run from the process that started it.
-- A blocking `forja.implement` over HTTP lasts as long as the run. Whether
-  a client that goes away stops it depends on the protocol version (§7);
-  either way the claim release and the terminal record run on a context
-  detached from the caller's (`internal/mcp/lifecycle.go`), so nothing is
-  left behind. Making runs outlive the request — `run_id` at start, outcome
+- A blocking `forja.implement` over HTTP lasts as long as the run. A client
+  that goes away stops it, because HTTP accepts 2026-07-28 only (§7); the
+  claim release and the terminal record run on a context detached from the
+  caller's (`internal/mcp/lifecycle.go`), so nothing is left behind.
+- A client that speaks only 2025-11-25 or older cannot use Forja over HTTP.
+  It can over stdio. Making runs outlive the request — `run_id` at start, outcome
   in `forja.status`, a `forja.cancel`, an idempotency key — changes the tool
   schemas and gets its own ADR, before the first tagged major
   (`docs/roadmap.md`, M2).
@@ -291,8 +327,9 @@ ProtocolVersion` pins the version) or plain HTTP against a real listener.
 | A3 | Non-loopback `FORJA_MCP_ADDR` without a certificate, or with no or an empty clients file | `forjad` exits non-zero at start, naming the variable |
 | A4 | Request body over 1 MiB | `413` |
 | C1 | Client on 2026-07-28 closes the connection during `forja.implement` | The workspace container is gone; `refs/forja/claims/<n>` is deleted within the release bound (`finishTimeout`, 30 s per step, `internal/mcp/implement.go`); and `forja.status` (new connection, same client) shows the run `failed` |
-| C2 | Client on 2025-11-25 closes the connection during `forja.implement` | The run reaches its own end; then the claim ref is deleted and `forja.status` shows its terminal state. Never `running` after `wall_clock` plus the lease margin |
-| C3 | `MCP-Protocol-Version: 2025-06-18` on a non-initialize request | `400` |
+| C2 | Client pinned to 2025-11-25 | Refused at connection time (`400` on its first request after `initialize`); no tool runs, no claim ref created |
+| C3 | `MCP-Protocol-Version: 2025-06-18` or `2025-11-25` on any request | `400` |
+| C4 | POST with a valid bearer and no `MCP-Protocol-Version` header | `400`; no tool runs |
 | P1 | Client B calls `forja.status` with client A's `run_id` | The error is identical to that for a random id |
 | P2 | Client B lists runs of a repository both reach | None of A's runs appear; pagination is unaffected |
 | P3 | Client B calls `forja.implement` on an issue A's run holds | A tool error naming repository, issue and expiry; the text contains no `run_id` |
@@ -301,47 +338,67 @@ ProtocolVersion` pins the version) or plain HTTP against a real listener.
 | O1 | `Origin` not in `FORJA_MCP_ALLOWED_ORIGINS`, valid bearer | `403`, no tool runs, no `WWW-Authenticate` |
 | O2 | `Origin: null`, valid bearer | `403` |
 | O3 | No `Origin`, valid bearer | `200` |
-| O4 | `Origin` in the list, valid bearer | `200` |
+| O4 | `Origin` in the list, valid bearer (test configuration only; the pilot's list is empty) | `200` |
 | O5 | `Origin` not in the list, no bearer | `403` (the Origin check runs first) |
+| O6 | `OPTIONS` preflight with an `Origin` | `403`; no `Access-Control-*` header |
+
+### Pilot release gate
+
+The ADR can be ratified on the design. **The pilot is released only after**
+a test in the pilot's environment, with fuseone-agents' real worker through
+the real ingress, shows all of the following:
+
+| # | In the pilot's environment | Observable result |
+|---|---|---|
+| G1 | Negotiation | The worker's Forja entry is `auto` and is not overridden by a recorded mode (`withProtocol`); requests carry `MCP-Protocol-Version: 2026-07-28` |
+| G2 | Authentication | `tools/list` succeeds with the pilot's bearer (A1) |
+| G3 | Refusal without a bearer | `401` (A2) |
+| G4 | Invalid origin | `403` (O1) |
+| G5 | Another client's run | A second, test-only client gets P1 and P3 behaviour |
+| G6 | Cancellation | The worker drops a `forja.implement` mid-run: the workspace is removed, the claim ref is deleted, and `forja.status` shows a terminal state (C1) |
+| G7 | TLS | The ingress rejects a backend certificate with the wrong name or from an untrusted CA (§2, preferred path) |
+
+## Maintainer decisions (2026-11-05)
+
+Recorded from the maintainer's review of PR #52. They are written into the
+Decision sections above.
+
+1. **Protocol:** the pilot's HTTP server accepts 2026-07-28 only (§7).
+   FuseOne's Forja entry stays `auto`. Evidence, fuseone-agents at
+   `f1fa871` (0.91.0): `auto` uses go-sdk v1.7.0's default client version,
+   2026-07-28 (`cmd/agentd/mcp.go`, `transportFor`); `legacy` is opt-in.
+2. **Origins:** `FORJA_MCP_ALLOWED_ORIGINS` is empty (§8). Evidence, same
+   commit: the `Token` transport sets only `Authorization`
+   (`bearer.RoundTrip`). Browser origins and CORS are decided when a
+   concrete need appears.
+3. **Run ids in shared repositories:** accepted (§4). Whoever reads the
+   repository already reads its branches, PRs and evidence. A `run_id`
+   grants no access to another client's records. Clients that need
+   confidentiality about their work use separate repositories.
+4. **TLS:** an internal ingress with HTTPS to `forjad`, validating the
+   backend's CA and name, where the cluster offers ingress and certificate
+   management; otherwise the Service directly with an internal CA (§2).
+5. **Bearer:** one per integration and environment, 32 random bytes, stored
+   in FuseOne's credential store, only its SHA-256 mounted into Forja
+   through the vault. The pilot names its repository explicitly. A
+   rotation owner is recorded, and the client name is kept across rotations
+   (§3).
+6. **Ratification and release:** the design can be ratified to guide the
+   implementation. The pilot is released only after the release gate
+   passes (G1–G7).
 
 ## What only the human can do
 
 - [ ] Ratify this ADR and change its status to `accepted`.
-- [ ] Decide the protocol versions the pilot's HTTP server accepts (§7).
-      **Evidence**, fuseone-agents at `f1fa871` (0.91.0): an `http` server in
-      the default `auto` protocol mode uses go-sdk v1.7.0's default client
-      version, which is 2026-07-28 (`cmd/agentd/mcp.go`, `transportFor`;
-      `legacy` is opt-in per server). Caveat: the reconciler can replace
-      `auto` with a mode recorded for that server (`withProtocol`), so the
-      Forja entry must stay `auto`.
-      **Recommendation, not yet decided:** the pilot's HTTP server accepts
-      only `["2026-07-28"]`, on condition that integration test C1 passes
-      against fuseone-agents' real client. This avoids accepting runs that
-      outlive a dropped caller on 2025-11-25.
-- [ ] Decide the pilot's `FORJA_MCP_ALLOWED_ORIGINS` (§8).
-      **Evidence**, same commit: the `Token` credential's transport sets
-      only `Authorization` (`cmd/agentd/mcp.go`, `bearer.RoundTrip`). No
-      code path in `cmd/agentd` sets `Origin`. A `Headers` credential sends
-      whatever headers the operator configures, so it could carry one.
-      **Recommendation, not yet decided:** keep the list empty while no
-      browser-based client is needed.
-- [ ] Integration test in the pilot's environment, still pending: fuseone-agents'
-      worker, through the real ingress, negotiates 2026-07-28 with Forja,
-      sends no `Origin`, and passes A1, C1 and O3. The code evidence above
-      does not replace this test.
-- [ ] Decide whether repository-level visibility of run ids (claim refs,
-      evidence report) is acceptable for repositories shared between
-      clients (§4).
-      **Recommendation, not yet decided:** accept it, keeping per-client
-      authorisation on every query. Knowing a `run_id` grants nothing.
-- [ ] Decide where TLS ends in the pilot's cluster: internal ingress that
-      re-encrypts, or the Service with an internal CA that FuseOne trusts.
-- [ ] Generate FuseOne's bearer, put its hash in the clients file through the
-      vault, and store the bearer in FuseOne's `Token` credential.
-- [ ] Confirm with the fuseone-agents maintainers that their MCP client talks
-      to a stateless Streamable HTTP server (no `Mcp-Session-Id`). Their
-      client disables the standalone SSE stream (`DisableStandaloneSSE`),
-      which suits a stateless server; the integration test above settles it.
+- [ ] Check that `withProtocol` applies no recorded mode to FuseOne's Forja
+      entry, so it stays `auto` (G1).
+- [ ] Find out whether the pilot's cluster offers an internal ingress and
+      certificate management, and choose the TLS path of §2 accordingly.
+- [ ] Generate the pilot's bearer, store it in FuseOne's `Token` credential,
+      mount its SHA-256 into the clients file through the vault, and name
+      the pilot repository and the `rotation_owner` in its entry.
+- [ ] Run the pilot release gate (G1–G7) in the pilot's environment before
+      the pilot is released.
 
 ## References
 
