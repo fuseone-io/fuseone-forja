@@ -92,17 +92,18 @@ func serveMCP(ctx context.Context, server *sdk.Server, transport sdk.Transport, 
 	}
 	ready.serving.Store(true)
 	defer ready.serving.Store(false)
-	ended := make(chan error, 1)
-	go func() { ended <- ss.Wait() }()
+	var waitErr error
+	ended := make(chan struct{})
+	go func() { defer close(ended); waitErr = ss.Wait() }()
 	select {
-	case err := <-ended:
-		return err
+	case <-ended:
+		return waitErr
 	case <-ctx.Done():
 		// A server being stopped is no longer ready while it drains.
 		ready.serving.Store(false)
 		_ = ss.Close()
 		// The session ends because it was closed; ctx says why.
-		_ = <-ended
+		<-ended
 		return ctx.Err()
 	}
 }

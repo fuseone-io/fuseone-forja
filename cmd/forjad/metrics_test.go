@@ -337,11 +337,12 @@ func awaitServing(t *testing.T, ready *readiness, ended <-chan error) {
 func TestServeMCP_sessionEnds_servingDropped(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		end  func(cancel context.CancelFunc, cs *sdk.ClientSession)
+		name      string
+		end       func(cancel context.CancelFunc, cs *sdk.ClientSession)
+		cancelled bool
 	}{
 		{name: "client closed", end: func(_ context.CancelFunc, cs *sdk.ClientSession) { _ = cs.Close() }},
-		{name: "context cancelled", end: func(cancel context.CancelFunc, _ *sdk.ClientSession) { cancel() }},
+		{name: "context cancelled", end: func(cancel context.CancelFunc, _ *sdk.ClientSession) { cancel() }, cancelled: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -361,7 +362,9 @@ func TestServeMCP_sessionEnds_servingDropped(t *testing.T) {
 			awaitServing(t, ready, ended)
 
 			tt.end(cancel, cs)
-			_ = <-ended
+			if err := <-ended; tt.cancelled && !errors.Is(err, context.Canceled) {
+				t.Fatalf("serveMCP after cancel = %v, want context.Canceled", err)
+			}
 			if ready.serving.Load() {
 				t.Fatal("still ready after the session ended")
 			}
