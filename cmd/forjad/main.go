@@ -1,4 +1,4 @@
-// Command forjad is Forja's binary: the MCP server over stdio, and the
+// Command forjad is Forja's binary: the MCP server over stdio or HTTP, and the
 // egress gateway, registry proxy and model proxy the control plane starts
 // next to each run's workspace.
 package main
@@ -55,6 +55,10 @@ func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writ
 	if err != nil {
 		return fail(stderr, err)
 	}
+	httpCfg, err := mcpHTTPConfig(h.getenv)
+	if err != nil {
+		return fail(stderr, err)
+	}
 	deps, store, err := wire(h.getenv, stderr)
 	if err != nil {
 		return fail(stderr, err)
@@ -66,7 +70,11 @@ func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writ
 	if err != nil {
 		return fail(stderr, err)
 	}
-	err = mcp.New(deps).Run(ctx, transport)
+	if httpCfg.addr != "" {
+		err = h.serveMCPHTTP(ctx, mcp.New(deps), httpCfg, stderr)
+	} else {
+		err = mcp.New(deps).Run(ctx, transport)
+	}
 	stop()
 	if err == nil || errors.Is(err, context.Canceled) {
 		return 0
@@ -85,7 +93,7 @@ func usage(w io.Writer) {
 	_, _ = fmt.Fprint(w, "usage: forjad serve\n       forjad gateway -run <id> [-allow host:port,...] [-listen addr]\n"+
 		"       forjad registry -run <id> -registries entry,... -credentials file [-listen addr]\n"+
 		"       forjad model -run <id> -upstream <url> -cap <n> -key-file <path> -token-file <path> [-listen addr]\n\n"+
-		"  serve     run the MCP server over stdio\n"+
+		"  serve     run the MCP server over stdio, or over HTTP when FORJA_MCP_ADDR is set\n"+
 		"  gateway   run the egress gateway of one run's workspace\n"+
 		"  registry  run the registry proxy of one run's workspace\n"+
 		"  model     run the model proxy of one run's agent\n")

@@ -1,0 +1,111 @@
+package main
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net"
+	"net/http"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/auth"
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/fuseone-io/fuseone-forja/internal/caller"
+)
+
+// mcpPath is where the MCP endpoint is served.
+const mcpPath = "/mcp"
+
+// maxRequestBody bounds a request body; a larger one is answered 413.
+const maxRequestBody = 1 << 20
+
+// The MCP server's bounds. Reading a request is bounded; writing a
+// response is not, since a tool call lasts as long as its run and the
+// run's own deadline bounds it. The shutdown leaves a cancelled run the
+// time to release its claim and record its end.
+const (
+	mcpReadHeaderTimeout = 10 * time.Second
+	mcpReadTimeout       = 30 * time.Second
+	mcpShutdownTimeout   = 90 * time.Second
+)
+
+// mcpHandler serves server statelessly to the clients in reg: a request
+// without a bearer whose hash is in reg is answered 401 before the server
+// sees it.
+func mcpHandler(server *sdk.Server, reg caller.Registry) http.Handler {
+	streamable := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server },
+		&sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: maxRequestBody})
+	// The bearers are static and rotate by restart, so a TokenInfo carries
+	// no expiration, which the middleware rejects by default.
+	bearer := auth.RequireBearerToken(verifier(reg), &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
+	mux := http.NewServeMux()
+	mux.Handle(mcpPath, bearer(streamable))
+	return mux
+}
+
+// verifier authenticates a bearer against reg; the client's name is the
+// TokenInfo's UserID.
+func verifier(reg caller.Registry) auth.TokenVerifier {
+	return func(_ context.Context, bearer string, _ *http.Request) (*auth.TokenInfo, error) {
+		c, err := reg.Authenticate(bearer)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %w", auth.ErrInvalidToken, err)
+		}
+		return &auth.TokenInfo{UserID: c.Name}, nil
+	}
+}
+
+// newMCPServer serves h, over TLS when tlsCfg is set, with every request's
+// context derived from ctx so that stopping serve cancels the tool calls
+// in flight.
+func newMCPServer(ctx context.Context, h http.Handler, tlsCfg *tls.Config) *http.Server {
+	return &http.Server{
+		Handler:           h,
+		TLSConfig:         tlsCfg,
+		ReadHeaderTimeout: mcpReadHeaderTimeout,
+		ReadTimeout:       mcpReadTimeout,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
+	}
+}
+
+// serveMCPHTTP serves server over HTTP as cfg says until ctx ends, logging
+// every tool call on stderr. A listener that cannot be opened is an error
+// naming the variable; a server stopped by ctx is not an error.
+func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConfig, stderr io.Writer) error {
+	ln, err := h.listen(ctx, cfg.addr)
+	if err != nil {
+		return fmt.Errorf("%s: %w", EnvMCPAddr, err)
+	}
+	server.AddReceivingMiddleware(logCalls(log.New(stderr, "", 0)))
+	srv := newMCPServer(ctx, mcpHandler(server, cfg.clients), cfg.tls)
+	served := make(chan error, 1)
+	go func() {
+		if cfg.tls != nil {
+			served <- srv.ServeTLS(ln, "", "")
+			return
+		}
+		served <- srv.Serve(ln)
+	}()
+	return awaitMCP(ctx, srv, served)
+}
+
+// awaitMCP shuts srv down when ctx ends and waits for Serve to return; it
+// returns Serve's error unless that is the shutdown itself.
+func awaitMCP(ctx context.Context, srv *http.Server, served <-chan error) error {
+	select {
+	case err := <-served:
+		return err
+	case <-ctx.Done():
+	}
+	drain, cancel := context.WithTimeout(context.WithoutCancel(ctx), mcpShutdownTimeout)
+	defer cancel()
+	_ = srv.Shutdown(drain)
+	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
