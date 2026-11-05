@@ -42,8 +42,19 @@ func mcpHandler(server *sdk.Server, reg caller.Registry) http.Handler {
 	// no expiration, which the middleware rejects by default.
 	bearer := auth.RequireBearerToken(verifier(reg), &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	mux := http.NewServeMux()
-	mux.Handle(mcpPath, bearer(streamable))
+	mux.Handle(mcpPath, bearer(withoutAuthorization(streamable)))
 	return mux
+}
+
+// withoutAuthorization serves next a copy of the request without its
+// Authorization header, so that no tool can read the bearer; the client it
+// authenticated stays on the context.
+func withoutAuthorization(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.Clone(r.Context())
+		r.Header.Del("Authorization")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // verifier authenticates a bearer against reg; the client's name is the
