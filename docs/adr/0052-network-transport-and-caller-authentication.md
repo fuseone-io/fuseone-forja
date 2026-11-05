@@ -1,7 +1,7 @@
-# ADR 9999: network transport and caller authentication
+# ADR 0052: network transport and caller authentication
 
 - **Status:** proposed
-- **Issue:** none yet
+- **Issue:** none yet (PR #52)
 - **Refines:** [ADR 0051](0051-forja-as-a-separate-product.md) §5, which
   keeps stdio as the supported transport and defers a network transport with
   caller authentication to its own ADR. This is that ADR. It supersedes
