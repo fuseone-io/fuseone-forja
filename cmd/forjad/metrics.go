@@ -7,7 +7,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync/atomic"
 	"time"
+
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 	"github.com/fuseone-io/fuseone-forja/internal/metrics"
@@ -51,21 +54,79 @@ func metricsAddr(getenv func(string) string) (string, error) {
 	return addr, nil
 }
 
-// startMetrics serves deps' runs at deps' prices on GET /metrics at addr
-// until stop is called or ctx ends; stop returns once the server is down.
-// An empty addr serves nothing. A listener that cannot be opened is an
-// error naming the variable; a server that fails later is reported on
-// stderr and leaves the MCP server running.
-func (h host) startMetrics(ctx context.Context, stderr io.Writer, addr string, deps mcp.Deps) (stop func(), err error) {
+// readiness is what GET /readyz answers. Serve opens the listener only after
+// every mandatory dependency passed its startup validation, so the one state
+// left to report is whether the MCP session is serving its transport. It
+// probes nothing and answers nothing about runs, clients or repositories.
+type readiness struct {
+	serving atomic.Bool
+}
+
+func (r *readiness) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	if !r.serving.Load() {
+		probeReply(w, http.StatusServiceUnavailable, "not ready\n")
+		return
+	}
+	probeReply(w, http.StatusOK, "ready\n")
+}
+
+// healthz answers while the process can answer at all.
+func healthz(w http.ResponseWriter, _ *http.Request) {
+	probeReply(w, http.StatusOK, "ok\n")
+}
+
+func probeReply(w http.ResponseWriter, status int, body string) {
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	// A prober that went away has nothing left to read.
+	_, _ = io.WriteString(w, body)
+}
+
+// serveMCP runs server over transport as sdk.Server.Run does, and holds
+// ready from the moment the session reads the transport until it ends.
+func serveMCP(ctx context.Context, server *sdk.Server, transport sdk.Transport, ready *readiness) error {
+	ss, err := server.Connect(ctx, transport, nil)
+	if err != nil {
+		return fmt.Errorf("mcp connect: %w", err)
+	}
+	ready.serving.Store(true)
+	defer ready.serving.Store(false)
+	var waitErr error
+	ended := make(chan struct{})
+	go func() { defer close(ended); waitErr = ss.Wait() }()
+	select {
+	case <-ended:
+		return waitErr
+	case <-ctx.Done():
+		// A server being stopped is no longer ready while it drains.
+		ready.serving.Store(false)
+		_ = ss.Close()
+		// The session ends because it was closed; ctx says why.
+		<-ended
+		return ctx.Err()
+	}
+}
+
+// startMetrics serves deps' runs at deps' prices on GET /metrics at addr,
+// with GET /healthz and GET /readyz next to them, until stop is called or
+// ctx ends; stop returns once the server is down. ready is what /readyz
+// reports and is usable even when addr is empty and nothing is served. A
+// listener that cannot be opened is an error naming the variable; a server
+// that fails later is reported on stderr and leaves the MCP server running.
+func (h host) startMetrics(ctx context.Context, stderr io.Writer, addr string, deps mcp.Deps) (stop func(), ready *readiness, err error) {
+	ready = new(readiness)
 	if addr == "" {
-		return func() {}, nil
+		return func() {}, ready, nil
 	}
 	ln, err := h.listen(ctx, addr)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", EnvMetricsAddr, err)
+		return nil, nil, fmt.Errorf("%s: %w", EnvMetricsAddr, err)
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", metrics.Handler(deps.Runs, deps.Prices))
+	mux.HandleFunc("GET /healthz", healthz)
+	mux.Handle("GET /readyz", ready)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: metricsReadHeaderTimeout}
 	ctx, cancel := context.WithCancel(ctx)
 	served := make(chan error, 1)
@@ -79,7 +140,7 @@ func (h host) startMetrics(ctx context.Context, stderr io.Writer, addr string, d
 			_, _ = fmt.Fprintf(stderr, "forjad: metrics: %v\n", err)
 		}
 	}()
-	return func() { cancel(); <-done }, nil
+	return func() { cancel(); <-done }, ready, nil
 }
 
 // awaitMetrics shuts srv down when ctx ends and waits for Serve to return;

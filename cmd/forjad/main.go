@@ -66,14 +66,14 @@ func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writ
 	if err := recoverClaims(ctx, store, stderr); err != nil {
 		return fail(stderr, err)
 	}
-	stop, err := h.startMetrics(ctx, stderr, addr, deps)
+	stop, ready, err := h.startMetrics(ctx, stderr, addr, deps)
 	if err != nil {
 		return fail(stderr, err)
 	}
 	if httpCfg.addr != "" {
-		err = h.serveMCPHTTP(ctx, mcp.New(deps), httpCfg, stderr)
+		err = h.serveMCPHTTP(ctx, mcp.New(deps), httpCfg, httpSinks{log: stderr, ready: ready})
 	} else {
-		err = mcp.New(deps).Run(ctx, transport)
+		err = serveMCP(ctx, mcp.New(deps), transport, ready)
 	}
 	stop()
 	if err == nil || errors.Is(err, context.Canceled) {

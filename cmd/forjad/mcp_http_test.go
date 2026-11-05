@@ -355,7 +355,7 @@ func TestServeMCPHTTP_stoppedWithCallInFlight_errorNotCleanExit(t *testing.T) {
 			bound, returned := make(chan string, 1), make(chan error, 1)
 			cfg := httpConfig{addr: "127.0.0.1:0", clients: testRegistry(t), drain: 200 * time.Millisecond}
 			go func() {
-				returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, blockingServer(entered, release), cfg, &lockedBuffer{})
+				returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, blockingServer(entered, release), cfg, httpSinks{log: &lockedBuffer{}, ready: new(readiness)})
 			}()
 			go postCall(<-bound)
 			<-entered
@@ -459,5 +459,37 @@ func TestNewMCPServer_readBoundedWriteUnbounded(t *testing.T) {
 	}
 	if srv.WriteTimeout != 0 {
 		t.Fatalf("WriteTimeout %v: a tool call lasts as long as its run", srv.WriteTimeout)
+	}
+}
+
+// Over HTTP, /readyz holds once the MCP listener is open and drops as soon
+// as the drain starts, while a call is still in flight.
+func TestServeMCPHTTP_listenerOpen_readyUntilDrainStarts(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	bound, returned := make(chan string, 1), make(chan error, 1)
+	ready := new(readiness)
+	cfg := httpConfig{addr: "127.0.0.1:0", clients: testRegistry(t), drain: 5 * time.Second}
+	go func() {
+		returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, blockingServer(entered, release), cfg, httpSinks{log: &lockedBuffer{}, ready: ready})
+	}()
+	go postCall(<-bound)
+	<-entered
+	if !ready.serving.Load() {
+		t.Fatal("not ready while the MCP listener serves a call")
+	}
+	cancel()
+	deadline := time.Now().Add(5 * time.Second)
+	for ready.serving.Load() {
+		if time.Now().After(deadline) {
+			t.Fatal("still ready after the drain started")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(release)
+	if err := <-returned; err != nil {
+		t.Fatalf("serveMCPHTTP = %v, want a clean stop", err)
 	}
 }

@@ -68,16 +68,28 @@ func newMCPServer(h http.Handler, tlsCfg *tls.Config) *http.Server {
 	}
 }
 
-// serveMCPHTTP serves server over HTTP as cfg says until ctx ends, logging
-// every tool call on stderr. A listener that cannot be opened is an error
-// naming the variable; a server stopped by ctx is not an error.
-func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConfig, stderr io.Writer) error {
+// httpSinks is where serveMCPHTTP reports: every tool call is logged on
+// log, and ready is what /readyz answers.
+type httpSinks struct {
+	log   io.Writer
+	ready *readiness
+}
+
+// serveMCPHTTP serves server over HTTP as cfg says until ctx ends. It is
+// ready from the moment the listener opens until the drain starts. A
+// listener that cannot be opened is an error naming the variable; a server
+// stopped by ctx is not an error.
+func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConfig, out httpSinks) error {
 	ln, err := h.listen(ctx, cfg.addr)
 	if err != nil {
 		return fmt.Errorf("%s: %w", EnvMCPAddr, err)
 	}
-	server.AddReceivingMiddleware(logCalls(log.New(stderr, "", 0)))
+	server.AddReceivingMiddleware(logCalls(log.New(out.log, "", 0)))
 	srv := newMCPServer(mcpHandler(server, cfg.clients), cfg.tls)
+	// A server being stopped is no longer ready while it drains.
+	srv.RegisterOnShutdown(func() { out.ready.serving.Store(false) })
+	out.ready.serving.Store(true)
+	defer out.ready.serving.Store(false)
 	served := make(chan error, 1)
 	go func() {
 		if cfg.tls != nil {
