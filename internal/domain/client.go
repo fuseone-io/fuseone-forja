@@ -32,15 +32,22 @@ func (c Client) Reaches(repository string) bool {
 		return false
 	}
 	for _, p := range c.Repositories {
-		po, pn, found := strings.Cut(p, "/")
-		if !found || !validSegment(po) || !strings.EqualFold(po, owner) {
+		if !ValidRepositoryPattern(p) {
 			continue
 		}
-		if pn == "*" || (validSegment(pn) && strings.EqualFold(pn, name)) {
+		po, pn, _ := strings.Cut(p, "/")
+		if strings.EqualFold(po, owner) && (pn == "*" || strings.EqualFold(pn, name)) {
 			return true
 		}
 	}
 	return false
+}
+
+// ValidRepositoryPattern reports whether p is a pattern Reaches can match:
+// owner/name or owner/*, each segment of the shape a repository must have.
+func ValidRepositoryPattern(p string) bool {
+	owner, name, found := strings.Cut(p, "/")
+	return found && validSegment(owner) && (name == "*" || validSegment(name))
 }
 
 func splitRepository(repository string) (owner, name string, ok bool) {

@@ -22,10 +22,6 @@ var (
 	ErrMalformed = errors.New("malformed clients file")
 )
 
-// repositoryPattern is owner/name or owner/*: a wildcard stands for the
-// whole name, never for the owner or part of a name.
-var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+|\*)$`)
-
 // namePattern keeps a client's name to one token that starts with a letter
 // or digit, so that it cannot split a log line or pass for its "-".
 var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
@@ -126,21 +122,17 @@ func (e entry) client() (Client, error) {
 	return c, nil
 }
 
-// checkRepositories refuses an empty list and any pattern that is not
-// owner/name or owner/*, or whose owner or name is "." or "..".
+// checkRepositories refuses an empty list and any pattern the match could
+// not use: one that is not owner/name or owner/*, with the wildcard only
+// for the whole name, or whose owner or name is "." or "..".
 func (e entry) checkRepositories() error {
 	if len(e.Repositories) == 0 {
 		return fmt.Errorf("(%s): repositories is empty", e.Name)
 	}
 	for j, repo := range e.Repositories {
-		owner, name, _ := strings.Cut(repo, "/")
-		if !repositoryPattern.MatchString(repo) || dotSegment(owner) || dotSegment(name) {
+		if !domain.ValidRepositoryPattern(repo) {
 			return fmt.Errorf("(%s): repositories[%d] is not owner/name or owner/*", e.Name, j)
 		}
 	}
 	return nil
-}
-
-func dotSegment(s string) bool {
-	return s == "." || s == ".."
 }
