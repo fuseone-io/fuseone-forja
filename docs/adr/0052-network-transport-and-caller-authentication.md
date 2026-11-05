@@ -22,7 +22,9 @@ developer's machine. It does not work for FuseOne:
   boundaries that ADR 0051 keeps apart, and puts workspaces on FuseOne's
   nodes instead of the dedicated pool of ADR 0026.
 - **Several callers cannot share a child process.** Each stdio client gets
-  its own `forjad` with its own run store and its own view of the claims.
+  its own `forjad` with its own run store and its own recovery state
+  (`FORJA_STATE_DIR`). The claims in git are already shared; the runs are
+  not.
   ADR 0051 §2 makes Forja callable by any MCP client, so one deployment has
   to serve more than one.
 - **An HTTP server in FuseOne is an address with a credential.** FuseOne
@@ -87,6 +89,13 @@ clients:
 - The `TokenVerifier` hashes the presented bearer and compares it with
   `crypto/subtle.ConstantTimeCompare` against every entry. A miss is
   `auth.ErrInvalidToken`, answered `401` by the SDK's middleware.
+- The verifier returns a `TokenInfo` with no expiration, so the middleware
+  is configured with `RequireBearerTokenOptions.AllowMissingExpiration`. By
+  default the SDK rejects a token without one; these bearers are static and
+  rotate by restart, not by expiry.
+- A bearer is at least 32 bytes from `crypto/rand`, encoded as base64url.
+  An unsalted SHA-256 is safe only for a high-entropy secret: a leaked
+  clients file must not let anyone brute-force the bearer.
 - Rotation is two entries with the same `name` and different hashes, then
   removing the old one. The file is read at start; a change is a restart.
 - The operator generates the bearer outside Forja and hands it to the
@@ -132,9 +141,14 @@ correction round's `finding`.
 ### 6. Request bounds
 
 The HTTP listener caps a request body at 1 MiB, the largest legitimate
-input being a 64 KiB `finding`. Read and header timeouts are set on the
-server. A tool call's own duration is bounded by the run's `wall_clock`
-(ADR 0043), not by the listener.
+input being a 64 KiB `finding`. `ReadHeaderTimeout` and `ReadTimeout` are
+set on the server; `WriteTimeout` is **not**. A tool call's own duration is
+bounded by the run's `wall_clock` (ADR 0043), not by the listener.
+
+While `forja.implement` blocks (until M2), a write timeout on the server or a
+read timeout on the ingress drops the request. The run works on the request's
+context, so it is cancelled with it. The ingress's proxy read timeout is
+therefore set above the largest `limits.wall_clock` the deployment allows.
 
 ## Alternatives considered
 
@@ -169,8 +183,9 @@ server. A tool call's own duration is bounded by the run's `wall_clock`
   runs one replica.
 - FuseOne registers Forja as an `http` server with a `Token` credential and a
   URL from the installation's configuration. Issue #15 is rewritten for that.
-- Health and readiness stay on the metrics listener (`FORJA_METRICS_ADDR`),
-  unauthenticated and answering nothing about runs.
+- `forjad` gains `/healthz` and `/readyz` on the metrics listener
+  (`FORJA_METRICS_ADDR`), which today serves only `/metrics`. They are
+  unauthenticated and answer nothing about runs.
 
 ## What only the human can do
 
