@@ -35,11 +35,17 @@ nothing with the caller.
    applies each migration once. `serve` refuses a database whose schema
    version is not the one the binary knows, and says to run `forjad migrate`.
 5. **Recovery.** On start, before releasing the claims a previous process
-   journaled, `serve` closes the run of each one: a queued or running run
-   ends `failed` with the new reason `interrupted`, and its open stages
-   fail at the same instant. Every journaled claim belongs to a process that
-   died, so this holds whether or not the ref is still the claim's. Closing
-   first means a store that fails stops the start with the journal intact.
+   journaled, `serve` closes every queued or running run in the store. Each
+   one ends `failed` with the new reason `interrupted`, and its open stages
+   fail at the same instant. With one replica and nothing run yet, every
+   run in flight belongs to a process that died. That covers runs no claim
+   names: a `forja.doctor` run, a run that died between its release and its
+   last record, and every run when `FORJA_STATE_DIR` or the credentials are
+   unset. Closing first means a store that fails stops the start with the
+   journal intact.
+   `serve` also refuses a schema newer than the binary knows, with an error
+   of its own (`ErrSchemaNewer`): `forjad migrate` cannot fix that, so
+   rolling back after a migration needs the database restored too.
 6. **Tests.** One behaviour suite runs against both stores. Postgres runs in
    a real container (`postgres:16-alpine`), gated like the Docker tests by
    `FORJA_DOCKER_TEST=1`, so it runs in `make docker-test` and in `make check`.
@@ -60,6 +66,8 @@ nothing with the caller.
   matter.
 - Metrics count `interrupted` under `unspecified`, the bucket for reasons
   outside their list, until the list grows.
-- One replica still. Several replicas over one database need claims and
-  recovery that know which replica holds what (roadmap, open questions).
+- One replica still. Recovery closes every run in flight, so a second
+  replica starting would close the first one's runs. Several replicas over
+  one database need runs that record which replica holds them (roadmap,
+  open questions).
 - Idempotency keys and `caller_ref` (M2) get their own migration.
