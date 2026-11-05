@@ -48,7 +48,7 @@ func newCancelFixture(t *testing.T) *cancelFixture {
 	}
 	co := &baseCheckout{dir: t.TempDir()}
 	fx.deps = mcp.Deps{
-		Runs: fx.runs, Contracts: contractAtBase{}, Claims: fx.claims,
+		Runs: liveRuns{fx.runs}, Contracts: contractAtBase{}, Claims: fx.claims,
 		Cloner: baseCloner{co: co}, BranchCloner: unavailablePlan{err: errNotReached},
 		Issues: issueReader{}, Gates: refusingGates{},
 		Agent:  &agent.Runner{Launcher: wsLauncher{ws: fx.ws}, Now: time.Now},
@@ -58,9 +58,22 @@ func newCancelFixture(t *testing.T) *cancelFixture {
 	return fx
 }
 
+// liveRuns is the run store as a networked one behaves: a write on a
+// context that has ended fails.
+type liveRuns struct {
+	*runstore.Memory
+}
+
+func (r liveRuns) Put(ctx context.Context, run domain.Run) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: put run: %w", err)
+	}
+	return r.Memory.Put(ctx, run)
+}
+
 // heldClaims holds an issue for one run at a time, as the claim ref does:
-// a second claim on a held issue is refused, and releasing a claim not
-// held is an error.
+// a second claim on a held issue is refused, releasing a claim not held
+// is an error, and neither reaches GitHub on a context that has ended.
 type heldClaims struct {
 	mu       sync.Mutex
 	held     map[string]domain.Claim
@@ -69,7 +82,10 @@ type heldClaims struct {
 
 func claimKey(repo string, issue int) string { return repo + "#" + strconv.Itoa(issue) }
 
-func (h *heldClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.Claim, error) {
+func (h *heldClaims) Claim(ctx context.Context, req domain.ClaimRequest) (domain.Claim, error) {
+	if err := ctx.Err(); err != nil {
+		return domain.Claim{}, fmt.Errorf("fake: claim: %w", err)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if c, ok := h.held[claimKey(req.Repository, req.Issue)]; ok {
@@ -81,7 +97,10 @@ func (h *heldClaims) Claim(_ context.Context, req domain.ClaimRequest) (domain.C
 	return c, nil
 }
 
-func (h *heldClaims) Release(_ context.Context, c domain.Claim) error {
+func (h *heldClaims) Release(ctx context.Context, c domain.Claim) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: release: %w", err)
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	key := claimKey(c.Repository, c.Issue)
@@ -134,7 +153,12 @@ func (w *agentUntilCancelled) ExportCommits(context.Context, string, string, str
 
 func (w *agentUntilCancelled) Halt(context.Context) error { return nil }
 
-func (w *agentUntilCancelled) Close(context.Context) error {
+// Close, as the driver's, cannot reach the daemon on a context that has
+// ended, and leaves the workspace running.
+func (w *agentUntilCancelled) Close(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: close workspace: %w", err)
+	}
 	w.closeOnce.Do(func() { close(w.closed) })
 	return nil
 }
