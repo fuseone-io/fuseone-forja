@@ -63,17 +63,69 @@ func assertInterrupted(t *testing.T, got domain.Run, changed bool, at time.Time)
 // stage, before it started: a duration is never negative.
 func TestRun_interrupted_clockBehindStart_finishesAtStart(t *testing.T) {
 	t.Parallel()
-	run := interruptedFixture(domain.StateRunning)
-	behind := run.StartedAt.Add(-30 * time.Second)
-
-	got, _ := run.Interrupted(behind)
-
-	if got.FinishedAt == nil || !got.FinishedAt.Equal(run.StartedAt) {
-		t.Fatalf("FinishedAt = %v, want the run's start %v", got.FinishedAt, run.StartedAt)
+	tests := map[string]struct {
+		stages int
+		want   time.Duration
+	}{
+		"no stage":                      {stages: 0, want: 0},
+		"stages ending after its start": {stages: 2, want: time.Minute},
 	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			run := interruptedFixture(domain.StateRunning)
+			run.Stages = run.Stages[:tt.stages]
+
+			got, _ := run.Interrupted(run.StartedAt.Add(-30 * time.Second))
+
+			if want := run.StartedAt.Add(tt.want); got.FinishedAt == nil || !got.FinishedAt.Equal(want) {
+				t.Fatalf("FinishedAt = %v, want %v", got.FinishedAt, want)
+			}
+		})
+	}
+}
+
+// An open stage the clock is behind ends at its own start.
+func TestRun_interrupted_clockBehindOpenStage_stageFinishesAtItsStart(t *testing.T) {
+	t.Parallel()
+	run := interruptedFixture(domain.StateRunning)
+
+	got, _ := run.Interrupted(run.StartedAt.Add(-30 * time.Second))
+
 	open := got.Stages[1]
 	if open.FinishedAt == nil || !open.FinishedAt.Equal(open.StartedAt) {
 		t.Fatalf("open stage FinishedAt = %v, want its start %v", open.FinishedAt, open.StartedAt)
+	}
+}
+
+// A clock past the run's start but behind a stage's never ends the run
+// before a stage it holds: the run ends at the latest stage end, the one
+// it closed and the one already closed alike.
+func TestRun_interrupted_clockBehindAStage_runEndsNoEarlierThanItsStages(t *testing.T) {
+	t.Parallel()
+	tests := map[string]func(*domain.Run){
+		"open stage started after the clock": func(r *domain.Run) {
+			early := r.StartedAt.Add(10 * time.Second)
+			r.Stages[0].FinishedAt = &early
+		},
+		"closed stage ended after the clock": func(r *domain.Run) {
+			r.Stages = r.Stages[:1]
+		},
+	}
+	for name, shape := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			run := interruptedFixture(domain.StateRunning)
+			shape(&run)
+			between := run.StartedAt.Add(30 * time.Second)
+
+			got, _ := run.Interrupted(between)
+
+			want := run.StartedAt.Add(time.Minute)
+			if got.FinishedAt == nil || !got.FinishedAt.Equal(want) {
+				t.Fatalf("FinishedAt = %v, want the latest stage end %v", got.FinishedAt, want)
+			}
+		})
 	}
 }
 

@@ -12,7 +12,8 @@ const ReasonInterrupted FailureReason = "interrupted"
 // Interrupted is the run as the next process records it when the one that
 // ran it stopped first: a queued or running run fails at at, and every
 // stage still running fails at at with it. A run or stage never ends
-// before it started, whatever the next process's clock says. A run that
+// before it started, and a run never before a stage it holds, whatever
+// the next process's clock says. A run that
 // already ended is returned as is, and changed reports whether the run was
 // in flight.
 func (r Run) Interrupted(at time.Time) (run Run, changed bool) {
@@ -21,14 +22,17 @@ func (r Run) Interrupted(at time.Time) (run Run, changed bool) {
 	}
 	r.State, r.Reason = StateFailed, ReasonInterrupted
 	finished := notBefore(at, r.StartedAt)
-	r.FinishedAt = &finished
 	r.Stages = slices.Clone(r.Stages)
 	for i := range r.Stages {
 		if r.Stages[i].Outcome == StageRunning {
 			stage := notBefore(at, r.Stages[i].StartedAt)
 			r.Stages[i].Outcome, r.Stages[i].FinishedAt = StageFailed, &stage
 		}
+		if end := r.Stages[i].FinishedAt; end != nil {
+			finished = notBefore(finished, *end)
+		}
 	}
+	r.FinishedAt = &finished
 	return r, true
 }
 
