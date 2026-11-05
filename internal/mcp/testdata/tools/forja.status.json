@@ -1,0 +1,806 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": true
+  },
+  "description": "With run_id: state, start and end of a run, its stages, the attempt in flight out of the contract's limit with every attempt's gates, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy. Without run_id: the runs that match the filters, newest first, one page at a time, under list, with the per-repository totals of every matching run; the run fields outside list are then empty.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "cursor": {
+        "description": "next_cursor of the previous page",
+        "type": "string"
+      },
+      "limit": {
+        "description": "runs per page, 1 to 200; 50 when omitted",
+        "type": "integer"
+      },
+      "repository": {
+        "description": "list only the runs of this repository, in owner/name form",
+        "type": "string"
+      },
+      "run_id": {
+        "description": "identifier of one run; omit it to list runs",
+        "type": "string"
+      },
+      "since": {
+        "description": "RFC3339 instant; list only the runs started at or after it",
+        "type": "string"
+      },
+      "state": {
+        "description": "list only the runs in this state: queued, running, succeeded or failed",
+        "type": "string"
+      },
+      "tool": {
+        "description": "list only the runs of this tool, such as forja.implement",
+        "type": "string"
+      },
+      "until": {
+        "description": "RFC3339 instant; list only the runs started before it",
+        "type": "string"
+      }
+    },
+    "type": "object"
+  },
+  "name": "forja.status",
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "attempt": {
+        "type": "integer"
+      },
+      "attempts": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "failed_step": {
+              "type": "string"
+            },
+            "gates": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "integer"
+                  },
+                  "exit_code": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "stderr": {
+                    "type": "string"
+                  },
+                  "stdout": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "command",
+                  "status",
+                  "exit_code",
+                  "duration",
+                  "stdout",
+                  "stderr",
+                  "truncated"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "head_sha": {
+              "type": "string"
+            },
+            "number": {
+              "type": "integer"
+            },
+            "setup": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "command": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "integer"
+                  },
+                  "exit_code": {
+                    "type": "integer"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string"
+                  },
+                  "stderr": {
+                    "type": "string"
+                  },
+                  "stdout": {
+                    "type": "string"
+                  },
+                  "truncated": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "name",
+                  "command",
+                  "status",
+                  "exit_code",
+                  "duration",
+                  "stdout",
+                  "stderr",
+                  "truncated"
+                ],
+                "type": "object"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "tokens_in": {
+              "type": "integer"
+            },
+            "tokens_out": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "number",
+            "tokens_in",
+            "tokens_out",
+            "setup",
+            "gates"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "base_sha": {
+        "type": "string"
+      },
+      "client": {
+        "type": "string"
+      },
+      "compute_minutes": {
+        "type": "number"
+      },
+      "contract_sha": {
+        "type": "string"
+      },
+      "diff_lines": {
+        "type": [
+          "null",
+          "integer"
+        ]
+      },
+      "egress_denied": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "destination": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "at",
+            "kind",
+            "destination"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "egress_denied_count": {
+        "type": "integer"
+      },
+      "estimated_cost_usd_micros": {
+        "type": [
+          "null",
+          "integer"
+        ]
+      },
+      "excluded": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "failure_reason": {
+        "type": "string"
+      },
+      "finished_at": {
+        "type": [
+          "null",
+          "string"
+        ]
+      },
+      "gates": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "integer"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            },
+            "stdout": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "command",
+            "status",
+            "exit_code",
+            "duration",
+            "stdout",
+            "stderr",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "head_sha": {
+        "type": "string"
+      },
+      "human_merge": {
+        "type": "boolean"
+      },
+      "human_merge_paths": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "added": {
+              "type": "integer"
+            },
+            "binary": {
+              "type": "boolean"
+            },
+            "change": {
+              "type": "string"
+            },
+            "deleted": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "change",
+            "added",
+            "deleted",
+            "binary"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "id": {
+        "type": "string"
+      },
+      "issue": {
+        "type": "integer"
+      },
+      "list": {
+        "additionalProperties": false,
+        "properties": {
+          "next_cursor": {
+            "type": "string"
+          },
+          "repositories": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "average_duration_seconds": {
+                  "type": [
+                    "null",
+                    "number"
+                  ]
+                },
+                "compute_minutes": {
+                  "type": "number"
+                },
+                "egress_denied": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "at": {
+                        "type": "string"
+                      },
+                      "destination": {
+                        "type": "string"
+                      },
+                      "kind": {
+                        "type": "string"
+                      },
+                      "run_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "run_id",
+                      "at",
+                      "kind",
+                      "destination"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "egress_denied_count": {
+                  "type": "integer"
+                },
+                "estimated_cost_usd_micros": {
+                  "type": [
+                    "null",
+                    "integer"
+                  ]
+                },
+                "failed": {
+                  "type": "integer"
+                },
+                "failures": {
+                  "items": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "count": {
+                        "type": "integer"
+                      },
+                      "rate": {
+                        "type": "number"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "reason",
+                      "count",
+                      "rate"
+                    ],
+                    "type": "object"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "in_flight": {
+                  "type": "integer"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "runs": {
+                  "type": "integer"
+                },
+                "succeeded": {
+                  "type": "integer"
+                },
+                "tokens_in": {
+                  "type": "integer"
+                },
+                "tokens_out": {
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "repository",
+                "runs",
+                "succeeded",
+                "failed",
+                "in_flight",
+                "compute_minutes",
+                "tokens_in",
+                "tokens_out",
+                "egress_denied_count",
+                "egress_denied",
+                "failures"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "runs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "compute_minutes": {
+                  "type": "number"
+                },
+                "egress_denied_count": {
+                  "type": "integer"
+                },
+                "estimated_cost_usd_micros": {
+                  "type": [
+                    "null",
+                    "integer"
+                  ]
+                },
+                "failure_reason": {
+                  "type": "string"
+                },
+                "finished_at": {
+                  "type": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "id": {
+                  "type": "string"
+                },
+                "issue": {
+                  "type": "integer"
+                },
+                "repository": {
+                  "type": "string"
+                },
+                "started_at": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "tokens_in": {
+                  "type": "integer"
+                },
+                "tokens_out": {
+                  "type": "integer"
+                },
+                "tool": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "tool",
+                "repository",
+                "issue",
+                "state",
+                "started_at",
+                "tokens_in",
+                "tokens_out",
+                "compute_minutes",
+                "egress_denied_count"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          }
+        },
+        "required": [
+          "runs",
+          "repositories"
+        ],
+        "type": [
+          "null",
+          "object"
+        ]
+      },
+      "max_attempts": {
+        "type": "integer"
+      },
+      "max_diff_lines": {
+        "type": "integer"
+      },
+      "proof_apparatus": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "added": {
+              "type": "integer"
+            },
+            "binary": {
+              "type": "boolean"
+            },
+            "change": {
+              "type": "string"
+            },
+            "deleted": {
+              "type": "integer"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "change",
+            "added",
+            "deleted",
+            "binary"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "pull_request": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url"
+        ],
+        "type": [
+          "null",
+          "object"
+        ]
+      },
+      "registry_access": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "at": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "registry": {
+              "type": "string"
+            },
+            "status": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "at",
+            "registry",
+            "path",
+            "outcome",
+            "status"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "registry_access_count": {
+        "type": "integer"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "setup": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "integer"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            },
+            "stdout": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "command",
+            "status",
+            "exit_code",
+            "duration",
+            "stdout",
+            "stderr",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "stages": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "attempt": {
+              "type": "integer"
+            },
+            "compute_minutes": {
+              "type": "number"
+            },
+            "finished_at": {
+              "type": [
+                "null",
+                "string"
+              ]
+            },
+            "name": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "started_at": {
+              "type": "string"
+            },
+            "tokens_in": {
+              "type": "integer"
+            },
+            "tokens_out": {
+              "type": "integer"
+            }
+          },
+          "required": [
+            "name",
+            "started_at",
+            "outcome",
+            "compute_minutes",
+            "tokens_in",
+            "tokens_out"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "started_at": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string"
+      },
+      "supersedes": {
+        "type": "string"
+      },
+      "tokens_in": {
+        "type": "integer"
+      },
+      "tokens_out": {
+        "type": "integer"
+      },
+      "tool": {
+        "type": "string"
+      },
+      "verdict": {
+        "type": "string"
+      },
+      "verdict_reason": {
+        "type": "string"
+      },
+      "wall_clock_seconds": {
+        "type": "number"
+      }
+    },
+    "required": [
+      "id",
+      "tool",
+      "repository",
+      "issue",
+      "client",
+      "state",
+      "started_at",
+      "egress_denied_count",
+      "egress_denied",
+      "registry_access_count",
+      "registry_access",
+      "tokens_in",
+      "tokens_out",
+      "compute_minutes",
+      "stages",
+      "setup",
+      "gates",
+      "attempt",
+      "max_attempts",
+      "attempts",
+      "human_merge",
+      "proof_apparatus",
+      "human_merge_paths",
+      "excluded"
+    ],
+    "type": "object"
+  }
+}

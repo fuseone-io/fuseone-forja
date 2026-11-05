@@ -5,7 +5,9 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Tool is the name of an MCP tool exposed by Forja, exactly as it appears on
@@ -119,13 +121,23 @@ type Run struct {
 var ErrRunClientChanged = errors.New("run client changed")
 
 // Validate reports whether the run is well formed: a non-empty ID and
-// client, a known tool and a known state.
+// client, an ID, a repository and a client that are text (see IsText), a
+// known tool and a known state.
 func (r Run) Validate() error {
 	if r.ID == "" {
 		return errors.New("run id is empty")
 	}
 	if r.Client == "" {
 		return errors.New("run client is empty")
+	}
+	if !IsText(r.ID) {
+		return fmt.Errorf("run id %q is not text", r.ID)
+	}
+	if !IsText(r.Repository) {
+		return fmt.Errorf("repository %q is not text", r.Repository)
+	}
+	if !IsText(r.Client) {
+		return fmt.Errorf("run client %q is not text", r.Client)
 	}
 	if !knownTool(r.Tool) {
 		return fmt.Errorf("unknown tool %q", r.Tool)
@@ -134,6 +146,13 @@ func (r Run) Validate() error {
 		return fmt.Errorf("unknown run state %q", r.State)
 	}
 	return nil
+}
+
+// IsText reports whether s is valid UTF-8 with no NUL: what a text column
+// of the run store keeps, and so what a run's key fields may hold in any
+// store.
+func IsText(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsRune(s, 0)
 }
 
 func knownTool(t Tool) bool {

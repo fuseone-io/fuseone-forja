@@ -23,6 +23,9 @@ type RunFilter struct {
 // Validate reports whether every field the filter sets is one a run can
 // have, and whether its window, when both ends are set, is not empty.
 func (f RunFilter) Validate() error {
+	if !IsText(f.Repository) {
+		return fmt.Errorf("repository %q is not text", f.Repository)
+	}
 	if f.Tool != "" && !knownTool(f.Tool) {
 		return fmt.Errorf("unknown tool %q", f.Tool)
 	}
