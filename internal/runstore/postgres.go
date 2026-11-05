@@ -87,6 +87,11 @@ func (p *Postgres) Get(ctx context.Context, id string) (domain.Run, error) {
 	if p.pool == nil {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, errNotOpen)
 	}
+	// Put refuses such an id, so no run has it; the column could not even
+	// be compared with it.
+	if !domain.IsText(id) {
+		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
+	}
 	var doc []byte
 	err := p.pool.QueryRow(ctx, "SELECT run FROM runs WHERE id = $1", id).Scan(&doc)
 	if errors.Is(err, pgx.ErrNoRows) {

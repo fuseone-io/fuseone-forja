@@ -145,6 +145,12 @@ func test_putInvalidRun_rejectedAndNotStored(t *testing.T, open opener) {
 		{name: "empty id", mutate: func(r *domain.Run) { r.ID = "" }},
 		{name: "unknown tool", mutate: func(r *domain.Run) { r.Tool = "forja.deploy" }},
 		{name: "unknown state", mutate: func(r *domain.Run) { r.State = "paused" }},
+		// A text column holds neither; the store in memory must refuse
+		// what Postgres cannot keep.
+		{name: "id with a NUL", mutate: func(r *domain.Run) { r.ID = "run-\x00" }},
+		{name: "id not UTF-8", mutate: func(r *domain.Run) { r.ID = "run-\xff" }},
+		{name: "repository with a NUL", mutate: func(r *domain.Run) { r.Repository = "acme/api\x00" }},
+		{name: "repository not UTF-8", mutate: func(r *domain.Run) { r.Repository = "acme/\xffapi" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -624,6 +630,11 @@ func test_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T, open ope
 	}
 	if _, err := store.List(ctx, domain.RunFilter{State: "paused"}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("List(unknown state) = %v, want an error naming it", err)
+	}
+	for _, repo := range []string{"acme/api\x00", "acme/\xffapi"} {
+		if _, err := store.List(ctx, domain.RunFilter{Repository: repo}); err == nil {
+			t.Errorf("List(repository %q) accepted a repository no run can have", repo)
+		}
 	}
 }
 
