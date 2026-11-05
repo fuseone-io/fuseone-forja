@@ -77,6 +77,36 @@ var postgresScenarios = []struct {
 	{"unmigrated_openRefusedNamingMigrate", testPostgres_unmigrated_openRefusedNamingMigrate},
 	{"newerSchema_openAndMigrateRefused", testPostgres_newerSchema_openAndMigrateRefused},
 	{"unreachable_errorWithholdsPassword", testPostgres_unreachable_errorWithholdsPassword},
+	{"sharedDatabase_otherAppsRunsTableUntouched", testPostgres_sharedDatabase_otherAppsRunsTableUntouched},
+}
+
+// A database another application also uses may already have a table
+// named runs: migrate leaves it alone, and the store neither reads nor
+// writes it.
+func testPostgres_sharedDatabase_otherAppsRunsTableUntouched(t *testing.T, srv *pgtest.Server) {
+	dsn := srv.Database(t)
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(ctxFor(t), "CREATE TABLE runs (id text PRIMARY KEY, owner text NOT NULL)"); err != nil {
+		t.Fatalf("the other application's table: %v", err)
+	}
+	if _, err := conn.Exec(ctxFor(t), "INSERT INTO runs (id, owner) VALUES ('run-1', 'billing')"); err != nil {
+		t.Fatalf("the other application's row: %v", err)
+	}
+
+	migrate(t, dsn)
+	store := openPostgres(t, dsn)
+	if err := store.Put(ctxFor(t), sampleRun("run-1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	var owner string
+	if err := conn.QueryRow(ctxFor(t), "SELECT owner FROM runs WHERE id = 'run-1'").Scan(&owner); err != nil || owner != "billing" {
+		t.Fatalf("the other application's row = %q (%v), want it untouched", owner, err)
+	}
 }
 
 // A run one pool wrote is what a pool opened after the first closed reads:

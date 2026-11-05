@@ -1,6 +1,6 @@
 -- One row per run. The run itself is the json document; the columns beside
 -- it are copies the filters of forja.status select on.
-CREATE TABLE runs (
+CREATE TABLE forja_runs (
     id         text        PRIMARY KEY,
     repository text        NOT NULL,
     tool       text        NOT NULL,
@@ -9,5 +9,5 @@ CREATE TABLE runs (
     run        json        NOT NULL
 );
 
-CREATE INDEX runs_repository_started_at ON runs (repository, started_at DESC);
-CREATE INDEX runs_state ON runs (state);
+CREATE INDEX forja_runs_repository_started_at ON forja_runs (repository, started_at DESC);
+CREATE INDEX forja_runs_state ON forja_runs (state);

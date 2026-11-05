@@ -70,7 +70,7 @@ func (p *Postgres) Put(ctx context.Context, run domain.Run) error {
 	if err != nil {
 		return fmt.Errorf("put run %q: %w", run.ID, err)
 	}
-	const upsert = `INSERT INTO runs (id, repository, tool, state, started_at, run)
+	const upsert = `INSERT INTO forja_runs (id, repository, tool, state, started_at, run)
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (id) DO UPDATE SET repository = EXCLUDED.repository, tool = EXCLUDED.tool,
 			state = EXCLUDED.state, started_at = EXCLUDED.started_at, run = EXCLUDED.run`
@@ -93,7 +93,7 @@ func (p *Postgres) Get(ctx context.Context, id string) (domain.Run, error) {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
 	}
 	var doc []byte
-	err := p.pool.QueryRow(ctx, "SELECT run FROM runs WHERE id = $1", id).Scan(&doc)
+	err := p.pool.QueryRow(ctx, "SELECT run FROM forja_runs WHERE id = $1", id).Scan(&doc)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
 	}
@@ -114,7 +114,7 @@ func (p *Postgres) List(ctx context.Context, f domain.RunFilter) ([]domain.Run, 
 	if p.pool == nil {
 		return nil, fmt.Errorf("list runs: %w", errNotOpen)
 	}
-	const query = `SELECT id, run FROM runs
+	const query = `SELECT id, run FROM forja_runs
 		WHERE ($1 = '' OR repository = $1) AND ($2 = '' OR tool = $2) AND ($3 = '' OR state = $3)
 			AND ($4::timestamptz IS NULL OR started_at >= $4) AND ($5::timestamptz IS NULL OR started_at <= $5)`
 	rows, err := p.pool.Query(ctx, query, f.Repository, string(f.Tool), string(f.State), bound(f.Since), bound(f.Until))
