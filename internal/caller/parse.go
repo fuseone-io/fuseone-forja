@@ -75,6 +75,8 @@ func decode(src []byte) (file, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
+		// The decoder's error is not wrapped: its chain still holds the
+		// unredacted text.
 		return file{}, fmt.Errorf("%w: %s", ErrMalformed, hexRun.ReplaceAllString(err.Error(), "…"))
 	}
 	var extra yaml.Node
