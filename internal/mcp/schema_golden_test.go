@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 
+	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
 
@@ -31,17 +33,20 @@ func listedTools(t *testing.T) map[string][]byte {
 		if err != nil {
 			t.Fatalf("tools/list: %v", err)
 		}
+		if _, dup := tools[tool.Name]; dup {
+			t.Fatalf("tools/list lists %q twice", tool.Name)
+		}
 		tools[tool.Name] = canonicalJSON(t, tool)
 	}
 	return tools
 }
 
-// canonicalJSON re-encodes v through a generic value so that every object,
+// canonicalJSON re-encodes tool through a generic value so that every object,
 // the SDK's structs included, comes out with its keys sorted, its numbers
 // verbatim and its text unescaped.
-func canonicalJSON(t *testing.T, v any) []byte {
+func canonicalJSON(t *testing.T, tool *sdk.Tool) []byte {
 	t.Helper()
-	raw, err := json.Marshal(v)
+	raw, err := json.Marshal(tool)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
