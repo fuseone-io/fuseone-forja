@@ -1,6 +1,6 @@
 # ADR 0052: network transport and caller authentication
 
-- **Status:** proposed
+- **Status:** accepted
 - **Issue:** none yet (PR #52)
 - **Refines:** [ADR 0051](0051-forja-as-a-separate-product.md) §5, which
   keeps stdio as the supported transport and defers a network transport with
@@ -389,7 +389,7 @@ Decision sections above.
 
 ## What only the human can do
 
-- [ ] Ratify this ADR and change its status to `accepted`.
+- [x] Ratify this ADR and change its status to `accepted` (2026-11-05).
 - [ ] Check that `withProtocol` applies no recorded mode to FuseOne's Forja
       entry, so it stays `auto` (G1).
 - [ ] Find out whether the pilot's cluster offers an internal ingress and
