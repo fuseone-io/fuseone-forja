@@ -49,6 +49,8 @@ func TestClient_reaches_patternsAndMalformedRepositories(t *testing.T) {
 		{name: "second pattern", client: domain.Client{Name: "two", Repositories: []string{"acme/payments", "beta/*"}}, repo: "beta/x", want: true},
 		{name: "zero client", client: domain.Client{}, repo: "acme/payments", want: false},
 		{name: "unrestricted", client: domain.Client{Name: domain.StdioClientName, Unrestricted: true}, repo: "anyone/anything", want: true},
+		{name: "unrestricted, dot-dot name", client: domain.Client{Name: domain.StdioClientName, Unrestricted: true}, repo: "acme/..", want: false},
+		{name: "unrestricted, a third segment", client: domain.Client{Name: domain.StdioClientName, Unrestricted: true}, repo: "acme/x/y", want: false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

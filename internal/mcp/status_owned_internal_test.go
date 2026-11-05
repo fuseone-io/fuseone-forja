@@ -58,6 +58,27 @@ func TestLifecycle_noClientOnTheContext_noClaimAttempted(t *testing.T) {
 	}
 }
 
+// countingCloner counts the clones it is asked for and refuses them all.
+type countingCloner struct{ clones int }
+
+func (c *countingCloner) Clone(context.Context, string, string) (Checkout, error) {
+	c.clones++
+	return nil, errors.New("countingCloner: refused")
+}
+
+// A doctor run reached with no client on its context clones nothing.
+func TestDoctor_noClientOnTheContext_noClone(t *testing.T) {
+	t.Parallel()
+	cloner := &countingCloner{}
+	deps := Deps{Cloner: cloner, Gates: greenGates{}, Runs: runstore.NewMemory(), NewID: func() string { return "r" }, Now: time.Now}
+	if _, err := doctor(context.Background(), deps, "acme/api"); !errors.Is(err, errNoClient) || cloner.clones != 0 {
+		t.Fatalf("doctor = %v after %d clones, want errNoClient and none", err, cloner.clones)
+	}
+	if _, err := doctor(withClient(context.Background(), domain.Client{Name: "client-a"}), deps, "acme/api"); errors.Is(err, errNoClient) || cloner.clones != 1 {
+		t.Fatalf("doctor with a client = %v after %d clones, want the clone tried once", err, cloner.clones)
+	}
+}
+
 // unownedReader is a store holding a run recorded under no client, as a
 // store that does not validate its rows could hand one back.
 type unownedReader struct{}

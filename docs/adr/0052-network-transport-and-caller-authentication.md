@@ -145,8 +145,8 @@ GitHub App:
     the clients file refuses such a pattern at start, and the match refuses
     such a request whatever the patterns.
   - **stdio.** The stdio client is the fixed name `stdio` and reaches every
-    repository, as before this ADR; the App's installations are its only
-    bound. No entry of the clients file may take that name.
+    repository of that shape, as before this ADR; the App's installations
+    are its only bound. No entry of the clients file may take that name.
 - **Runs.** Every run records the name of the client that started it.
   `forja.status` returns only the runs of the calling client; another
   client's `run_id` is answered as unknown, not as forbidden, so a client

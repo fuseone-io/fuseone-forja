@@ -13,23 +13,23 @@ type Client struct {
 	Name string
 	// Repositories are owner/name or owner/* patterns.
 	Repositories []string
-	// Unrestricted reaches every repository, leaving the GitHub App's
-	// installations as the only bound.
+	// Unrestricted reaches every well-formed repository, leaving the GitHub
+	// App's installations as the only bound.
 	Unrestricted bool
 }
 
 // Reaches reports whether the client may name repository. Owners and names
 // compare without regard to ASCII case, as GitHub's do. A repository that
 // is not one owner and one name, each of ASCII letters, digits, '.', '_'
-// or '-' and neither "." nor "..", is reached by no pattern; a pattern
-// that is not owner/name or owner/* reaches nothing.
+// or '-' and neither "." nor "..", is reached by no client, unrestricted
+// or not; a pattern that is not owner/name or owner/* reaches nothing.
 func (c Client) Reaches(repository string) bool {
-	if c.Unrestricted {
-		return true
-	}
 	owner, name, ok := splitRepository(repository)
 	if !ok {
 		return false
+	}
+	if c.Unrestricted {
+		return true
 	}
 	for _, p := range c.Repositories {
 		if !ValidRepositoryPattern(p) {
