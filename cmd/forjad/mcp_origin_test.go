@@ -156,13 +156,23 @@ func TestMCPStack_originRefused_loggedWithAddressAndOriginNeverTheBearer(t *test
 
 func TestMCPStack_longOriginRefused_logLineBounded(t *testing.T) {
 	t.Parallel()
-	var calls atomic.Int32
-	var logs bytes.Buffer
-	long := "https://" + strings.Repeat("a", 64<<10) + ".example"
-	rec := send(t, originStack(t, allowedOrigin, &calls, &logs), http.MethodPost, []string{long}, "Bearer "+testBearer)
-	if rec.Code != http.StatusForbidden || logs.Len() > 1024 || !strings.Contains(logs.String(), "https://aaaa") {
-		t.Fatalf("status %d, log of %d bytes: a refused Origin is logged, and bounded", rec.Code, logs.Len())
+	for _, filler := range []string{"a", "\x01", "\xff", "é"} {
+		var calls atomic.Int32
+		var logs bytes.Buffer
+		long := "https://" + strings.Repeat(filler, 64<<10) + ".example"
+		rec := send(t, originStack(t, allowedOrigin, &calls, &logs), http.MethodPost, []string{long}, "Bearer "+testBearer)
+		if rec.Code != http.StatusForbidden || logs.Len() > 400 || !strings.Contains(logs.String(), "https://") {
+			t.Fatalf("filler %q: status %d, log of %d bytes: a refused Origin is logged, and bounded", filler, rec.Code, logs.Len())
+		}
 	}
+}
+
+func TestMCPStack_originFoldsToAnAllowedOneOnlyOutsideASCII_403(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	// U+212A KELVIN SIGN lower-cases to an ASCII k under Unicode folding.
+	h := originStack(t, "https://konsole.example.com", &calls, &bytes.Buffer{})
+	refusedBare(t, send(t, h, http.MethodPost, []string{"https://Konsole.example.com"}, "Bearer "+testBearer))
 }
 
 func TestMCPStack_originAllowedOrAbsent_notLogged(t *testing.T) {

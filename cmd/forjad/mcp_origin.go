@@ -11,14 +11,20 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// maxLoggedOrigin bounds the bytes of a refused Origin a log line carries.
+// maxLoggedOrigin bounds the bytes of a refused Origin, once quoted, that
+// a log line carries.
 const maxLoggedOrigin = 256
 
 // originSet is the Origin values a request may carry, lower-cased. The
 // zero value allows none.
 type originSet map[string]struct{}
 
+// allows folds case in ASCII only: Unicode folding would map a non-ASCII
+// Origin onto an allowed one.
 func (s originSet) allows(origin string) bool {
+	if !isASCII(origin) {
+		return false
+	}
 	_, ok := s[strings.ToLower(origin)]
 	return ok
 }
@@ -118,7 +124,7 @@ func requireOrigin(allowed originSet, logger *log.Logger, next http.Handler) htt
 			next.ServeHTTP(w, r)
 			return
 		}
-		logger.Printf("forjad: origin refused remote=%s origin=%q", r.RemoteAddr, clip(strings.Join(values, ", "), maxLoggedOrigin))
+		logger.Printf("forjad: origin refused remote=%s origin=%s", r.RemoteAddr, clip(strconv.QuoteToASCII(strings.Join(values, ", ")), maxLoggedOrigin))
 		w.WriteHeader(http.StatusForbidden)
 	})
 }
