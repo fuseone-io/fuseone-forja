@@ -84,8 +84,9 @@ func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConf
 	if err != nil {
 		return fmt.Errorf("%s: %w", EnvMCPAddr, err)
 	}
-	server.AddReceivingMiddleware(logCalls(log.New(out.log, "", 0)))
-	srv := newMCPServer(mcpHandler(server, cfg.clients), cfg.tls)
+	logger := log.New(out.log, "", 0)
+	server.AddReceivingMiddleware(logCalls(logger))
+	srv := newMCPServer(mcpStack(server, cfg, logger), cfg.tls)
 	// A server being stopped is no longer ready while it drains.
 	srv.RegisterOnShutdown(func() { out.ready.serving.Store(false) })
 	out.ready.serving.Store(true)

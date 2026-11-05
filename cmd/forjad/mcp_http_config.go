@@ -22,6 +22,9 @@ const (
 	// HTTP server presents. Required unless EnvMCPAddr is on loopback.
 	EnvTLSCertFile = "FORJA_TLS_CERT_FILE"
 	EnvTLSKeyFile  = "FORJA_TLS_KEY_FILE"
+	// EnvMCPAllowedOrigins is the comma-separated scheme://host[:port]
+	// values a request's Origin may carry. Empty, any Origin is refused.
+	EnvMCPAllowedOrigins = "FORJA_MCP_ALLOWED_ORIGINS"
 )
 
 // httpConfig is the MCP server over HTTP; the zero value is stdio.
@@ -30,6 +33,8 @@ type httpConfig struct {
 	// tls is nil only on a loopback address with no certificate.
 	tls     *tls.Config
 	clients caller.Registry
+	// origins is what a request's Origin may be; nil refuses every Origin.
+	origins originSet
 	// drain is how long a stop waits for the calls in flight.
 	drain time.Duration
 }
@@ -37,8 +42,8 @@ type httpConfig struct {
 // mcpHTTPConfig reads the HTTP transport from the environment. Unset
 // EnvMCPAddr is stdio and reads nothing else. Otherwise a malformed
 // address, a certificate without its key, a non-loopback address without a
-// certificate, or a clients file that is unset, unreadable, malformed or
-// empty is an error naming the variable.
+// certificate, a clients file that is unset, unreadable, malformed or
+// empty, or a malformed origin list is an error naming the variable.
 func mcpHTTPConfig(getenv func(string) string) (httpConfig, error) {
 	addr := getenv(EnvMCPAddr)
 	if addr == "" {
@@ -60,7 +65,11 @@ func mcpHTTPConfig(getenv func(string) string) (httpConfig, error) {
 	if err != nil {
 		return httpConfig{}, fmt.Errorf("%s: %w", EnvClientsFile, err)
 	}
-	return httpConfig{addr: addr, tls: tlsCfg, clients: clients, drain: mcpShutdownTimeout}, nil
+	origins, err := parseOrigins(getenv(EnvMCPAllowedOrigins))
+	if err != nil {
+		return httpConfig{}, fmt.Errorf("%s: %w", EnvMCPAllowedOrigins, err)
+	}
+	return httpConfig{addr: addr, tls: tlsCfg, clients: clients, origins: origins, drain: mcpShutdownTimeout}, nil
 }
 
 // isLoopback is a literal loopback IP. An empty host listens on every
