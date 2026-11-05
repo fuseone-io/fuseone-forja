@@ -22,23 +22,23 @@ var updateGoldens = flag.Bool("update", false, "rewrite the tool schema goldens 
 const goldenDir = "testdata/tools"
 
 // listedTools returns each tool exactly as a client decodes it from
-// tools/list, in canonical JSON keyed by tool name.
+// tools/list, every page of it, in canonical JSON keyed by tool name.
 func listedTools(t *testing.T) map[string][]byte {
 	t.Helper()
 	cs := connect(t, runstore.NewMemory())
-	res, err := cs.ListTools(context.Background(), nil)
-	if err != nil {
-		t.Fatalf("ListTools: %v", err)
-	}
 	tools := map[string][]byte{}
-	for _, tool := range res.Tools {
+	for tool, err := range cs.Tools(context.Background(), nil) {
+		if err != nil {
+			t.Fatalf("tools/list: %v", err)
+		}
 		tools[tool.Name] = canonicalJSON(t, tool)
 	}
 	return tools
 }
 
 // canonicalJSON re-encodes v through a generic value so that every object,
-// the SDK's structs included, comes out with its keys sorted.
+// the SDK's structs included, comes out with its keys sorted, its numbers
+// verbatim and its text unescaped.
 func canonicalJSON(t *testing.T, v any) []byte {
 	t.Helper()
 	raw, err := json.Marshal(v)
@@ -48,14 +48,19 @@ func canonicalJSON(t *testing.T, v any) []byte {
 	// any: the decoded tool is an arbitrary JSON document; encoding/json
 	// sorts map keys, which is the stable order the goldens need.
 	var generic any
-	if err := json.Unmarshal(raw, &generic); err != nil {
-		t.Fatalf("unmarshal: %v", err)
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if err := dec.Decode(&generic); err != nil {
+		t.Fatalf("decode: %v", err)
 	}
-	out, err := json.MarshalIndent(generic, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal canonical: %v", err)
+	var out bytes.Buffer
+	enc := json.NewEncoder(&out)
+	enc.SetEscapeHTML(false)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(generic); err != nil {
+		t.Fatalf("encode canonical: %v", err)
 	}
-	return append(out, '\n')
+	return out.Bytes()
 }
 
 func goldenPath(name string) string {
@@ -86,26 +91,44 @@ func TestToolSchemas_listedTools_matchGoldens(t *testing.T) {
 // schema change like any other.
 func TestToolSchemas_goldenWithoutTool_fails(t *testing.T) {
 	t.Parallel()
-	tools := listedTools(t)
-	files, err := filepath.Glob(filepath.Join(goldenDir, "*.json"))
-	if err != nil {
-		t.Fatalf("glob: %v", err)
+	if *updateGoldens {
+		t.Skip("-update prunes goldens without a tool")
 	}
+	tools := listedTools(t)
+	files := goldenFiles(t)
 	if len(files) == 0 {
 		t.Fatalf("no goldens under %s", goldenDir)
 	}
 	for _, f := range files {
 		name := strings.TrimSuffix(filepath.Base(f), ".json")
 		if _, listed := tools[name]; !listed {
-			t.Errorf("golden %s has no listed tool %q; delete it if the removal is deliberate", f, name)
+			t.Errorf("golden %s has no listed tool %q; run with -update if the removal is deliberate", f, name)
 		}
 	}
 }
 
+func goldenFiles(t *testing.T) []string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(goldenDir, "*.json"))
+	if err != nil {
+		t.Fatalf("glob: %v", err)
+	}
+	return files
+}
+
+// writeGoldens makes testdata/tools hold exactly the listed tools: each one
+// written, every other golden removed.
 func writeGoldens(t *testing.T, tools map[string][]byte) {
 	t.Helper()
 	if err := os.MkdirAll(goldenDir, 0o755); err != nil {
 		t.Fatalf("mkdir %s: %v", goldenDir, err)
+	}
+	for _, f := range goldenFiles(t) {
+		if _, listed := tools[strings.TrimSuffix(filepath.Base(f), ".json")]; !listed {
+			if err := os.Remove(f); err != nil {
+				t.Fatalf("remove %s: %v", f, err)
+			}
+		}
 	}
 	for name, body := range tools {
 		if err := os.WriteFile(goldenPath(name), body, 0o644); err != nil {
