@@ -234,7 +234,7 @@ App's permissions and the private key's handling, is
 | `FORJA_GITHUB_INSTALLATION_ID` | numeric Installation ID on the pilot | production |
 | `FORJA_GITHUB_PRIVATE_KEY_FILE` | **path** to the PEM file mounted by the vault; the key never goes in a variable | production |
 | `FORJA_GITHUB_TOKEN` | fine-grained PAT restricted to the pilot | development only; ignored when `FORJA_GITHUB_APP_ID` is set |
-| `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it. One `serve` per directory: a second refuses to start while the first holds `forjad.lock` | recommended; unset, a claim left by a crash is freed only by its lease |
+| `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it. One `serve` per directory: a second refuses to start while the first holds `forjad.lock`. Must be on a local disk: `flock` does not exclude across hosts on NFS mounted `nolock` or CIFS mounted `nobrl` | recommended; unset, a claim left by a crash is freed only by its lease |
 | `FORJA_DATABASE_URL` | Postgres URL the run store is kept in; apply the schema first with `forjad migrate`, which is safe to run again | recommended; unset, runs are kept in memory and a restart loses them |
 | `FORJA_CLAIM_LEASE` | Go duration the run holds `refs/forja/claims/<n>` for; must exceed the contract's `limits.wall_clock` | optional; default `wall_clock + 15m`, or `60m` without limits |
 | `FORJA_REGISTRY_CREDENTIALS` | **path** to a JSON file mounted by the vault, `{"<entry>": {"username": "...", "password": "..."}}`, one read credential per area | needed by any contract that declares `registries`; unset, such a run is refused at launch |

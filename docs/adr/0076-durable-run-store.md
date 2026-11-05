@@ -71,7 +71,8 @@ nothing with the caller.
    database and the proxy subcommands touch neither, so they do not take
    it; `forja.doctor` is a tool of `serve`, already under it. Over stdio,
    each MCP client session starts its own `serve`: two sessions on one host
-   need one `FORJA_STATE_DIR` each, or the second does not start.
+   need one `FORJA_STATE_DIR` each, or the second does not start. The
+   directory must be on a local disk (see Consequences).
 
 ## Consequences
 
@@ -97,9 +98,15 @@ nothing with the caller.
   owner and a liveness lease. That is the same gap several replicas over
   one database hit (roadmap, open questions).
 - The lock refuses a shared directory; it does not make several replicas
-  cooperate. Each replica needs its own `FORJA_STATE_DIR`, and a `flock` on
-  a network filesystem is only as good as that filesystem's lock support,
-  so the directory belongs on local disk.
+  cooperate. Each replica needs its own `FORJA_STATE_DIR`, and it **must be
+  on a local disk**. `flock` does not exclude across hosts on NFS mounted
+  `nolock`, where each client grants its own locks, or on CIFS/SMB mounted
+  `nobrl`, where byte-range locks never reach the server. There, two
+  replicas on one shared volume both take the lock and the hole this
+  decision closes reopens. Nothing at startup detects such a mount.
+- Opening the store and the recovery run under a startup deadline (two
+  minutes): a database or GitHub that never answers fails the start, naming
+  the variable, instead of holding the lock with no server behind it.
 - The ledger table is `forja_schema_migrations`, so a database another tool
   migrates with its own `schema_migrations` does not collide.
 - Idempotency keys and `caller_ref` (M2) get their own migration.
