@@ -59,6 +59,24 @@ func assertInterrupted(t *testing.T, got domain.Run, changed bool, at time.Time)
 	}
 }
 
+// A clock behind the one that started the run never ends it, or an open
+// stage, before it started: a duration is never negative.
+func TestRun_interrupted_clockBehindStart_finishesAtStart(t *testing.T) {
+	t.Parallel()
+	run := interruptedFixture(domain.StateRunning)
+	behind := run.StartedAt.Add(-30 * time.Second)
+
+	got, _ := run.Interrupted(behind)
+
+	if got.FinishedAt == nil || !got.FinishedAt.Equal(run.StartedAt) {
+		t.Fatalf("FinishedAt = %v, want the run's start %v", got.FinishedAt, run.StartedAt)
+	}
+	open := got.Stages[1]
+	if open.FinishedAt == nil || !open.FinishedAt.Equal(open.StartedAt) {
+		t.Fatalf("open stage FinishedAt = %v, want its start %v", open.FinishedAt, open.StartedAt)
+	}
+}
+
 // A run that already ended keeps its outcome, its reason and its finish:
 // the process died after recording it.
 func TestRun_interrupted_terminalRunUnchanged(t *testing.T) {

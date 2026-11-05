@@ -99,7 +99,7 @@ func applyPending(ctx context.Context, tx pgx.Tx) ([]int, error) {
 	if _, err := tx.Exec(ctx, "SELECT pg_advisory_xact_lock($1)", migrationLock); err != nil {
 		return nil, fmt.Errorf("lock: %w", err)
 	}
-	const ledger = `CREATE TABLE IF NOT EXISTS schema_migrations (
+	const ledger = `CREATE TABLE IF NOT EXISTS forja_schema_migrations (
 		version    integer     PRIMARY KEY,
 		applied_at timestamptz NOT NULL DEFAULT now())`
 	if _, err := tx.Exec(ctx, ledger); err != nil {
@@ -109,6 +109,9 @@ func applyPending(ctx context.Context, tx pgx.Tx) ([]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	if latest := latestVersion(); current > latest {
+		return nil, checkVersion(current, latest)
+	}
 	applied := []int{}
 	for _, m := range Migrations() {
 		if m.Version <= current {
@@ -117,7 +120,7 @@ func applyPending(ctx context.Context, tx pgx.Tx) ([]int, error) {
 		if _, err := tx.Exec(ctx, m.SQL); err != nil {
 			return nil, fmt.Errorf("migration %d: %w", m.Version, err)
 		}
-		if _, err := tx.Exec(ctx, "INSERT INTO schema_migrations (version) VALUES ($1)", m.Version); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO forja_schema_migrations (version) VALUES ($1)", m.Version); err != nil {
 			return nil, fmt.Errorf("record migration %d: %w", m.Version, err)
 		}
 		applied = append(applied, m.Version)
@@ -135,14 +138,14 @@ type querier interface {
 // it has had none.
 func schemaVersion(ctx context.Context, q querier) (int, error) {
 	var exists bool
-	if err := q.QueryRow(ctx, "SELECT to_regclass('schema_migrations') IS NOT NULL").Scan(&exists); err != nil {
+	if err := q.QueryRow(ctx, "SELECT to_regclass('forja_schema_migrations') IS NOT NULL").Scan(&exists); err != nil {
 		return 0, fmt.Errorf("schema version: %w", err)
 	}
 	if !exists {
 		return 0, nil
 	}
 	var version int
-	if err := q.QueryRow(ctx, "SELECT coalesce(max(version), 0) FROM schema_migrations").Scan(&version); err != nil {
+	if err := q.QueryRow(ctx, "SELECT coalesce(max(version), 0) FROM forja_schema_migrations").Scan(&version); err != nil {
 		return 0, fmt.Errorf("schema version: %w", err)
 	}
 	return version, nil

@@ -75,7 +75,7 @@ var postgresScenarios = []struct {
 	{"migrateTwice_secondAppliesNothingAndKeepsRuns", testPostgres_migrateTwice_secondAppliesNothingAndKeepsRuns},
 	{"concurrentMigrate_allSucceedSchemaOnce", testPostgres_concurrentMigrate_allSucceedSchemaOnce},
 	{"unmigrated_openRefusedNamingMigrate", testPostgres_unmigrated_openRefusedNamingMigrate},
-	{"newerSchema_openRefusedNotNamingMigrate", testPostgres_newerSchema_openRefusedNotNamingMigrate},
+	{"newerSchema_openAndMigrateRefused", testPostgres_newerSchema_openAndMigrateRefused},
 	{"unreachable_errorWithholdsPassword", testPostgres_unreachable_errorWithholdsPassword},
 }
 
@@ -161,9 +161,10 @@ func testPostgres_unmigrated_openRefusedNamingMigrate(t *testing.T, srv *pgtest.
 	}
 }
 
-// A database a newer binary migrated is refused with its own error: running
+// A database a newer binary migrated is refused, by open and by migrate,
+// with its own error: running
 // forjad migrate from this binary cannot help, so the error does not say to.
-func testPostgres_newerSchema_openRefusedNotNamingMigrate(t *testing.T, srv *pgtest.Server) {
+func testPostgres_newerSchema_openAndMigrateRefused(t *testing.T, srv *pgtest.Server) {
 	dsn := srv.Database(t)
 	migrate(t, dsn)
 	conn, err := pgx.Connect(ctxFor(t), dsn)
@@ -171,7 +172,7 @@ func testPostgres_newerSchema_openRefusedNotNamingMigrate(t *testing.T, srv *pgt
 		t.Fatalf("connect: %v", err)
 	}
 	defer func() { _ = conn.Close(context.Background()) }()
-	if _, err := conn.Exec(ctxFor(t), "INSERT INTO schema_migrations (version) VALUES (9999)"); err != nil {
+	if _, err := conn.Exec(ctxFor(t), "INSERT INTO forja_schema_migrations (version) VALUES (9999)"); err != nil {
 		t.Fatalf("record a newer migration: %v", err)
 	}
 
@@ -182,6 +183,9 @@ func testPostgres_newerSchema_openRefusedNotNamingMigrate(t *testing.T, srv *pgt
 	}
 	if !errors.Is(err, runstore.ErrSchemaNewer) || errors.Is(err, runstore.ErrSchemaNotMigrated) || strings.Contains(err.Error(), "forjad migrate") {
 		t.Fatalf("OpenPostgres error = %v, want ErrSchemaNewer without the advice to migrate", err)
+	}
+	if applied, err := runstore.Migrate(ctxFor(t), dsn); !errors.Is(err, runstore.ErrSchemaNewer) {
+		t.Fatalf("Migrate on a newer schema = %v, %v; want ErrSchemaNewer, not a schema reported current", applied, err)
 	}
 }
 
