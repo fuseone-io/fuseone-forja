@@ -222,6 +222,10 @@ func probeOf(t *testing.T, url string) probe {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
+	// A cached answer would report a state the server has left.
+	if ct, cc := res.Header.Get("Content-Type"), res.Header.Get("Cache-Control"); ct != "text/plain; charset=utf-8" || cc != "no-store" {
+		t.Fatalf("GET %s headers: Content-Type %q, Cache-Control %q; want plain text, no-store", url, ct, cc)
+	}
 	return probe{status: res.StatusCode, body: body}
 }
 
@@ -357,7 +361,7 @@ func TestServeMCP_sessionEnds_servingDropped(t *testing.T) {
 			awaitServing(t, ready, ended)
 
 			tt.end(cancel, cs)
-			<-ended
+			_ = <-ended
 			if ready.serving.Load() {
 				t.Fatal("still ready after the session ended")
 			}

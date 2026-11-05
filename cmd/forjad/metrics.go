@@ -88,7 +88,7 @@ func probeReply(w http.ResponseWriter, status int, body string) {
 func serveMCP(ctx context.Context, server *sdk.Server, transport sdk.Transport, ready *readiness) error {
 	ss, err := server.Connect(ctx, transport, nil)
 	if err != nil {
-		return err
+		return fmt.Errorf("mcp connect: %w", err)
 	}
 	ready.serving.Store(true)
 	defer ready.serving.Store(false)
@@ -98,8 +98,11 @@ func serveMCP(ctx context.Context, server *sdk.Server, transport sdk.Transport, 
 	case err := <-ended:
 		return err
 	case <-ctx.Done():
+		// A server being stopped is no longer ready while it drains.
+		ready.serving.Store(false)
 		_ = ss.Close()
-		<-ended
+		// The session ends because it was closed; ctx says why.
+		_ = <-ended
 		return ctx.Err()
 	}
 }
