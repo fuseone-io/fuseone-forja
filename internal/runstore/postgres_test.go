@@ -78,6 +78,107 @@ var postgresScenarios = []struct {
 	{"newerSchema_openAndMigrateRefused", testPostgres_newerSchema_openAndMigrateRefused},
 	{"unreachable_errorWithholdsPassword", testPostgres_unreachable_errorWithholdsPassword},
 	{"sharedDatabase_otherAppsRunsTableUntouched", testPostgres_sharedDatabase_otherAppsRunsTableUntouched},
+	{"rowFromBeforeClients_becomesTheStdioClients", testPostgres_rowFromBeforeClients_becomesTheStdioClients},
+	{"clientColumn_isTheRunsClient", testPostgres_clientColumn_isTheRunsClient},
+	{"listByClient_anotherClientsBrokenRowNotRead", testPostgres_listByClient_anotherClientsBrokenRowNotRead},
+}
+
+// A client's list reads only its own rows: a row of another client's that
+// does not decode fails neither its list nor tells it the row exists.
+func testPostgres_listByClient_anotherClientsBrokenRowNotRead(t *testing.T, srv *pgtest.Server) {
+	dsn := srv.Database(t)
+	migrate(t, dsn)
+	store := openPostgres(t, dsn)
+	if err := store.Put(ctxFor(t), sampleRun("run-mine")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	broken := `INSERT INTO forja_runs (id, repository, tool, state, started_at, client, run)
+		VALUES ('run-theirs', 'fuseone-io/fuseone-forja', 'forja.implement', 'running', '2026-10-31T12:00:00Z', 'fuseone-staging', '{"Stages": 7}')`
+	if _, err := conn.Exec(ctxFor(t), broken); err != nil {
+		t.Fatalf("another client's broken row: %v", err)
+	}
+	got, err := store.List(ctxFor(t), domain.RunFilter{Client: "fuseone-pilot"})
+	if err != nil || !reflect.DeepEqual(listIDs(got), []string{"run-mine"}) {
+		t.Fatalf("List(fuseone-pilot) = %v, %v; want [run-mine]", listIDs(got), err)
+	}
+	if _, err := store.List(ctxFor(t), domain.RunFilter{}); err == nil {
+		t.Fatal("the operator's list decoded a broken row; the fixture checks nothing")
+	}
+}
+
+// A run recorded before runs carried a client was recorded over stdio, the
+// one transport that wrote to this store then: migrating makes it the stdio
+// client's, by id and in a list, and no other client's.
+func testPostgres_rowFromBeforeClients_becomesTheStdioClients(t *testing.T, srv *pgtest.Server) {
+	dsn := srv.Database(t)
+	schemaOneWithARun(t, dsn)
+	if applied := migrate(t, dsn); len(applied) == 0 || applied[0] != 2 {
+		t.Fatalf("Migrate applied %v, want 2 and on", applied)
+	}
+	store := openPostgres(t, dsn)
+	got, err := store.Get(ctxFor(t), "run-old")
+	if err != nil || got.Client != domain.StdioClientName || got.Repository != "acme/api" {
+		t.Fatalf("Get = %+v, %v; want the run, the stdio client's", got, err)
+	}
+	for client, want := range map[string]int{domain.StdioClientName: 1, "fuseone-pilot": 0} {
+		if runs, err := store.List(ctxFor(t), domain.RunFilter{Client: client}); err != nil || len(runs) != want {
+			t.Fatalf("List(%s) = %v, %v; want %d runs", client, listIDs(runs), err, want)
+		}
+	}
+	got.State = domain.StateFailed
+	if err := store.Put(ctxFor(t), got); err != nil {
+		t.Fatalf("Put by its client after the migration: %v", err)
+	}
+}
+
+// schemaOneWithARun brings dsn to schema version 1, the one before runs
+// carried a client, with run-old recorded on it.
+func schemaOneWithARun(t *testing.T, dsn string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	setup := []string{
+		"CREATE TABLE forja_schema_migrations (version integer PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+		runstore.Migrations()[0].SQL,
+		"INSERT INTO forja_schema_migrations (version) VALUES (1)",
+		`INSERT INTO forja_runs (id, repository, tool, state, started_at, run) VALUES ('run-old', 'acme/api', 'forja.implement', 'succeeded', '2026-10-31T12:00:00Z',
+			'{"ID":"run-old","Tool":"forja.implement","Repository":"acme/api","Issue":5,"State":"succeeded","StartedAt":"2026-10-31T12:00:00Z"}')`,
+	}
+	for _, q := range setup {
+		if _, err := conn.Exec(ctxFor(t), q); err != nil {
+			t.Fatalf("schema 1 with a run on it: %v", err)
+		}
+	}
+}
+
+// The column a list filters on holds the run's client, so that the query
+// itself, not only the decoded document, keeps one client's runs.
+func testPostgres_clientColumn_isTheRunsClient(t *testing.T, srv *pgtest.Server) {
+	dsn := srv.Database(t)
+	migrate(t, dsn)
+	store := openPostgres(t, dsn)
+	run := sampleRun("run-1")
+	run.Client = "fuseone-staging"
+	if err := store.Put(ctxFor(t), run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	var client string
+	if err := conn.QueryRow(ctxFor(t), "SELECT client FROM forja_runs WHERE id = 'run-1'").Scan(&client); err != nil || client != run.Client {
+		t.Fatalf("client column = %q (%v), want %q", client, err, run.Client)
+	}
 }
 
 // A database another application also uses may already have a table
