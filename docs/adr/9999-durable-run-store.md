@@ -22,11 +22,14 @@ nothing with the caller.
 2. **Selection.** `FORJA_DATABASE_URL` set: `serve` keeps runs in Postgres.
    Unset: in memory, as before. The URL comes from the environment only, and
    no error repeats it, since it carries the password.
-3. **Schema.** One table, `runs`. The run is kept whole in a `json` column,
-   encoded with `encoding/json`. Beside it, `repository`, `tool`, `state`
-   and `started_at` are copies that let the query narrow a list. `json`,
-   not `jsonb`, because `jsonb` refuses a NUL, and an agent can name a path
-   with one. The columns only narrow the list: the filter itself decides,
+3. **Schema.** One table, `forja_runs`, prefixed like the ledger so that a
+   database other applications also use keeps its own `runs`. The run is
+   kept whole in a `json` column, encoded with `encoding/json`. Beside it,
+   `repository`, `tool`, `state` and `started_at` are copies that let the
+   query narrow a list. `json`, not `jsonb`, because `jsonb` refuses a NUL,
+   and an agent can name a path with one. The text columns hold neither a
+   NUL nor invalid UTF-8, so run validation refuses an id or repository with
+   either, in every store. The columns only narrow the list: the filter itself decides,
    and the sort is `domain.CompareNewestFirst` in Go. That keeps the window
    exact to the nanosecond, where `timestamptz` keeps microseconds.
 4. **Migrations.** Embedded SQL files, numbered, recorded in
@@ -37,7 +40,8 @@ nothing with the caller.
 5. **Recovery.** On start, before releasing the claims a previous process
    journaled, `serve` closes the run of each one. A queued or running run
    ends `failed` with the new reason `interrupted`, and its open stages
-   fail at the same instant, never before they started. The journal holds
+   fail at the same instant, never before they started, and the run never
+   ends before a stage it holds. The journal holds
    only the claims of a process that stopped (decision 7 makes that true),
    so this holds whether or not the ref is still the claim's. A run no journaled claim names is left
    alone, because another live `forjad` on the same database, such as a
