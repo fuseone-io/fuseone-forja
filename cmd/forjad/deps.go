@@ -146,23 +146,6 @@ func journal(getenv func(string) string, stderr io.Writer) *claim.Journal {
 	return &claim.Journal{Dir: filepath.Join(dir, "claims")}
 }
 
-// recoverClaims releases what a previous process left behind and reports
-// each on stderr by repository, issue and run id.
-func recoverClaims(ctx context.Context, store *claim.Store, stderr io.Writer) error {
-	if store == nil {
-		return nil
-	}
-	released, err := store.Recover(ctx)
-	if err != nil {
-		return fmt.Errorf("recover claims: %w", err)
-	}
-	for _, c := range released {
-		// The exit code is the only channel left when stderr itself fails.
-		_, _ = fmt.Fprintf(stderr, "forjad: released the claim of issue %d of %s left by run %s\n", c.Issue, c.Repository, c.RunID)
-	}
-	return nil
-}
-
 // utcNow is the wall clock every run and claim is stamped with: instants
 // are stored in UTC, whatever the host's zone.
 func utcNow() time.Time { return time.Now().UTC() }

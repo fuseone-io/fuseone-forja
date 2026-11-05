@@ -1,4 +1,4 @@
-.PHONY: build vet lint test race docker-test integration hardened check gates serve
+.PHONY: build vet lint test race docker-test integration-test integration hardened check gates serve
 
 GOLANGCI_LINT ?= golangci-lint
 
@@ -24,7 +24,14 @@ race:
 	go test -race ./...
 
 docker-test:
-	$(DOCKER_ENV) go test -race -count=1 ./internal/workspace/ ./cmd/forjad/
+	$(DOCKER_ENV) go test -race -count=1 ./internal/workspace/ ./internal/runstore/ ./cmd/forjad/
+
+# The run store against a real Postgres container, filtered while
+# iterating: make integration-test PKG=./internal/runstore/ RUN='^TestPostgres'.
+PKG ?= ./internal/runstore/ ./cmd/forjad/
+RUN ?= .
+integration-test:
+	$(DOCKER_ENV) go test -race -count=1 -run '$(RUN)' $(PKG)
 
 # Needs the contract's postgres sidecar reachable by name: it runs as a
 # gate inside a Forja run, not in check.
