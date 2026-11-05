@@ -181,17 +181,17 @@ func TestRecoverClaims_runEndedOrUnknown_leftAsIs(t *testing.T) {
 	}
 }
 
-// brokenRuns is a store that answers neither lists nor writes.
+// brokenRuns is a store that answers neither reads nor writes.
 type brokenRuns struct {
 	*runstore.Memory
-	listErr, putErr error
+	getErr, putErr error
 }
 
-func (b brokenRuns) List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error) {
-	if b.listErr != nil {
-		return nil, b.listErr
+func (b brokenRuns) Get(ctx context.Context, id string) (domain.Run, error) {
+	if b.getErr != nil {
+		return domain.Run{}, b.getErr
 	}
-	return b.Memory.List(ctx, f)
+	return b.Memory.Get(ctx, id)
 }
 
 func (b brokenRuns) Put(ctx context.Context, run domain.Run) error {
@@ -201,7 +201,7 @@ func (b brokenRuns) Put(ctx context.Context, run domain.Run) error {
 	return b.Memory.Put(ctx, run)
 }
 
-// A store that cannot say which runs were in flight, or cannot record one
+// A store that cannot say what the crashed run was, or cannot record it
 // ended, stops the start before the claim is released: serving on would
 // leave the run running, and the next start finds the journal as it was.
 func TestRecoverClaims_storeFails_startupErrorClaimKept(t *testing.T) {
@@ -211,7 +211,7 @@ func TestRecoverClaims_storeFails_startupErrorClaimKept(t *testing.T) {
 		runs brokenRuns
 		want string
 	}{
-		"list fails":  {brokenRuns{listErr: errStore}, "recover runs"},
+		"read fails":  {brokenRuns{getErr: errStore}, "run-crashed"},
 		"write fails": {brokenRuns{putErr: errStore}, "run-crashed"},
 	}
 	for name, tt := range tests {
@@ -239,10 +239,10 @@ func TestRecoverClaims_storeFails_startupErrorClaimKept(t *testing.T) {
 
 // A journaled claim whose ref vanished or moved to another run is still a
 // run of the process that died: the run is closed, the ref left alone.
-// No claim store at all, as without credentials, closes the runs too.
+
 func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 	t.Parallel()
-	tests := map[string]string{"ref vanished": "", "ref moved on": "b2b2", "no claim store": "none"}
+	tests := map[string]string{"ref vanished": "", "ref moved on": "b2b2"}
 	for name, refSHA := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -253,9 +253,6 @@ func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 			}
 			deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
 			claims, refs := crashedClaim(t, refSHA)
-			if refSHA == "none" {
-				claims, refSHA = nil, ""
-			}
 			if err := recoverClaims(ctx, claims, deps, &bytes.Buffer{}); err != nil {
 				t.Fatalf("recoverClaims: %v", err)
 			}
@@ -271,39 +268,66 @@ func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 	}
 }
 
-// Every run left queued or running is closed, whether or not a claim was
-// journaled for it: a forja.doctor run holds none, and an implement run
-// that died after its release but before its last record has lost its
-// entry. A run that ended, and another tool's ended run, are left alone.
-func TestRecoverClaims_inFlightWithoutClaim_closedEndedLeftAlone(t *testing.T) {
+// A run no claim of the previous process names is left as it is, however
+// it stands: another live process on the same store may be running it.
+func TestRecoverClaims_inFlightWithoutClaim_leftToItsProcess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	runs := runstore.NewMemory()
-	doctor := domain.Run{ID: "run-doctor", Tool: domain.ToolDoctor, Repository: crashedRepo, State: domain.StateRunning, StartedAt: recoveredAt.Add(-time.Minute)}
-	queued := domain.Run{ID: "run-queued", Tool: domain.ToolVerify, Repository: crashedRepo, State: domain.StateQueued, StartedAt: recoveredAt.Add(-time.Minute)}
-	finished := recoveredAt.Add(-time.Second)
-	ended := domain.Run{ID: "run-ended", Tool: domain.ToolImplement, Repository: crashedRepo, State: domain.StateSucceeded, StartedAt: recoveredAt.Add(-time.Hour), FinishedAt: &finished}
-	for _, r := range []domain.Run{doctor, queued, ended} {
+	live := domain.Run{ID: "run-live", Tool: domain.ToolImplement, Repository: crashedRepo, Issue: 8, State: domain.StateRunning, StartedAt: recoveredAt.Add(-time.Minute)}
+	queued := domain.Run{ID: "run-queued", Tool: domain.ToolDoctor, Repository: crashedRepo, State: domain.StateQueued, StartedAt: recoveredAt.Add(-time.Minute)}
+	for _, r := range []domain.Run{live, queued, runningRun()} {
 		if err := runs.Put(ctx, r); err != nil {
 			t.Fatalf("Put %s: %v", r.ID, err)
 		}
 	}
 	deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
-	var stderr bytes.Buffer
-	if err := recoverClaims(ctx, nil, deps, &stderr); err != nil {
-		t.Fatalf("recoverClaims: %v", err)
+	claims, _ := crashedClaim(t, "c1a1")
+	for name, store := range map[string]*claim.Store{"with a journal": claims, "no claim store": nil} {
+		if err := recoverClaims(ctx, store, deps, &bytes.Buffer{}); err != nil {
+			t.Fatalf("%s: recoverClaims: %v", name, err)
+		}
 	}
 
-	for _, id := range []string{"run-doctor", "run-queued"} {
-		got, err := runs.Get(ctx, id)
-		if err != nil || got.State != domain.StateFailed || got.Reason != domain.ReasonInterrupted || got.FinishedAt == nil || !got.FinishedAt.Equal(recoveredAt) {
-			t.Errorf("%s after recovery = %q %q %v (%v), want failed interrupted at %v", id, got.State, got.Reason, got.FinishedAt, err, recoveredAt)
-		}
-		if !strings.Contains(stderr.String(), id) {
-			t.Errorf("stderr %q does not report %s closed", stderr.String(), id)
+	for _, want := range []domain.Run{live, queued} {
+		if got, err := runs.Get(ctx, want.ID); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("%s after recovery = %+v (%v), want it untouched", want.ID, got, err)
 		}
 	}
-	if got, err := runs.Get(ctx, "run-ended"); err != nil || !reflect.DeepEqual(got, ended) {
-		t.Errorf("ended run after recovery = %+v (%v), want it untouched", got, err)
+}
+
+// A recovery that fails partway still reports the claims it released
+// before failing: their refs and journal entries are gone either way.
+func TestRecoverClaims_recoverFailsPartway_releasedStillReported(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	claims, refs := crashedClaim(t, "c1a1")
+	if err := claims.Journal.Put(claim.Entry{Repository: "acme/unreachable", Issue: 9, RunID: "run-other", SHA: "d4d4"}); err != nil {
+		t.Fatalf("journal: %v", err)
 	}
+	claims.Refs = failingRepo{claimRefs: refs, repo: "acme/unreachable"}
+	deps := mcp.Deps{Runs: runstore.NewMemory(), Now: func() time.Time { return recoveredAt }}
+	var stderr bytes.Buffer
+
+	err := recoverClaims(ctx, claims, deps, &stderr)
+
+	if err == nil || !strings.Contains(stderr.String(), "left by run run-crashed") {
+		t.Fatalf("recoverClaims = %v, stderr %q; want the error and run-crashed's release reported", err, stderr.String())
+	}
+}
+
+// failingRepo is claimRefs with one repository GitHub cannot be reached
+// for.
+type failingRepo struct {
+	*claimRefs
+	repo string
+}
+
+var errUnreachable = errors.New("github unreachable")
+
+func (f failingRepo) GetRef(ctx context.Context, repo, ref string) (github.RefObject, error) {
+	if repo == f.repo {
+		return github.RefObject{}, errUnreachable
+	}
+	return f.claimRefs.GetRef(ctx, repo, ref)
 }
