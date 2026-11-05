@@ -43,8 +43,12 @@ type Run struct {
 	// Repository in owner/name form.
 	Repository string
 	Issue      int
-	State      RunState
-	StartedAt  time.Time
+	// Client is the name of the client that started the run, the one
+	// client forja.status answers it to. It is not written into the
+	// evidence or the commit statuses.
+	Client    string
+	State     RunState
+	StartedAt time.Time
 	// FinishedAt is nil until the run reaches a terminal state.
 	FinishedAt *time.Time
 	// Supersedes is the id of the run whose expired claim this run took
@@ -110,11 +114,18 @@ type Run struct {
 	DiffLines *int
 }
 
-// Validate reports whether the run is well formed: a non-empty ID, a known
-// tool and a known state.
+// ErrRunClientChanged is a record of a run under another client than the
+// one it was first recorded under: a run never changes hands.
+var ErrRunClientChanged = errors.New("run client changed")
+
+// Validate reports whether the run is well formed: a non-empty ID and
+// client, a known tool and a known state.
 func (r Run) Validate() error {
 	if r.ID == "" {
 		return errors.New("run id is empty")
+	}
+	if r.Client == "" {
+		return errors.New("run client is empty")
 	}
 	if !knownTool(r.Tool) {
 		return fmt.Errorf("unknown tool %q", r.Tool)

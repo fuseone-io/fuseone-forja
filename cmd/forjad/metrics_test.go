@@ -184,7 +184,7 @@ func TestStartMetrics_servesTheDepsRunStore(t *testing.T) {
 	t.Parallel()
 	store := runstore.NewMemory()
 	finished := time.Date(2026, 11, 2, 12, 1, 0, 0, time.UTC)
-	run := domain.Run{ID: "r1", Tool: domain.ToolImplement, Repository: "acme/api", State: domain.StateSucceeded,
+	run := domain.Run{ID: "r1", Tool: domain.ToolImplement, Repository: "acme/api", Client: "fuseone-pilot", State: domain.StateSucceeded,
 		StartedAt: finished.Add(-time.Minute), FinishedAt: &finished}
 	if err := store.Put(context.Background(), run); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -234,7 +234,7 @@ func probeOf(t *testing.T, url string) probe {
 func TestStartMetrics_probes_readyzFollowsServingHealthzAlwaysOK(t *testing.T) {
 	t.Parallel()
 	store := runstore.NewMemory()
-	run := domain.Run{ID: "run-secret-id", Tool: domain.ToolImplement, Repository: "acme/private-api",
+	run := domain.Run{ID: "run-secret-id", Tool: domain.ToolImplement, Repository: "acme/private-api", Client: "fuseone-pilot",
 		State: domain.StateRunning, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
 	if err := store.Put(context.Background(), run); err != nil {
 		t.Fatalf("Put: %v", err)

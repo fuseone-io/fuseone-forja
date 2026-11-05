@@ -10,6 +10,9 @@ import (
 // matches them all. Since and Until bound StartedAt, Since inclusive and
 // Until exclusive.
 type RunFilter struct {
+	// Client keeps the runs of that client only, compared exactly; empty
+	// is every client's, which only the operator may ask for.
+	Client     string
 	Repository string
 	Tool       Tool
 	State      RunState
@@ -35,6 +38,8 @@ func (f RunFilter) Validate() error {
 // Match reports whether r passes every field the filter sets.
 func (f RunFilter) Match(r Run) bool {
 	switch {
+	case f.Client != "" && r.Client != f.Client:
+		return false
 	case f.Repository != "" && r.Repository != f.Repository:
 		return false
 	case f.Tool != "" && r.Tool != f.Tool:

@@ -19,7 +19,7 @@ import (
 // listedRun is a run of repo by tool in state, started offset after
 // startedAt, finished a minute later when terminal.
 func listedRun(id, repo string, tool domain.Tool, state domain.RunState, offset time.Duration) domain.Run {
-	run := domain.Run{ID: id, Tool: tool, Repository: repo, Issue: 7, State: state, StartedAt: startedAt().Add(offset)}
+	run := domain.Run{ID: id, Tool: tool, Repository: repo, Issue: 7, State: state, StartedAt: startedAt().Add(offset), Client: testClient}
 	if state == domain.StateSucceeded || state == domain.StateFailed {
 		finished := run.StartedAt.Add(time.Minute)
 		run.FinishedAt = &finished
@@ -362,8 +362,8 @@ func TestStatus_byID_wireUnchangedByList(t *testing.T) {
 	if raw, ok := wire["list"]; ok {
 		t.Fatalf("list = %s on a by-id answer, want absent", raw)
 	}
-	if len(wire) != 24 {
-		t.Fatalf("by-id wire has %d keys, want 24: %v", len(wire), wire)
+	if len(wire) != 25 {
+		t.Fatalf("by-id wire has %d keys, want 25: %v", len(wire), wire)
 	}
 	if string(wire["id"]) != `"api-impl-ok"` {
 		t.Fatalf("id = %s, want the run asked for", wire["id"])

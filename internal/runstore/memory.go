@@ -24,7 +24,9 @@ func NewMemory() *Memory {
 }
 
 // Put stores the run under its ID, replacing any run already there. An
-// invalid run is rejected and leaves the store untouched.
+// invalid run, or one already recorded under another client
+// (domain.ErrRunClientChanged), is rejected and leaves the store
+// untouched.
 func (m *Memory) Put(_ context.Context, run domain.Run) error {
 	if err := run.Validate(); err != nil {
 		return fmt.Errorf("put run: %w", err)
@@ -33,6 +35,9 @@ func (m *Memory) Put(_ context.Context, run domain.Run) error {
 	defer m.mu.Unlock()
 	if m.runs == nil {
 		m.runs = make(map[string]domain.Run)
+	}
+	if prev, ok := m.runs[run.ID]; ok && prev.Client != run.Client {
+		return fmt.Errorf("put run %q: %w", run.ID, domain.ErrRunClientChanged)
 	}
 	m.runs[run.ID] = clone(run)
 	return nil

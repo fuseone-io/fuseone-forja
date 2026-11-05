@@ -21,7 +21,7 @@ var noon = time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 const weird = "we\"ird\\re\npo"
 
 func run(id, repo string, state domain.RunState, took time.Duration) domain.Run {
-	r := domain.Run{ID: id, Tool: domain.ToolImplement, Repository: repo, State: state, StartedAt: noon}
+	r := domain.Run{ID: id, Tool: domain.ToolImplement, Repository: repo, Client: "client-" + id, State: state, StartedAt: noon}
 	if state == domain.StateSucceeded || state == domain.StateFailed {
 		finished := noon.Add(took)
 		r.FinishedAt = &finished

@@ -15,6 +15,7 @@ func validRun() domain.Run {
 		Issue:      5,
 		State:      domain.StateRunning,
 		StartedAt:  time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC),
+		Client:     "fuseone-pilot",
 	}
 }
 
@@ -37,6 +38,7 @@ func TestRun_validate_rejectsEmptyIDUnknownToolAndUnknownState(t *testing.T) {
 		{name: "empty tool", mutate: func(r *domain.Run) { r.Tool = "" }, wantErr: true},
 		{name: "unknown state", mutate: func(r *domain.Run) { r.State = "paused" }, wantErr: true},
 		{name: "empty state", mutate: func(r *domain.Run) { r.State = "" }, wantErr: true},
+		{name: "no client", mutate: func(r *domain.Run) { r.Client = "" }, wantErr: true},
 	}
 
 	for _, tt := range tests {

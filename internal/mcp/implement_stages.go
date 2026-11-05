@@ -51,7 +51,7 @@ type flight struct {
 // its claim stage already over.
 func newFlight(deps Deps, t runTarget, c domain.Claim, claimed domain.Stage) *flight {
 	run := domain.Run{
-		ID: c.RunID, Tool: t.tool, Repository: c.Repository, Issue: c.Issue,
+		ID: c.RunID, Tool: t.tool, Repository: c.Repository, Issue: c.Issue, Client: t.client,
 		State: domain.StateRunning, StartedAt: claimed.StartedAt, Stages: []domain.Stage{claimed},
 	}
 	if c.Supersedes != nil {

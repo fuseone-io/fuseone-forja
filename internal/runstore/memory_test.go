@@ -22,6 +22,7 @@ func sampleRun(id string) domain.Run {
 		Issue:      5,
 		State:      domain.StateRunning,
 		StartedAt:  time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC),
+		Client:     "fuseone-pilot",
 	}
 }
 
@@ -52,6 +53,7 @@ func assertSameRun(t *testing.T, got, want domain.Run) {
 	scalarsMatch := got.ID == want.ID &&
 		got.Tool == want.Tool &&
 		got.Repository == want.Repository &&
+		got.Client == want.Client &&
 		got.Issue == want.Issue &&
 		got.State == want.State &&
 		got.StartedAt.Equal(want.StartedAt)
@@ -97,6 +99,7 @@ func TestMemory_putInvalidRun_rejectedAndNotStored(t *testing.T) {
 		{name: "empty id", mutate: func(r *domain.Run) { r.ID = "" }},
 		{name: "unknown tool", mutate: func(r *domain.Run) { r.Tool = "forja.deploy" }},
 		{name: "unknown state", mutate: func(r *domain.Run) { r.State = "paused" }},
+		{name: "no client", mutate: func(r *domain.Run) { r.Client = "" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -142,6 +145,55 @@ func TestMemory_putExistingID_replacesRun(t *testing.T) {
 	}
 	if got.FinishedAt == nil || !got.FinishedAt.Equal(finished) {
 		t.Fatalf("FinishedAt = %v, want %v", got.FinishedAt, finished)
+	}
+}
+
+// A run never changes hands: a record of an existing run under another
+// client is refused and the run stays its first client's, while the same
+// client may record it again.
+func TestMemory_putExistingIDOtherClient_refusedRunKeepsItsClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	first := sampleRun("run-1")
+	if err := store.Put(ctx, first); err != nil {
+		t.Fatalf("Put first: %v", err)
+	}
+	taken := first
+	taken.Client, taken.State = "fuseone-staging", domain.StateFailed
+	if err := store.Put(ctx, taken); !errors.Is(err, domain.ErrRunClientChanged) {
+		t.Fatalf("Put under another client = %v, want ErrRunClientChanged", err)
+	}
+	got, err := store.Get(ctx, "run-1")
+	if err != nil || got.Client != first.Client || got.State != first.State {
+		t.Fatalf("run = %+v, %v; want it unchanged, still %s's", got, err, first.Client)
+	}
+	again := first
+	again.State = domain.StateFailed
+	if err := store.Put(ctx, again); err != nil {
+		t.Fatalf("Put by the same client: %v", err)
+	}
+}
+
+// List keeps one client's runs when the filter names it, and every
+// client's under the zero filter.
+func TestMemory_listByClient_onlyThatClientsRuns(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store := runstore.NewMemory()
+	mine, theirs := sampleRun("run-mine"), sampleRun("run-theirs")
+	theirs.Client = "fuseone-staging"
+	for _, r := range []domain.Run{mine, theirs} {
+		if err := store.Put(ctx, r); err != nil {
+			t.Fatalf("Put %s: %v", r.ID, err)
+		}
+	}
+	got, err := store.List(ctx, domain.RunFilter{Client: mine.Client})
+	if err != nil || !reflect.DeepEqual(listIDs(got), []string{"run-mine"}) {
+		t.Fatalf("List(client %s) = %v, %v; want [run-mine]", mine.Client, listIDs(got), err)
+	}
+	if all, err := store.List(ctx, domain.RunFilter{}); err != nil || len(all) != 2 {
+		t.Fatalf("List(zero filter) = %v, %v; want both clients' runs", listIDs(all), err)
 	}
 }
 

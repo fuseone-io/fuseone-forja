@@ -14,6 +14,9 @@ import (
 // repository readers, the gates and agent runners, and the clock and id generator
 // injected so that the handlers stay deterministic.
 type Deps struct {
+	// Callers names the client of every tool call; with none, every call
+	// is refused.
+	Callers   Callers
 	Runs      RunStore
 	Contracts ContractReader
 	Claims    Claimer
@@ -50,13 +53,21 @@ type Deps struct {
 }
 
 // New builds the server with the five tools registered, each backed by
-// its handler.
+// its handler and served only to a client deps.Callers names, for the
+// repositories that client reaches.
 func New(deps Deps) *sdk.Server {
 	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
-	sdk.AddTool(server, doctorTool(), doctorHandler(deps))
-	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
-	sdk.AddTool(server, implementTool(), implementHandler(deps))
-	sdk.AddTool(server, verifyTool(), verifyHandler(deps))
-	sdk.AddTool(server, statusTool(), statusHandler(deps.Runs, deps.Prices))
+	c := deps.Callers
+	sdk.AddTool(server, doctorTool(), scoped(domain.ToolDoctor, c, named(func(in DoctorInput) string { return in.Repository }), doctorHandler(deps)))
+	sdk.AddTool(server, planTool(), scoped(domain.ToolPlan, c, named(func(in PlanInput) string { return in.Repository }), planHandler(deps.Cloner, deps.Issues)))
+	sdk.AddTool(server, implementTool(), scoped(domain.ToolImplement, c, named(func(in ImplementInput) string { return in.Repository }), implementHandler(deps)))
+	sdk.AddTool(server, verifyTool(), scoped(domain.ToolVerify, c, named(func(in VerifyInput) string { return in.Repository }), verifyHandler(deps)))
+	sdk.AddTool(server, statusTool(), scoped(domain.ToolStatus, c, statusRepository, statusHandler(deps.Runs, deps.Prices)))
 	return server
+}
+
+// statusRepository is the repository a list is filtered on; a call by id
+// or an unfiltered list names none.
+func statusRepository(in StatusInput) (string, bool) {
+	return in.Repository, in.Repository != ""
 }

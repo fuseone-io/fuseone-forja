@@ -146,7 +146,7 @@ func TestImplement_callerCancels_toolErrorNoWallClockReason(t *testing.T) {
 		NewID: func() string { return "run-cancelled" }, Now: func() time.Time { return now },
 	}
 
-	_, _, err := implementHandler(deps)(ctx, nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
+	_, _, err := implementHandler(deps)(withClient(ctx, domain.Client{Name: "test-client", Unrestricted: true}), nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("handler error = %v, want the cancellation as a tool error", err)
 	}
@@ -186,7 +186,7 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	_, out, err := implementHandler(deps)(ctx, nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
+	_, out, err := implementHandler(deps)(withClient(ctx, domain.Client{Name: "test-client", Unrestricted: true}), nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
 	if err != nil {
 		t.Fatalf("handler: %v", err)
 	}

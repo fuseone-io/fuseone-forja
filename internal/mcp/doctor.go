@@ -115,7 +115,7 @@ func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
 // passed, failed otherwise, with what the gateway refused and what the
 // registry proxy served either way.
 func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract, tree string) (domain.GateReport, string, error) {
-	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, State: domain.StateRunning, StartedAt: deps.Now()}
+	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, Client: clientOf(ctx).Name, State: domain.StateRunning, StartedAt: deps.Now()}
 	if err := deps.Runs.Put(ctx, run); err != nil {
 		return domain.GateReport{}, "", fmt.Errorf("record run: %w", err)
 	}
