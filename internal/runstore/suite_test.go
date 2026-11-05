@@ -11,8 +11,56 @@ import (
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
-	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 )
+
+// store is what forja.implement writes and forja.status reads, as every
+// run store implements it.
+type store interface {
+	Put(ctx context.Context, run domain.Run) error
+	Get(ctx context.Context, id string) (domain.Run, error)
+	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
+}
+
+// opener returns an empty store of its own to each call.
+type opener func(t *testing.T) store
+
+// behaviours is the contract every run store passes: what forja.status can
+// observe does not depend on where the runs are kept.
+var behaviours = []struct {
+	name string
+	test func(t *testing.T, open opener)
+}{
+	{"putThenGet_returnsEqualRun", test_putThenGet_returnsEqualRun},
+	{"unknownID_errRunNotFound", test_unknownID_errRunNotFound},
+	{"putInvalidRun_rejectedAndNotStored", test_putInvalidRun_rejectedAndNotStored},
+	{"putExistingID_replacesRun", test_putExistingID_replacesRun},
+	{"getReturnsCopy_callerMutationNotVisibleOnNextGet", test_getReturnsCopy_callerMutationNotVisibleOnNextGet},
+	{"putStoresCopy_callerMutationAfterPutNotVisible", test_putStoresCopy_callerMutationAfterPutNotVisible},
+	{"get_egressListNotShared", test_get_egressListNotShared},
+	{"proofLists_notSharedWithCaller", test_proofLists_notSharedWithCaller},
+	{"get_qaExcludedListNotShared", test_get_qaExcludedListNotShared},
+	{"get_inversionsNotShared", test_get_inversionsNotShared},
+	{"tokensAndReason_roundTripAsValues", test_tokensAndReason_roundTripAsValues},
+	{"limitsAndDiffLines_notSharedWithCaller", test_limitsAndDiffLines_notSharedWithCaller},
+	{"get_registryListNotShared", test_get_registryListNotShared},
+	{"stagesAndGateStreams_notSharedWithCaller", test_stagesAndGateStreams_notSharedWithCaller},
+	{"list_filtersSortsAndReturnsCopies", test_list_filtersSortsAndReturnsCopies},
+	{"list_noMatchEmptyNotNilAndInvalidFilterRejected", test_list_noMatchEmptyNotNilAndInvalidFilterRejected},
+	{"concurrentPutAndGet_noRace", test_concurrentPutAndGet_noRace},
+	{"everyField_roundTripsExactly", test_everyField_roundTripsExactly},
+	{"nulAndNanoseconds_roundTripExactly", test_nulAndNanoseconds_roundTripExactly},
+	{"emptyAndNilLists_keptApart", test_emptyAndNilLists_keptApart},
+	{"list_windowBoundsToTheNanosecond", test_list_windowBoundsToTheNanosecond},
+	{"list_toolAndStateFilters", test_list_toolAndStateFilters},
+}
+
+// runSuite runs every behaviour against stores open returns.
+func runSuite(t *testing.T, open opener) {
+	t.Helper()
+	for _, b := range behaviours {
+		t.Run(b.name, func(t *testing.T) { b.test(t, open) })
+	}
+}
 
 func sampleRun(id string) domain.Run {
 	return domain.Run{
@@ -25,10 +73,10 @@ func sampleRun(id string) domain.Run {
 	}
 }
 
-func TestMemory_putThenGet_returnsEqualRun(t *testing.T) {
+func test_putThenGet_returnsEqualRun(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 
 	finished := time.Date(2026, 10, 31, 12, 5, 0, 0, time.UTC)
 	want := sampleRun("run-1")
@@ -70,10 +118,10 @@ func sameFinishedAt(got, want *time.Time) bool {
 	return got.Equal(*want)
 }
 
-func TestMemory_unknownID_errRunNotFound(t *testing.T) {
+func test_unknownID_errRunNotFound(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	if err := store.Put(ctx, sampleRun("run-1")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -87,7 +135,7 @@ func TestMemory_unknownID_errRunNotFound(t *testing.T) {
 	}
 }
 
-func TestMemory_putInvalidRun_rejectedAndNotStored(t *testing.T) {
+func test_putInvalidRun_rejectedAndNotStored(t *testing.T, open opener) {
 	t.Parallel()
 
 	tests := []struct {
@@ -102,7 +150,7 @@ func TestMemory_putInvalidRun_rejectedAndNotStored(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			store := runstore.NewMemory()
+			store := open(t)
 			invalid := sampleRun("run-invalid")
 			tt.mutate(&invalid)
 
@@ -116,10 +164,10 @@ func TestMemory_putInvalidRun_rejectedAndNotStored(t *testing.T) {
 	}
 }
 
-func TestMemory_putExistingID_replacesRun(t *testing.T) {
+func test_putExistingID_replacesRun(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 
 	first := sampleRun("run-1")
 	if err := store.Put(ctx, first); err != nil {
@@ -145,10 +193,10 @@ func TestMemory_putExistingID_replacesRun(t *testing.T) {
 	}
 }
 
-func TestMemory_getReturnsCopy_callerMutationNotVisibleOnNextGet(t *testing.T) {
+func test_getReturnsCopy_callerMutationNotVisibleOnNextGet(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 
 	finished := time.Date(2026, 10, 31, 12, 5, 0, 0, time.UTC)
 	original := sampleRun("run-1")
@@ -177,10 +225,10 @@ func TestMemory_getReturnsCopy_callerMutationNotVisibleOnNextGet(t *testing.T) {
 	}
 }
 
-func TestMemory_putStoresCopy_callerMutationAfterPutNotVisible(t *testing.T) {
+func test_putStoresCopy_callerMutationAfterPutNotVisible(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 
 	want := time.Date(2026, 10, 31, 12, 5, 0, 0, time.UTC)
 	finished := want
@@ -203,10 +251,10 @@ func TestMemory_putStoresCopy_callerMutationAfterPutNotVisible(t *testing.T) {
 
 // The denials are evidence: neither the writer after Put nor a reader
 // after Get can change what the store holds through a shared list.
-func TestMemory_get_egressListNotShared(t *testing.T) {
+func test_get_egressListNotShared(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
 	want := domain.EgressDenial{At: at, Kind: domain.EgressConnect, Destination: "example.com:443"}
 	original := sampleRun("run-1")
@@ -235,10 +283,10 @@ func TestMemory_get_egressListNotShared(t *testing.T) {
 
 // The changed paths are evidence: neither list is shared with the writer
 // after Put nor with a reader after Get.
-func TestMemory_proofLists_notSharedWithCaller(t *testing.T) {
+func test_proofLists_notSharedWithCaller(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	proof := domain.FileChange{Path: "Makefile", Kind: domain.ChangeModified, Added: 1}
 	human := domain.FileChange{Path: ".github/CODEOWNERS", Kind: domain.ChangeAdded, Added: 2}
 	original := sampleRun("run-1")
@@ -267,10 +315,10 @@ func TestMemory_proofLists_notSharedWithCaller(t *testing.T) {
 
 // The excluded paths are what a verify run's verdict was reached on: no
 // writer after Put nor reader after Get changes them through a shared list.
-func TestMemory_get_qaExcludedListNotShared(t *testing.T) {
+func test_get_qaExcludedListNotShared(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	original := sampleRun("run-1")
 	original.Tool = domain.ToolVerify
 	original.QA = domain.QA{Verdict: domain.VerdictNotVerifiable, Reason: domain.NotVerifiableOnlyExcludedPaths, Excluded: []string{"README.md"}}
@@ -299,10 +347,10 @@ func TestMemory_get_qaExcludedListNotShared(t *testing.T) {
 // The inversions are what a verdict that bites or does not bite was
 // reached on: no reader after Get changes their paths, their gates or
 // their streams in the store.
-func TestMemory_get_inversionsNotShared(t *testing.T) {
+func test_get_inversionsNotShared(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	inversions := func() []domain.Inversion {
 		return []domain.Inversion{{
 			Branch: "forja-qa/1", Paths: []string{"internal/cost.go"}, Admitted: true, Outcome: domain.InversionBit,
@@ -341,10 +389,10 @@ func TestMemory_get_inversionsNotShared(t *testing.T) {
 
 // The tokens and the reason are values: what Get returns is what was put,
 // and a reader's copy is its own.
-func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
+func test_tokensAndReason_roundTripAsValues(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	run := sampleRun("run-1")
 	run.Tokens = domain.TokenUsage{Input: 1, CacheCreation: 2, CacheRead: 4, Output: 8}
 	run.Reason = domain.ReasonTokenCap
@@ -365,10 +413,10 @@ func TestMemory_tokensAndReason_roundTripAsValues(t *testing.T) {
 // The limits and the measured diff are values too: a reader changing its
 // copy, or the writer changing the run after Put, changes neither what the
 // store holds.
-func TestMemory_limitsAndDiffLines_notSharedWithCaller(t *testing.T) {
+func test_limitsAndDiffLines_notSharedWithCaller(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	run := sampleRun("run-1")
 	lines := 120
 	run.Limits, run.DiffLines = domain.Limits{WallClock: 20 * time.Minute, MaxDiffLines: 400}, &lines
@@ -389,10 +437,10 @@ func TestMemory_limitsAndDiffLines_notSharedWithCaller(t *testing.T) {
 
 // The registry accesses are evidence too, under the same rule as the
 // denials.
-func TestMemory_get_registryListNotShared(t *testing.T) {
+func test_get_registryListNotShared(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	at := time.Date(2026, 10, 31, 12, 1, 0, 0, time.UTC)
 	want := domain.RegistryAccess{At: at, Registry: "ghcr.io/my-org", Path: "/pkg", Outcome: domain.RegistryAllowed, Status: 200}
 	original := sampleRun("run-1")
@@ -470,10 +518,10 @@ func scribble(run domain.Run) {
 // The stages, the gate report and every attempt are evidence: neither the
 // writer after Put nor a reader after Get can change what the store holds
 // through a shared slice, byte stream or timestamp.
-func TestMemory_stagesAndGateStreams_notSharedWithCaller(t *testing.T) {
+func test_stagesAndGateStreams_notSharedWithCaller(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	want := stagedRun()
 	written := stagedRun()
 	if err := store.Put(ctx, written); err != nil {
@@ -504,21 +552,6 @@ func assertStagedRun(t *testing.T, when string, got, want domain.Run) {
 	}
 }
 
-func TestMemory_zeroValue_putThenGet(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	var store runstore.Memory
-
-	if err := store.Put(ctx, sampleRun("run-1")); err != nil {
-		t.Fatalf("Put on the zero value: %v", err)
-	}
-	got, err := store.Get(ctx, "run-1")
-	if err != nil {
-		t.Fatalf("Get on the zero value: %v", err)
-	}
-	assertSameRun(t, got, sampleRun("run-1"))
-}
-
 // listedRun is sampleRun in repo, started offset after noon.
 func listedRun(id, repo string, offset time.Duration) domain.Run {
 	run := stagedRun()
@@ -538,10 +571,10 @@ func listIDs(runs []domain.Run) []string {
 
 // List returns the runs the filter matches, newest start first and, on the
 // same start, highest id first; and what it returns is a copy.
-func TestMemory_list_filtersSortsAndReturnsCopies(t *testing.T) {
+func test_list_filtersSortsAndReturnsCopies(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 	for _, r := range []domain.Run{
 		listedRun("run-a", "acme/api", 0),
 		listedRun("run-c", "acme/api", time.Hour),
@@ -577,24 +610,27 @@ func TestMemory_list_filtersSortsAndReturnsCopies(t *testing.T) {
 	}
 }
 
-func TestMemory_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T) {
+func test_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	var store runstore.Memory
+	store := open(t)
+	if err := store.Put(ctx, sampleRun("run-1")); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
 
 	got, err := store.List(ctx, domain.RunFilter{Repository: "acme/none"})
 	if err != nil || got == nil || len(got) != 0 {
-		t.Fatalf("List on the zero value = %#v, %v; want an empty slice", got, err)
+		t.Fatalf("List(no match) = %#v, %v; want an empty slice", got, err)
 	}
 	if _, err := store.List(ctx, domain.RunFilter{State: "paused"}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("List(unknown state) = %v, want an error naming it", err)
 	}
 }
 
-func TestMemory_concurrentPutAndGet_noRace(t *testing.T) {
+func test_concurrentPutAndGet_noRace(t *testing.T, open opener) {
 	t.Parallel()
 	ctx := context.Background()
-	store := runstore.NewMemory()
+	store := open(t)
 
 	const workers = 16
 	var wg sync.WaitGroup
