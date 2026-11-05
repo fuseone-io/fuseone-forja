@@ -94,10 +94,37 @@ flowchart LR
    pass and, in a later pass, reads `forja.status` or the PR's `forja/gates`
    and `forja/qa` statuses. A role that must stay untainted reads only the
    statuses (PRD item 5).
-6. **A repeated call is the same run.** The call carries the caller's key
-   (work-item reference and run id, PRD item 2). Same key, same `run_id`;
-   that closes the "unknown outcome" window of NT-011 and #139 on Forja's
-   side, and joins Forja's cost to FuseOne's card.
+6. **A repeated call is the same run; a different operation is not.** Two
+   things the PRD's "caller key" (item 2) merged are kept apart:
+   - **Correlation** is `caller_ref`: the work-item reference and the
+     caller's own run id, opaque to Forja. It is recorded on the run,
+     returned by `forja.status` and used to join Forja's cost to FuseOne's
+     card. It **never** deduplicates. Many runs can carry the same
+     `caller_ref`.
+   - **Idempotency** is `idempotency_key`, chosen by the caller for one
+     operation: one attempt at one tool call with one set of arguments. Its
+     scope is the client (ADR 0052 §3), so two clients' keys never collide.
+     The operation's identity is `(client, idempotency_key)`. Forja stores it
+     with the `run_id` and a SHA-256 of the canonical arguments (tool name
+     plus arguments, minus `idempotency_key` and `caller_ref`). It is stored
+     in the durable run store, in the same transaction that creates the run,
+     and kept as long as the run's record. The key is checked **before**
+     the contract is read or a claim attempted.
+   - **Same key, same arguments**: the same `run_id`, in whatever state the
+     run is. No second run, no second claim. That closes the "unknown
+     outcome" window of NT-011 and #139 on Forja's side.
+   - **Same key, different arguments**: a tool error,
+     `idempotency_key_conflict`, naming the existing `run_id`. No run, no
+     claim.
+
+   *Implementation, then correction.* The Developer calls `forja.implement`
+   on issue 7 with key `K1`; run A opens the PR. The reviewer finds a
+   problem, and the Developer calls `forja.implement` again with `branch`
+   and `finding` and a new key `K2`; run B pushes the fix. Both carry the
+   same `caller_ref`. A retry of the correction with `K2` returns B. Reusing
+   `K1` for the correction is a conflict, not a silent return of A. With the
+   old "work item plus caller run id" key, a correction issued from the same
+   FuseOne run would have returned A and never run.
 
 Forja's process can restart while a run is in flight, so the run store must be
 durable (Postgres), and claims recovery — already in `serve` — must find the
@@ -126,7 +153,7 @@ is installed.
 
 | Slice | Notes |
 |---|---|
-| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS up to `forjad` (ingress re-encrypts, or internal CA), which repositories a client may name |
+| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS up to `forjad` (ingress re-encrypts, or internal CA), which repositories a client may name, what a response may name, protocol versions 2026-07-28 and 2025-11-25 with cancellation per version, `Origin` allowlist |
 | `forjad serve` over HTTP (`FORJA_MCP_ADDR`) with caller authentication | Same tools, same schemas; stdio unchanged |
 | Durable run store on Postgres | Real container in tests; claim recovery reads it |
 | Health and readiness endpoints | `/healthz` and `/readyz` on the metrics listener (ADR 0052) |
@@ -136,7 +163,8 @@ is installed.
 
 **Done when:** an MCP client outside the pool lists Forja's tools over HTTPS
 with a valid bearer, is refused without one, and a run survives a `forjad`
-restart with its state readable in `forja.status`.
+restart with its state readable in `forja.status`. ADR 0052's acceptance
+criteria (A, C, P and O rows) pass against the real listener.
 
 ### M2 · Long runs as a contract (before v1.0.0)
 
@@ -147,15 +175,28 @@ These change tool schemas. ADR 0051 freezes them under semver, so they land
 |---|---|
 | `implement` and `verify` return the `run_id` at start; `status` reports the outcome | 4 |
 | `forja.cancel` (a write tool) stops the run, tears down the workspace, releases the claim | 4 |
-| Caller key: work-item reference and caller run id; same key returns the same run | 2 |
+| `caller_ref` for correlation and cost (never deduplicates); `idempotency_key` per client and per operation, stored with an arguments hash in the durable store; same key and arguments return the same run, different arguments are `idempotency_key_conflict` | 2 |
 | Caller budget and deadline; Forja applies the lower of the caller's and the contract's | 3 |
 | `status` separates structured fields (state, exit codes, SHAs, cost) from agent-influenced ones (logs, PR text) | 5 |
 | Admission: a run refused with a named error when the pool is at capacity | Back-pressure, not scheduling |
 | Tag v1.0.0 | ADR 0051 §1 |
 
-**Done when:** a client starts a run, disconnects, reconnects after a `forjad`
-restart, and reads the same run to its end; a
-second `implement` with the same key returns the first `run_id`.
+**Done when:**
+
+- A client starts a run, disconnects, reconnects after a `forjad` restart,
+  and reads the same run to its end.
+- A second `implement` with the same key and arguments returns the first
+  `run_id`, and no second claim commit appears in the repository. This holds
+  across a `forjad` restart.
+- The same key with a different `finding` returns `idempotency_key_conflict`
+  naming the first `run_id`, and no run is recorded.
+- Two clients using the same key on the same issue get two different
+  outcomes: one run, and one held-claim error without the other's `run_id`
+  (ADR 0052 §4).
+- The implementation-then-correction scenario above yields two runs with one
+  `caller_ref`, and `forja.status` filtered by that `caller_ref` lists both.
+- `forja.cancel` stops a run on both protocol versions, which closes the
+  2025-11-25 gap of ADR 0052 §7.
 
 ### M3 · The factory uses Forja (Gate 1)
 
@@ -167,7 +208,7 @@ Mostly fuseone-agents work; Forja's part is #15, rewritten for HTTP.
 | Developer role: a card that needs a build calls `forja.implement` instead of `factory:needs-runtime`; a later pass reads the outcome | fuseone-agents |
 | QA role: `forja.verify` on the PR's head | fuseone-agents |
 | Cancelling a FuseOne run calls `forja.cancel` | fuseone-agents |
-| Cost per card includes Forja's minutes and tokens, joined on the caller key | fuseone-agents |
+| Cost per card includes Forja's minutes and tokens, joined on `caller_ref` | fuseone-agents |
 | Ruleset requires `forja/gates` and `forja/qa` pinned to the Forja App's `integration_id`, beside the role's review | fuseone-agents #207 |
 | Register Forja in the pilot area's FuseOne; one card end to end in copilot mode | Forja #15 |
 
@@ -196,8 +237,9 @@ failures, two areas beyond the pilot.
 | Risk | Mitigation |
 |---|---|
 | The async change slips past v1.0.0 and becomes a major | M2 is ordered before the tag; golden tests catch it |
-| FuseOne's 60 s call ceiling and 2-minute worker lease under a blocking call | Async runs (M2); until then, `CallTimeout` raised on the Forja entry and a short pilot `wall_clock` |
-| A shared `forjad` serving several clients leaks one client's repository to another | ADR 0052 §4: a per-client repository allowlist, and `forja.status` scoped to the caller's runs; the App's installations remain the outer bound (ADR 0051 §4) |
+| FuseOne's 60 s call ceiling and 2-minute worker lease under a blocking call | Async runs (M2); until then, `CallTimeout` raised on the Forja entry and a short pilot `wall_clock`. A timed-out call stops the run on 2026-07-28; on 2025-11-25 the run finishes and is read in `forja.status` (ADR 0052 §7) |
+| A shared `forjad` serving several clients leaks one client's repository or runs to another | ADR 0052 §4: a per-client repository allowlist; `forja.status`, held-claim errors and `supersedes` name only the caller's runs; the App's installations remain the outer bound (ADR 0051 §4). What is written into a shared repository (claim refs, PR, evidence) is visible to its readers by design |
+| A browser page reaches `forjad` through a user's network position | ADR 0052 §8: `Origin` allowlist, `403` before the bearer check |
 | Polling `forja.status` from the agent loop costs tokens | The factory's scheduled passes poll once per pass; a role that only needs the verdict reads the commit status |
 | The dedicated pool cannot run per-run `--internal` networks in the target cluster | Human check in ADR 0026; blocks M1's chart |
 
