@@ -307,22 +307,41 @@ ProtocolVersion` pins the version) or plain HTTP against a real listener.
 ## What only the human can do
 
 - [ ] Ratify this ADR and change its status to `accepted`.
-- [ ] Confirm which protocol version fuseone-agents' MCP client negotiates.
-      On 2025-11-25 a disconnect does not stop a run (§7). Decide whether
-      that is acceptable until `forja.cancel` lands, or whether the HTTP
-      server drops 2025-11-25.
-- [ ] Confirm that FuseOne's worker sends no `Origin`, and whether any
-      browser-based client is expected (it would need an entry in
-      `FORJA_MCP_ALLOWED_ORIGINS`).
-- [ ] Confirm that repository-level visibility of run ids (claim refs,
+- [ ] Decide the protocol versions the pilot's HTTP server accepts (§7).
+      **Evidence**, fuseone-agents at `f1fa871` (0.91.0): an `http` server in
+      the default `auto` protocol mode uses go-sdk v1.7.0's default client
+      version, which is 2026-07-28 (`cmd/agentd/mcp.go`, `transportFor`;
+      `legacy` is opt-in per server). Caveat: the reconciler can replace
+      `auto` with a mode recorded for that server (`withProtocol`), so the
+      Forja entry must stay `auto`.
+      **Recommendation, not yet decided:** the pilot's HTTP server accepts
+      only `["2026-07-28"]`, on condition that integration test C1 passes
+      against fuseone-agents' real client. This avoids accepting runs that
+      outlive a dropped caller on 2025-11-25.
+- [ ] Decide the pilot's `FORJA_MCP_ALLOWED_ORIGINS` (§8).
+      **Evidence**, same commit: the `Token` credential's transport sets
+      only `Authorization` (`cmd/agentd/mcp.go`, `bearer.RoundTrip`). No
+      code path in `cmd/agentd` sets `Origin`. A `Headers` credential sends
+      whatever headers the operator configures, so it could carry one.
+      **Recommendation, not yet decided:** keep the list empty while no
+      browser-based client is needed.
+- [ ] Integration test in the pilot's environment, still pending: fuseone-agents'
+      worker, through the real ingress, negotiates 2026-07-28 with Forja,
+      sends no `Origin`, and passes A1, C1 and O3. The code evidence above
+      does not replace this test.
+- [ ] Decide whether repository-level visibility of run ids (claim refs,
       evidence report) is acceptable for repositories shared between
       clients (§4).
+      **Recommendation, not yet decided:** accept it, keeping per-client
+      authorisation on every query. Knowing a `run_id` grants nothing.
 - [ ] Decide where TLS ends in the pilot's cluster: internal ingress that
       re-encrypts, or the Service with an internal CA that FuseOne trusts.
 - [ ] Generate FuseOne's bearer, put its hash in the clients file through the
       vault, and store the bearer in FuseOne's `Token` credential.
 - [ ] Confirm with the fuseone-agents maintainers that their MCP client talks
-      to a stateless Streamable HTTP server (no `Mcp-Session-Id`).
+      to a stateless Streamable HTTP server (no `Mcp-Session-Id`). Their
+      client disables the standalone SSE stream (`DisableStandaloneSSE`),
+      which suits a stateless server; the integration test above settles it.
 
 ## References
 
@@ -332,6 +351,7 @@ ProtocolVersion` pins the version) or plain HTTP against a real listener.
 - [Roadmap](../roadmap.md), M1 and M2.
 - fuseone-agents: `docs/NT-008-a-catalogue-by-shape.md` §4,
   `internal/domain/mcp_credentials.go`, `internal/githubapp/tls.go`,
-  issue #252.
+  issue #252; at commit `f1fa871` (0.91.0), `cmd/agentd/mcp.go`
+  (`transportFor`, `bearer.RoundTrip`, `withProtocol`).
 - MCP Streamable HTTP transport; `go-sdk` v1.8.0 `mcp/streamable.go` and
   `auth/auth.go`.
