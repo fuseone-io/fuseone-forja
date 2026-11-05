@@ -54,6 +54,22 @@ func Migrations() []Migration {
 	return out
 }
 
+// ErrSchemaNewer means the database was migrated by a newer binary than
+// this one, which cannot know what the newer schema changed.
+var ErrSchemaNewer = errors.New("run store schema is newer than this binary: run the binary that migrated it")
+
+// checkVersion accepts only the schema this binary knows: an older one
+// needs forjad migrate, a newer one a newer binary.
+func checkVersion(version, want int) error {
+	switch {
+	case version < want:
+		return fmt.Errorf("schema version %d, this binary needs %d: %w", version, want, ErrSchemaNotMigrated)
+	case version > want:
+		return fmt.Errorf("schema version %d, this binary knows up to %d: %w", version, want, ErrSchemaNewer)
+	}
+	return nil
+}
+
 func latestVersion() int {
 	all := Migrations()
 	return all[len(all)-1].Version

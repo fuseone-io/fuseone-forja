@@ -42,9 +42,9 @@ func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 		pool.Close()
 		return nil, fmt.Errorf("open run store: %w", err)
 	}
-	if want := latestVersion(); version != want {
+	if err := checkVersion(version, latestVersion()); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("open run store: schema version %d, this binary needs %d: %w", version, want, ErrSchemaNotMigrated)
+		return nil, fmt.Errorf("open run store: %w", err)
 	}
 	return &Postgres{pool: pool}, nil
 }

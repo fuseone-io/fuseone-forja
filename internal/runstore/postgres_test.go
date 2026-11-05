@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore"
 	"github.com/fuseone-io/fuseone-forja/internal/runstore/pgtest"
@@ -73,6 +75,7 @@ var postgresScenarios = []struct {
 	{"migrateTwice_secondAppliesNothingAndKeepsRuns", testPostgres_migrateTwice_secondAppliesNothingAndKeepsRuns},
 	{"concurrentMigrate_allSucceedSchemaOnce", testPostgres_concurrentMigrate_allSucceedSchemaOnce},
 	{"unmigrated_openRefusedNamingMigrate", testPostgres_unmigrated_openRefusedNamingMigrate},
+	{"newerSchema_openRefusedNotNamingMigrate", testPostgres_newerSchema_openRefusedNotNamingMigrate},
 	{"unreachable_errorWithholdsPassword", testPostgres_unreachable_errorWithholdsPassword},
 }
 
@@ -155,6 +158,30 @@ func testPostgres_unmigrated_openRefusedNamingMigrate(t *testing.T, srv *pgtest.
 	}
 	if !errors.Is(err, runstore.ErrSchemaNotMigrated) || !strings.Contains(err.Error(), "forjad migrate") {
 		t.Fatalf("OpenPostgres error = %v, want ErrSchemaNotMigrated naming forjad migrate", err)
+	}
+}
+
+// A database a newer binary migrated is refused with its own error: running
+// forjad migrate from this binary cannot help, so the error does not say to.
+func testPostgres_newerSchema_openRefusedNotNamingMigrate(t *testing.T, srv *pgtest.Server) {
+	dsn := srv.Database(t)
+	migrate(t, dsn)
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	if _, err := conn.Exec(ctxFor(t), "INSERT INTO schema_migrations (version) VALUES (9999)"); err != nil {
+		t.Fatalf("record a newer migration: %v", err)
+	}
+
+	p, err := runstore.OpenPostgres(ctxFor(t), dsn)
+	if err == nil {
+		p.Close()
+		t.Fatal("OpenPostgres accepted a schema newer than the binary")
+	}
+	if !errors.Is(err, runstore.ErrSchemaNewer) || errors.Is(err, runstore.ErrSchemaNotMigrated) || strings.Contains(err.Error(), "forjad migrate") {
+		t.Fatalf("OpenPostgres error = %v, want ErrSchemaNewer without the advice to migrate", err)
 	}
 }
 

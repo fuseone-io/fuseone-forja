@@ -181,17 +181,17 @@ func TestRecoverClaims_runEndedOrUnknown_leftAsIs(t *testing.T) {
 	}
 }
 
-// brokenRuns is a store that answers neither reads nor writes.
+// brokenRuns is a store that answers neither lists nor writes.
 type brokenRuns struct {
 	*runstore.Memory
-	getErr, putErr error
+	listErr, putErr error
 }
 
-func (b brokenRuns) Get(ctx context.Context, id string) (domain.Run, error) {
-	if b.getErr != nil {
-		return domain.Run{}, b.getErr
+func (b brokenRuns) List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error) {
+	if b.listErr != nil {
+		return nil, b.listErr
 	}
-	return b.Memory.Get(ctx, id)
+	return b.Memory.List(ctx, f)
 }
 
 func (b brokenRuns) Put(ctx context.Context, run domain.Run) error {
@@ -201,20 +201,24 @@ func (b brokenRuns) Put(ctx context.Context, run domain.Run) error {
 	return b.Memory.Put(ctx, run)
 }
 
-// A store that cannot say what the crashed run was, or cannot record it
+// A store that cannot say which runs were in flight, or cannot record one
 // ended, stops the start before the claim is released: serving on would
 // leave the run running, and the next start finds the journal as it was.
-func TestRecoverClaims_storeFails_startupErrorNamingTheRun(t *testing.T) {
+func TestRecoverClaims_storeFails_startupErrorClaimKept(t *testing.T) {
 	t.Parallel()
 	errStore := errors.New("store down")
-	tests := map[string]brokenRuns{
-		"read fails":  {getErr: errStore},
-		"write fails": {putErr: errStore},
+	tests := map[string]struct {
+		runs brokenRuns
+		want string
+	}{
+		"list fails":  {brokenRuns{listErr: errStore}, "recover runs"},
+		"write fails": {brokenRuns{putErr: errStore}, "run-crashed"},
 	}
-	for name, runs := range tests {
+	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
+			runs := tt.runs
 			runs.Memory = runstore.NewMemory()
 			if err := runs.Memory.Put(ctx, runningRun()); err != nil {
 				t.Fatalf("Put: %v", err)
@@ -222,8 +226,8 @@ func TestRecoverClaims_storeFails_startupErrorNamingTheRun(t *testing.T) {
 			deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
 			claims, refs := crashedClaim(t, "c1a1")
 			err := recoverClaims(ctx, claims, deps, &bytes.Buffer{})
-			if !errors.Is(err, errStore) || !strings.Contains(err.Error(), "run-crashed") {
-				t.Fatalf("recoverClaims = %v, want the store's error naming run-crashed", err)
+			if !errors.Is(err, errStore) || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("recoverClaims = %v, want the store's error naming %s", err, tt.want)
 			}
 			entries, jerr := claims.Journal.List()
 			if _, rerr := refs.GetRef(ctx, crashedRepo, domain.ClaimRef(7)); rerr != nil || jerr != nil || len(entries) != 1 {
@@ -235,9 +239,10 @@ func TestRecoverClaims_storeFails_startupErrorNamingTheRun(t *testing.T) {
 
 // A journaled claim whose ref vanished or moved to another run is still a
 // run of the process that died: the run is closed, the ref left alone.
+// No claim store at all, as without credentials, closes the runs too.
 func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 	t.Parallel()
-	tests := map[string]string{"ref vanished": "", "ref moved on": "b2b2"}
+	tests := map[string]string{"ref vanished": "", "ref moved on": "b2b2", "no claim store": "none"}
 	for name, refSHA := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -248,6 +253,9 @@ func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 			}
 			deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
 			claims, refs := crashedClaim(t, refSHA)
+			if refSHA == "none" {
+				claims, refSHA = nil, ""
+			}
 			if err := recoverClaims(ctx, claims, deps, &bytes.Buffer{}); err != nil {
 				t.Fatalf("recoverClaims: %v", err)
 			}
@@ -260,5 +268,42 @@ func TestRecoverClaims_refNotOurs_runStillClosedRefUntouched(t *testing.T) {
 				t.Fatalf("the other run's ref = %+v (%v), want it untouched at %s", obj, err, refSHA)
 			}
 		})
+	}
+}
+
+// Every run left queued or running is closed, whether or not a claim was
+// journaled for it: a forja.doctor run holds none, and an implement run
+// that died after its release but before its last record has lost its
+// entry. A run that ended, and another tool's ended run, are left alone.
+func TestRecoverClaims_inFlightWithoutClaim_closedEndedLeftAlone(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	runs := runstore.NewMemory()
+	doctor := domain.Run{ID: "run-doctor", Tool: domain.ToolDoctor, Repository: crashedRepo, State: domain.StateRunning, StartedAt: recoveredAt.Add(-time.Minute)}
+	queued := domain.Run{ID: "run-queued", Tool: domain.ToolVerify, Repository: crashedRepo, State: domain.StateQueued, StartedAt: recoveredAt.Add(-time.Minute)}
+	finished := recoveredAt.Add(-time.Second)
+	ended := domain.Run{ID: "run-ended", Tool: domain.ToolImplement, Repository: crashedRepo, State: domain.StateSucceeded, StartedAt: recoveredAt.Add(-time.Hour), FinishedAt: &finished}
+	for _, r := range []domain.Run{doctor, queued, ended} {
+		if err := runs.Put(ctx, r); err != nil {
+			t.Fatalf("Put %s: %v", r.ID, err)
+		}
+	}
+	deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
+	var stderr bytes.Buffer
+	if err := recoverClaims(ctx, nil, deps, &stderr); err != nil {
+		t.Fatalf("recoverClaims: %v", err)
+	}
+
+	for _, id := range []string{"run-doctor", "run-queued"} {
+		got, err := runs.Get(ctx, id)
+		if err != nil || got.State != domain.StateFailed || got.Reason != domain.ReasonInterrupted || got.FinishedAt == nil || !got.FinishedAt.Equal(recoveredAt) {
+			t.Errorf("%s after recovery = %q %q %v (%v), want failed interrupted at %v", id, got.State, got.Reason, got.FinishedAt, err, recoveredAt)
+		}
+		if !strings.Contains(stderr.String(), id) {
+			t.Errorf("stderr %q does not report %s closed", stderr.String(), id)
+		}
+	}
+	if got, err := runs.Get(ctx, "run-ended"); err != nil || !reflect.DeepEqual(got, ended) {
+		t.Errorf("ended run after recovery = %+v (%v), want it untouched", got, err)
 	}
 }
