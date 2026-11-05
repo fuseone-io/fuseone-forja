@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -240,10 +241,20 @@ func recordingGit(t *testing.T) (bin, args, env string) {
 	env = filepath.Join(dir, "env")
 	bin = filepath.Join(dir, "git")
 	script := "#!/bin/sh\nprintf '%s\\n' \"$@\" >> '" + args + "'\nenv >> '" + env + "'\nexec git \"$@\"\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+	if err := writeExecutable(bin, script); err != nil {
 		t.Fatalf("write stand-in: %v", err)
 	}
 	return bin, args, env
+}
+
+// writeExecutable writes an executable while holding syscall.ForkLock, so
+// that no parallel test forks while the file is open for writing. A forked
+// child inherits the write descriptor until it execs, and exec'ing the
+// file in that window fails on Linux with "text file busy" (golang/go#22315).
+func writeExecutable(path, content string) error {
+	syscall.ForkLock.Lock()
+	defer syscall.ForkLock.Unlock()
+	return os.WriteFile(path, []byte(content), 0o755)
 }
 
 func TestCloner_tokenInEnvironmentNotArgumentsNotConfig(t *testing.T) {
