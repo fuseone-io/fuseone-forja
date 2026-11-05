@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +22,10 @@ var (
 // repositoryPattern is owner/name or owner/*: a wildcard stands for the
 // whole name, never for the owner or part of a name.
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+|\*)$`)
+
+// namePattern keeps a client's name to one token, so that it cannot split
+// or forge a log line.
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
 // hexRun is what a decoding error may echo of a misplaced hash, as a
 // value or as a key; it is dropped before the error is returned.
@@ -52,24 +57,37 @@ func Parse(src []byte) (Registry, error) {
 		return Registry{}, ErrNoClients
 	}
 	reg := Registry{clients: make([]Client, 0, len(f.Clients))}
-	seen := make(map[[sha256.Size]byte]bool, len(f.Clients))
 	for i, e := range f.Clients {
 		c, err := e.client()
+		if err == nil {
+			err = reg.admits(c)
+		}
 		if err != nil {
 			return Registry{}, fmt.Errorf("%w: clients[%d]: %w", ErrMalformed, i, err)
 		}
-		if seen[c.tokenSHA256] {
-			return Registry{}, fmt.Errorf("%w: clients[%d] (%s): token_sha256 is already another entry's", ErrMalformed, i, c.Name)
-		}
-		seen[c.tokenSHA256] = true
 		reg.clients = append(reg.clients, c)
 	}
 	return reg, nil
 }
 
+// admits refuses a hash already on another entry, and a rotation entry
+// whose repositories or rotation owner differ from the name's first
+// entry: one name is one scope, whichever bearer is presented.
+func (r Registry) admits(c Client) error {
+	for _, prev := range r.clients {
+		if prev.tokenSHA256 == c.tokenSHA256 {
+			return fmt.Errorf("(%s): token_sha256 is already another entry's", c.Name)
+		}
+		if prev.Name == c.Name && (!slices.Equal(prev.Repositories, c.Repositories) || prev.RotationOwner != c.RotationOwner) {
+			return fmt.Errorf("(%s): repositories and rotation_owner differ from the name's other entry", c.Name)
+		}
+	}
+	return nil
+}
+
 func (e entry) client() (Client, error) {
-	if e.Name == "" {
-		return Client{}, errors.New("name is empty")
+	if !namePattern.MatchString(e.Name) {
+		return Client{}, errors.New("name is not letters, digits, '.', '_' or '-'")
 	}
 	sum, err := hex.DecodeString(e.TokenSHA256)
 	if err != nil || len(sum) != sha256.Size {

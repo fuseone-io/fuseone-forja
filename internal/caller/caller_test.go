@@ -133,6 +133,8 @@ func TestParse_malformedEntry_errMalformedNamingTheField(t *testing.T) {
 	good := hashOf(pilotBearer)
 	tests := []struct{ name, src, field string }{
 		{name: "no name", src: yamlEntry(`""`, good, "[acme/payments]", "team"), field: "name"},
+		{name: "name with a newline", src: yamlEntry(`"pilot\nforjad: call client=admin"`, good, "[acme/payments]", "team"), field: "name"},
+		{name: "name with a space", src: yamlEntry(`"pilot tool=x"`, good, "[acme/payments]", "team"), field: "name"},
 		{name: "no hash", src: yamlEntry("pilot", "", "[acme/payments]", "team"), field: "token_sha256"},
 		{name: "short hash", src: yamlEntry("pilot", good[:62], "[acme/payments]", "team"), field: "token_sha256"},
 		{name: "long hash", src: yamlEntry("pilot", good+"00", "[acme/payments]", "team"), field: "token_sha256"},
@@ -167,6 +169,23 @@ func TestParse_sameHashTwice_errMalformed(t *testing.T) {
 		"    rotation_owner: platform-team\n"
 	if _, err := caller.Parse([]byte(src)); !errors.Is(err, caller.ErrMalformed) {
 		t.Fatalf("Parse err = %v, want ErrMalformed for one bearer on two entries", err)
+	}
+}
+
+func TestParse_rotationEntriesDisagree_errMalformed(t *testing.T) {
+	t.Parallel()
+	rotated := hashOf(rotatedBearer)
+	tests := map[string]string{
+		"wider repositories":     yamlEntry("fuseone-pilot", rotated, "[acme/*]", "platform-team"),
+		"reordered repositories": yamlEntry("fuseone-pilot", rotated, "[acme/payments, acme/ledger]", "platform-team"),
+		"other rotation owner":   yamlEntry("fuseone-pilot", rotated, "[acme/payments]", "security-team"),
+	}
+	for name, extra := range tests {
+		src := twoClients() + extra[len("clients:\n"):]
+		_, err := caller.Parse([]byte(src))
+		if !errors.Is(err, caller.ErrMalformed) || !strings.Contains(err.Error(), "fuseone-pilot") {
+			t.Fatalf("%s: Parse err = %v, want ErrMalformed naming fuseone-pilot", name, err)
+		}
 	}
 }
 
