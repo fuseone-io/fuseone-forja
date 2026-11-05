@@ -38,8 +38,8 @@ nothing with the caller.
    journaled, `serve` closes the run of each one. A queued or running run
    ends `failed` with the new reason `interrupted`, and its open stages
    fail at the same instant, never before they started. The journal holds
-   only the claims of a process that stopped, so this holds whether or not
-   the ref is still the claim's. A run no journaled claim names is left
+   only the claims of a process that stopped (decision 7 makes that true),
+   so this holds whether or not the ref is still the claim's. A run no journaled claim names is left
    alone, because another live `forjad` on the same database, such as a
    second stdio client, may be running it. Closing first means a store that
    fails stops the start with the journal intact.
@@ -50,6 +50,21 @@ nothing with the caller.
 6. **Tests.** One behaviour suite runs against both stores. Postgres runs in
    a real container (`postgres:16-alpine`), gated like the Docker tests by
    `FORJA_DOCKER_TEST=1`, so it runs in `make docker-test` and in `make check`.
+7. **One `serve` per state directory.** Recovery reads the journal as a
+   dead process's, and with a durable store it now writes what it reads:
+   two `serve` processes sharing `FORJA_STATE_DIR` would have the second
+   close the first's live runs and delete its claim refs, so two runs would
+   work one issue (CLAUDE.md rule 6). Before anything else, recovery
+   included, `serve` takes an exclusive, non-blocking `flock` on
+   `FORJA_STATE_DIR/forjad.lock` and holds it until it returns. A directory
+   another process holds is a startup failure that names it, exit 1, with
+   nothing recovered. The lock belongs to the open file description, so
+   the kernel drops it when the process dies, however it dies: there is no
+   PID file and nothing stale to clean. The descriptor is close-on-exec, so
+   a child (`git`, the proxies) never keeps it. Without `FORJA_STATE_DIR`
+   there is no journal and no lock. `forjad migrate` touches only the
+   database and the proxy subcommands touch neither, so they do not take
+   it; `forja.doctor` is a tool of `serve`, already under it.
 
 ## Consequences
 
@@ -74,6 +89,10 @@ nothing with the caller.
   or the credentials are unset. Closing those needs the run to record its
   owner and a liveness lease. That is the same gap several replicas over
   one database hit (roadmap, open questions).
+- The lock refuses a shared directory; it does not make several replicas
+  cooperate. Each replica needs its own `FORJA_STATE_DIR`, and a `flock` on
+  a network filesystem is only as good as that filesystem's lock support,
+  so the directory belongs on local disk.
 - The ledger table is `forja_schema_migrations`, so a database another tool
   migrates with its own `schema_migrations` does not collide.
 - Idempotency keys and `caller_ref` (M2) get their own migration.
