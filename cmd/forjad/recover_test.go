@@ -131,7 +131,10 @@ func TestRecoverClaims_crashedRunningRun_endsFailedInterrupted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Get: %v", err)
 			}
-			want, _ := runningRun().Interrupted(recoveredAt)
+			at := recoveredAt
+			want := runningRun()
+			want.State, want.Reason, want.FinishedAt = domain.StateFailed, domain.ReasonInterrupted, &at
+			want.Stages[0].Outcome, want.Stages[0].FinishedAt = domain.StageFailed, &at
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("recovered run = %+v, want %+v", got, want)
 			}

@@ -61,9 +61,13 @@ func TestServe_malformedDatabaseURL_exitsOneWithoutTheURL(t *testing.T) {
 		}
 		return quietEnv(k)
 	}
+	// Bounded, so a server that starts anyway ends the test instead of
+	// serving forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	_, serverTransport := sdk.NewInMemoryTransports()
 	var stderr bytes.Buffer
-	if code := serve(context.Background(), serverTransport, &stderr, env); code != 1 {
+	if code := serve(ctx, serverTransport, &stderr, env); code != 1 {
 		t.Fatalf("serve = %d, want 1; stderr %q", code, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), EnvDatabaseURL) || strings.Contains(stderr.String(), "pw-not-on-stderr") {
