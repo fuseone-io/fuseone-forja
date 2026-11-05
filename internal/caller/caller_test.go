@@ -134,6 +134,8 @@ func TestParse_malformedEntry_errMalformedNamingTheField(t *testing.T) {
 	tests := []struct{ name, src, field string }{
 		{name: "no name", src: yamlEntry(`""`, good, "[acme/payments]", "team"), field: "name"},
 		{name: "name with a newline", src: yamlEntry(`"pilot\nforjad: call client=admin"`, good, "[acme/payments]", "team"), field: "name"},
+		{name: "name is the log's absent marker", src: yamlEntry(`"-"`, good, "[acme/payments]", "team"), field: "name"},
+		{name: "second document", src: yamlEntry("pilot", good, "[acme/payments]", "team") + "---\n" + yamlEntry("late", hashOf(rotatedBearer), "[acme/payments]", "team"), field: "document"},
 		{name: "name with a space", src: yamlEntry(`"pilot tool=x"`, good, "[acme/payments]", "team"), field: "name"},
 		{name: "no hash", src: yamlEntry("pilot", "", "[acme/payments]", "team"), field: "token_sha256"},
 		{name: "short hash", src: yamlEntry("pilot", good[:62], "[acme/payments]", "team"), field: "token_sha256"},
@@ -186,6 +188,29 @@ func TestParse_rotationEntriesDisagree_errMalformed(t *testing.T) {
 		if !errors.Is(err, caller.ErrMalformed) || !strings.Contains(err.Error(), "fuseone-pilot") {
 			t.Fatalf("%s: Parse err = %v, want ErrMalformed naming fuseone-pilot", name, err)
 		}
+	}
+}
+
+func TestParse_rotationSameScopeOtherOrder_accepted(t *testing.T) {
+	t.Parallel()
+	src := yamlEntry("pilot", hashOf(pilotBearer), "[a/x, a/y]", "team") +
+		yamlEntry("pilot", hashOf(rotatedBearer), "[a/y, a/x]", "team")[len("clients:\n"):]
+	if _, err := caller.Parse([]byte(src)); err != nil {
+		t.Fatalf("Parse: %v, want the same scope listed in another order accepted", err)
+	}
+}
+
+func TestAuthenticate_callerEditsRepositories_registryUnchanged(t *testing.T) {
+	t.Parallel()
+	reg := mustParse(t, twoClients())
+	first, err := reg.Authenticate(pilotBearer)
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
+	first.Repositories[0] = "evil/*"
+	again, _ := reg.Authenticate(pilotBearer)
+	if again.Repositories[0] != "acme/payments" {
+		t.Fatalf("repositories = %v after a caller's edit, want [acme/payments]", again.Repositories)
 	}
 }
 

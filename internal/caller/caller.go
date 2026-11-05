@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"errors"
+	"slices"
 )
 
 // ErrUnknownBearer is a bearer whose hash is in no entry.
@@ -45,5 +46,7 @@ func (r Registry) Authenticate(bearer string) (Client, error) {
 	if found < 0 {
 		return Client{}, ErrUnknownBearer
 	}
-	return r.clients[found], nil
+	c := r.clients[found]
+	c.Repositories = slices.Clone(c.Repositories)
+	return c, nil
 }
