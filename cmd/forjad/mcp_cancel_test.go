@@ -58,10 +58,14 @@ func await(t *testing.T, done <-chan struct{}, what string) {
 }
 
 // stateOverHTTP is the run's state as forja.status answers it on a new
-// connection of the same client.
+// connection of the same client. The client's connections close with it:
+// a pooled one the server never saw a request on would hold the server's
+// shutdown for the 5 s net/http waits on a new connection.
 func stateOverHTTP(t *testing.T, addr, runID string) string {
 	t.Helper()
-	cs, err := connectHTTP(t, "http://"+addr+mcpPath, testBearer, http.DefaultTransport)
+	base := &http.Transport{}
+	defer base.CloseIdleConnections()
+	cs, err := connectHTTP(t, "http://"+addr+mcpPath, testBearer, base)
 	if err != nil {
 		t.Fatalf("connect: %v", err)
 	}
