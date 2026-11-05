@@ -1,0 +1,156 @@
+{
+  "annotations": {
+    "destructiveHint": true,
+    "idempotentHint": false,
+    "readOnlyHint": false
+  },
+  "description": "Verify a pull request a run opened against the base commit's contract; publishes forja/qa on its head.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "pull_request": {
+        "description": "pull request number to verify",
+        "type": "integer"
+      },
+      "repository": {
+        "description": "repository in owner/name form",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "pull_request"
+    ],
+    "type": "object"
+  },
+  "name": "forja.verify",
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "base_sha": {
+        "type": "string"
+      },
+      "compute_minutes": {
+        "type": "number"
+      },
+      "contract_sha": {
+        "type": "string"
+      },
+      "estimated_cost_usd_micros": {
+        "type": [
+          "null",
+          "integer"
+        ]
+      },
+      "evidence": {
+        "type": "string"
+      },
+      "excluded": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "failure_reason": {
+        "type": "string"
+      },
+      "head_sha": {
+        "type": "string"
+      },
+      "inversions": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "admitted": {
+              "type": "boolean"
+            },
+            "branch": {
+              "type": "string"
+            },
+            "commit": {
+              "type": "string"
+            },
+            "failed_step": {
+              "type": "string"
+            },
+            "outcome": {
+              "type": "string"
+            },
+            "paths": {
+              "items": {
+                "type": "string"
+              },
+              "type": [
+                "null",
+                "array"
+              ]
+            },
+            "rejected": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "branch",
+            "paths",
+            "admitted"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "pull_request": {
+        "additionalProperties": false,
+        "properties": {
+          "number": {
+            "type": "integer"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "url"
+        ],
+        "type": [
+          "null",
+          "object"
+        ]
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "state": {
+        "type": "string"
+      },
+      "tokens_in": {
+        "type": "integer"
+      },
+      "tokens_out": {
+        "type": "integer"
+      },
+      "verdict": {
+        "type": "string"
+      },
+      "verdict_reason": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "run_id",
+      "state",
+      "excluded",
+      "tokens_in",
+      "tokens_out",
+      "compute_minutes",
+      "inversions"
+    ],
+    "type": "object"
+  }
+}
