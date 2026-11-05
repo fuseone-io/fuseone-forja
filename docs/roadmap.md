@@ -56,7 +56,7 @@ flowchart LR
         worker["agentd worker<br/>Developer / QA role"]
     end
     subgraph pool["Dedicated pool (ADR 0026)"]
-        forjad["forjad serve --http<br/>control plane · run store · App key"]
+        forjad["forjad serve, FORJA_MCP_ADDR set<br/>control plane · run store · App key"]
         proxies["model / registry proxies<br/>egress gateway"]
         ws1["workspace run A"]
         ws2["workspace run B"]
@@ -69,20 +69,22 @@ flowchart LR
     worker -. "reads PR and forja/* statuses" .-> gh
 ```
 
-1. **Forja is a Deployment with an address**: `forjad serve --http` behind an
-   internal ingress with TLS, in the dedicated pool. The SDK Forja already
-   uses ships a Streamable HTTP handler; stdio stays for local clients
-   (Claude Code, a developer's laptop), per ADR 0051 §2.
+1. **Forja is a Deployment with an address**: `forjad serve` with
+   `FORJA_MCP_ADDR` set, in the dedicated pool, behind an internal ingress
+   that keeps TLS up to `forjad`. The SDK Forja already uses ships a
+   Streamable HTTP handler; stdio stays for local clients (Claude Code, a
+   developer's laptop), per ADR 0051 §5.
 2. **FuseOne registers it as an `http` server** with a URL from the
    installation's configuration, as #252 does for factory-mcp
    (`FORJA_MCP_URL` in a catalogue recipe).
-3. **The caller authenticates with a bearer** Forja issues per client,
-   stored hashed, sent through FuseOne's existing `Token` credential. A
-   NetworkPolicy admits only the ingress. The alternative — FuseOne sending
-   the role App's installation token and Forja asking GitHub who it is, as
-   factory-mcp does — gives per-repository authorisation for free but puts a
-   write-capable token in Forja's control plane; it is a choice for the
-   transport ADR, not a default.
+3. **The caller authenticates with a bearer.** The operator generates one
+   per client, Forja stores only its SHA-256, and FuseOne sends it through
+   its existing `Token` credential. Each client names the repositories it
+   may reach. A NetworkPolicy admits only the ingress. Sending the role App's
+   installation token instead, as factory-mcp does, is rejected in
+   [ADR 0052](adr/0052-network-transport-and-caller-authentication.md)
+   (Alternatives): it would put a write-capable token in Forja's control
+   plane.
 4. **Runs are asynchronous.** `forja.implement` and `forja.verify` return the
    `run_id` once the claim is held and the run has started; `forja.status`
    reports progress and the outcome; a new `forja.cancel` stops a run. This
@@ -124,11 +126,11 @@ is installed.
 
 | Slice | Notes |
 |---|---|
-| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS at the ingress, which repositories a client may name |
-| `forjad serve --http` with caller authentication | Same tools, same schemas; stdio unchanged |
+| ADR 0052: network transport and caller authentication | Streamable HTTP, bearer per client, TLS up to `forjad` (ingress re-encrypts, or internal CA), which repositories a client may name |
+| `forjad serve` over HTTP (`FORJA_MCP_ADDR`) with caller authentication | Same tools, same schemas; stdio unchanged |
 | Durable run store on Postgres | Real container in tests; claim recovery reads it |
-| Health and readiness endpoints | Separate from the metrics listener |
-| `deploy/`: Helm chart for `forjad` and the proxies in the dedicated pool | Internal ingress, NetworkPolicy, no secret in values |
+| Health and readiness endpoints | `/healthz` and `/readyz` on the metrics listener (ADR 0052) |
+| `deploy/`: Helm chart for `forjad` and the proxies in the dedicated pool | Internal ingress, NetworkPolicy, no secret in values; one replica until the durable run store lands |
 | Golden tests on the tool schemas | ADR 0051 consequence |
 | Reword README, `CLAUDE.md`, PRD summary and goal 4 | ADR 0051 §6 |
 
@@ -195,13 +197,12 @@ failures, two areas beyond the pilot.
 |---|---|
 | The async change slips past v1.0.0 and becomes a major | M2 is ordered before the tag; golden tests catch it |
 | FuseOne's 60 s call ceiling and 2-minute worker lease under a blocking call | Async runs (M2); until then, `CallTimeout` raised on the Forja entry and a short pilot `wall_clock` |
-| A shared `forjad` serving several clients leaks one client's repository to another | ADR 0052 decides which repositories a credential may name; the App's installations remain the outer bound (ADR 0051 §4) |
+| A shared `forjad` serving several clients leaks one client's repository to another | ADR 0052 §4: a per-client repository allowlist, and `forja.status` scoped to the caller's runs; the App's installations remain the outer bound (ADR 0051 §4) |
 | Polling `forja.status` from the agent loop costs tokens | The factory's scheduled passes poll once per pass; a role that only needs the verdict reads the commit status |
 | The dedicated pool cannot run per-run `--internal` networks in the target cluster | Human check in ADR 0026; blocks M1's chart |
 
 ## Open questions
 
-- Bearer per client, or the role App's token verified against GitHub? (ADR 0052)
 - Does MCP's long-running task support in the SDK become stable enough to
   replace `run_id` plus `status`? Not a blocker: the polling shape works with
   every client today.
