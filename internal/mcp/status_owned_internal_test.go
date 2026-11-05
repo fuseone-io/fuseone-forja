@@ -79,6 +79,37 @@ func TestDoctor_noClientOnTheContext_noClone(t *testing.T) {
 	}
 }
 
+// failingReader fails to read every run with err, as a durable store does
+// on a row it cannot decode or a database it cannot reach.
+type failingReader struct{ err error }
+
+func (f failingReader) Get(context.Context, string) (domain.Run, error) {
+	return domain.Run{}, f.err
+}
+
+func (failingReader) List(context.Context, domain.RunFilter) ([]domain.Run, error) {
+	return []domain.Run{}, nil
+}
+
+// A store failure on an id says nothing of whether the id exists: by id
+// and as a cursor, the answer is the one an id no run has gets. A caller
+// that went away still learns that.
+func TestStatus_storeFailsOnTheID_answeredAsUnknown(t *testing.T) {
+	t.Parallel()
+	ctx := withClient(context.Background(), domain.Client{Name: "client-b"})
+	empty := runstore.NewMemory()
+	for _, in := range []StatusInput{{RunID: "run-theirs"}, {Cursor: "run-theirs"}} {
+		_, unknown := status(ctx, empty, nil, in)
+		_, failed := status(ctx, failingReader{err: errors.New(`run "run-theirs": decode: json: cannot unmarshal number into Go struct field Run.Stages`)}, nil, in)
+		if unknown == nil || failed == nil || failed.Error() != unknown.Error() {
+			t.Fatalf("%+v: store failure = %v, unknown id = %v; want the same answer", in, failed, unknown)
+		}
+	}
+	if _, err := status(ctx, failingReader{err: context.Canceled}, nil, StatusInput{RunID: "run-theirs"}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled read = %v, want the cancellation", err)
+	}
+}
+
 // unownedReader is a store holding a run recorded under no client, as a
 // store that does not validate its rows could hand one back.
 type unownedReader struct{}
