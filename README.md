@@ -242,6 +242,7 @@ App's permissions and the private key's handling, is
 | `FORJA_MCP_ADDR` | `host:port` `forjad serve` speaks MCP over Streamable HTTP on, at `/mcp`, stateless | optional; unset, MCP over stdio. Unless the host is a literal loopback IP (`127.0.0.1`, `::1`; not `localhost`) it needs the TLS pair below |
 | `FORJA_CLIENTS_FILE` | **path** to the clients file mounted by the vault: `clients:` entries of `name` (letters, digits, `.`, `_`, `-`; entries sharing a name must share the rest), `token_sha256` (hex SHA-256 of the client's bearer), `repositories` (`owner/name` or `owner/*`) and `rotation_owner` | required with `FORJA_MCP_ADDR`; missing, empty or malformed, `forjad` refuses to start |
 | `FORJA_TLS_CERT_FILE`, `FORJA_TLS_KEY_FILE` | **paths** to the PEM certificate and key the HTTP server presents | both or neither; required when `FORJA_MCP_ADDR` is not loopback |
+| `FORJA_MCP_ALLOWED_ORIGINS` | comma-separated exact `scheme://host[:port]` values a request's `Origin` header may carry; no wildcard, no path, compared case-insensitively | optional, read with `FORJA_MCP_ADDR`; default empty, so any request carrying `Origin` is refused. A malformed entry stops `forjad` at start |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
@@ -257,7 +258,11 @@ npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
 With `FORJA_MCP_ADDR` set, the same tools are served over HTTP instead, to a
 client that sends `Authorization: Bearer <token>` with a token whose SHA-256
 is in `FORJA_CLIENTS_FILE`; any other request to `/mcp` is answered `401`, and
-a body over 1 MiB `413`. Every authenticated client reaches every repository
+a body over 1 MiB `413`. Before the bearer is checked, a request whose
+`Origin` is not in `FORJA_MCP_ALLOWED_ORIGINS`, `null` and any `OPTIONS`
+preflight included, is answered a bare `403` and logged with the client
+address and the `Origin`; a request without `Origin` goes on to the bearer.
+No CORS is served. Every authenticated client reaches every repository
 the GitHub App reaches: `repositories` is parsed and validated but not yet
 enforced, and a call in flight is not yet cancelled when its client goes away. A bearer is 32 bytes from a cryptographic random source,
 base64url-encoded, one per integration and environment; a rotation adds an
