@@ -41,11 +41,12 @@ nothing with the caller.
    journaled, `serve` closes the run of each one. A queued or running run
    ends `failed` with the new reason `interrupted`, and its open stages
    fail at the same instant, never before they started, and the run never
-   ends before a stage it holds. The journal holds
-   only the claims of a process that stopped (decision 7 makes that true),
-   so this holds whether or not the ref is still the claim's. A run no journaled claim names is left
-   alone, because another live `forjad` on the same database, such as a
-   second stdio client, may be running it. Closing first means a store that
+   ends before a stage it holds. The journal holds only the claims of a
+   process that stopped (decision 7 makes that true), so this holds whether
+   or not the ref is still the claim's. A run no journaled claim names is
+   left alone, because another live `forjad` on the same database, such as
+   a second stdio client with a state directory of its own, may be running
+   it. Closing first means a store that
    fails stops the start with the journal intact.
    `serve` and `forjad migrate` both refuse a schema newer than the binary
    knows, with an error of its own (`ErrSchemaNewer`). The older binary's
@@ -68,7 +69,9 @@ nothing with the caller.
    a child (`git`, the proxies) never keeps it. Without `FORJA_STATE_DIR`
    there is no journal and no lock. `forjad migrate` touches only the
    database and the proxy subcommands touch neither, so they do not take
-   it; `forja.doctor` is a tool of `serve`, already under it.
+   it; `forja.doctor` is a tool of `serve`, already under it. Over stdio,
+   each MCP client session starts its own `serve`: two sessions on one host
+   need one `FORJA_STATE_DIR` each, or the second does not start.
 
 ## Consequences
 
