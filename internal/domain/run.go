@@ -112,8 +112,9 @@ type Run struct {
 	DiffLines *int
 }
 
-// Validate reports whether the run is well formed: a non-empty ID, a known
-// tool and a known state.
+// Validate reports whether the run is well formed: a non-empty ID, an ID
+// and a repository that are text (see IsText), a known tool and a known
+// state.
 func (r Run) Validate() error {
 	if r.ID == "" {
 		return errors.New("run id is empty")

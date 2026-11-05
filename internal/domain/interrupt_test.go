@@ -61,7 +61,7 @@ func assertInterrupted(t *testing.T, got domain.Run, changed bool, at time.Time)
 
 // A clock behind the one that started the run never ends it, or an open
 // stage, before it started: a duration is never negative.
-func TestRun_interrupted_clockBehindStart_finishesAtStart(t *testing.T) {
+func TestRun_interrupted_clockBehindStart_neverEndsBeforeItsStart(t *testing.T) {
 	t.Parallel()
 	tests := map[string]struct {
 		stages int
