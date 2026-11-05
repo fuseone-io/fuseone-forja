@@ -1,0 +1,93 @@
+package caller
+
+import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"regexp"
+
+	"gopkg.in/yaml.v3"
+)
+
+// The errors Parse returns; each wraps the field or entry at fault.
+var (
+	ErrNoClients = errors.New("no clients")
+	ErrMalformed = errors.New("malformed clients file")
+)
+
+// repositoryPattern is owner/name or owner/*: a wildcard stands for the
+// whole name, never for the owner or part of a name.
+var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+|\*)$`)
+
+// secretish is what a decoding error may echo of a misplaced hash: the
+// value yaml.v3 quotes in a type error, or a long hex run such as a hash
+// used as a key. It is dropped before the error is returned.
+var secretish = regexp.MustCompile("`[^`]*`|[0-9A-Fa-f]{16,}")
+
+type file struct {
+	Clients []entry `yaml:"clients"`
+}
+
+type entry struct {
+	Name          string   `yaml:"name"`
+	TokenSHA256   string   `yaml:"token_sha256"`
+	Repositories  []string `yaml:"repositories"`
+	RotationOwner string   `yaml:"rotation_owner"`
+}
+
+// Parse reads the clients file. An unknown field, an entry missing a field,
+// a hash that is not 64 hex characters, a repository that is not owner/name
+// or owner/*, or one hash on two entries is ErrMalformed; a file with no
+// entry is ErrNoClients. No error carries a hash.
+func Parse(src []byte) (Registry, error) {
+	var f file
+	dec := yaml.NewDecoder(bytes.NewReader(src))
+	dec.KnownFields(true)
+	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
+		return Registry{}, fmt.Errorf("%w: %s", ErrMalformed, secretish.ReplaceAllString(err.Error(), "…"))
+	}
+	if len(f.Clients) == 0 {
+		return Registry{}, ErrNoClients
+	}
+	reg := Registry{clients: make([]Client, 0, len(f.Clients))}
+	seen := make(map[[sha256.Size]byte]bool, len(f.Clients))
+	for i, e := range f.Clients {
+		c, err := e.client()
+		if err != nil {
+			return Registry{}, fmt.Errorf("%w: clients[%d]: %w", ErrMalformed, i, err)
+		}
+		if seen[c.tokenSHA256] {
+			return Registry{}, fmt.Errorf("%w: clients[%d] (%s): token_sha256 is already another entry's", ErrMalformed, i, c.Name)
+		}
+		seen[c.tokenSHA256] = true
+		reg.clients = append(reg.clients, c)
+	}
+	return reg, nil
+}
+
+func (e entry) client() (Client, error) {
+	if e.Name == "" {
+		return Client{}, errors.New("name is empty")
+	}
+	sum, err := hex.DecodeString(e.TokenSHA256)
+	if err != nil || len(sum) != sha256.Size {
+		return Client{}, fmt.Errorf("(%s): token_sha256 is not %d hex characters", e.Name, 2*sha256.Size)
+	}
+	if len(e.Repositories) == 0 {
+		return Client{}, fmt.Errorf("(%s): repositories is empty", e.Name)
+	}
+	for j, repo := range e.Repositories {
+		if !repositoryPattern.MatchString(repo) {
+			return Client{}, fmt.Errorf("(%s): repositories[%d] is not owner/name or owner/*", e.Name, j)
+		}
+	}
+	if e.RotationOwner == "" {
+		return Client{}, fmt.Errorf("(%s): rotation_owner is empty", e.Name)
+	}
+	c := Client{Name: e.Name, Repositories: e.Repositories, RotationOwner: e.RotationOwner}
+	copy(c.tokenSHA256[:], sum)
+	return c, nil
+}
