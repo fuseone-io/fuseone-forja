@@ -211,14 +211,21 @@ func TestServe_stateDirHeldByAnotherServe_refusedNothingInterrupted(t *testing.T
 			if code != 1 || !strings.Contains(stderr, dir) || !strings.Contains(stderr, "another forjad") {
 				t.Errorf("second serve = %d, stderr %q; want 1 naming %s as held by another forjad", code, stderr, dir)
 			}
-			if got, err := runs.Get(ctx, "run-crashed"); err != nil || got.State != domain.StateRunning {
-				t.Errorf("the first serve's run = %q (%v), want it still running", got.State, err)
-			}
-			entries, err := (&claim.Journal{Dir: filepath.Join(dir, "claims")}).List()
-			if err != nil || len(entries) != 1 {
-				t.Errorf("journal after the refused start = %v (%v), want the first serve's claim kept", entries, err)
-			}
+			assertNothingRecovered(ctx, t, runs, dir)
 		})
+	}
+}
+
+// assertNothingRecovered checks that the first serve's run is still
+// running and its claim still journaled.
+func assertNothingRecovered(ctx context.Context, t *testing.T, runs mcp.RunStore, dir string) {
+	t.Helper()
+	if got, err := runs.Get(ctx, "run-crashed"); err != nil || got.State != domain.StateRunning {
+		t.Errorf("the first serve's run = %q (%v), want it still running", got.State, err)
+	}
+	entries, err := (&claim.Journal{Dir: filepath.Join(dir, "claims")}).List()
+	if err != nil || len(entries) != 1 {
+		t.Errorf("journal after the refused start = %v (%v), want the first serve's claim kept", entries, err)
 	}
 }
 
