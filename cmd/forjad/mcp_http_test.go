@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/ecdsa"
@@ -12,6 +13,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -20,6 +22,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -385,6 +388,66 @@ func TestMCPHTTPConfig_drain_setForServe(t *testing.T) {
 	cfg, err := mcpHTTPConfig(envOf(map[string]string{EnvMCPAddr: "127.0.0.1:0", EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}))
 	if err != nil || cfg.drain <= 0 {
 		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a positive drain", cfg.drain, err)
+	}
+}
+
+// servedHandler serves h on a loopback listener the way serve does, and
+// returns its address.
+func servedHandler(t *testing.T, h http.Handler, readTimeout time.Duration) string {
+	t.Helper()
+	ln, err := listenTCP(context.Background(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	srv := newMCPServer(h, nil)
+	srv.ReadTimeout = readTimeout
+	go func() { _ = srv.Serve(ln) }()
+	t.Cleanup(func() { _ = srv.Close() })
+	return ln.Addr().String()
+}
+
+func TestMCPServer_callOutlastsTheReadTimeout_answered(t *testing.T) {
+	t.Parallel()
+	server := sdk.NewServer(&sdk.Implementation{Name: "probe", Version: "test"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "forja.probe"}, func(ctx context.Context, _ *sdk.CallToolRequest, _ probeIn) (*sdk.CallToolResult, probeOut, error) {
+		select {
+		case <-time.After(600 * time.Millisecond):
+			return nil, probeOut{RunID: "r-slow"}, nil
+		case <-ctx.Done():
+			return nil, probeOut{}, ctx.Err()
+		}
+	})
+	addr := servedHandler(t, mcpHandler(server, testRegistry(t)), 100*time.Millisecond)
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+addr+mcpPath, strings.NewReader(callBody("x")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+testBearer)
+	res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer func() { _ = res.Body.Close() }()
+	body, err := io.ReadAll(res.Body)
+	if err != nil || res.StatusCode != http.StatusOK || !strings.Contains(string(body), "r-slow") {
+		t.Fatalf("status %d, body %q, err %v: a call longer than ReadTimeout must still be answered", res.StatusCode, body, err)
+	}
+}
+
+func TestMCPServer_bodyStallsPastTheReadTimeout_refusedNoToolRuns(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	addr := servedHandler(t, mcpHandler(probeServer(&calls), testRegistry(t)), 100*time.Millisecond)
+	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	_, _ = io.WriteString(conn, "POST "+mcpPath+" HTTP/1.1\r\nHost: "+addr+"\r\nAuthorization: Bearer "+testBearer+
+		"\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: 500\r\n\r\n{\"jsonrpc\"")
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	status, err := bufio.NewReader(conn).ReadString('\n')
+	if err != nil || !strings.Contains(status, " 400 ") || calls.Load() != 0 {
+		t.Fatalf("status line %q, err %v, calls %d: a stalled body must be refused", status, err, calls.Load())
 	}
 }
 
