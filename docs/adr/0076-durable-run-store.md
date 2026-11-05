@@ -1,4 +1,4 @@
-# 9999 · Durable run store on Postgres
+# 0076 · Durable run store on Postgres
 
 Status: proposed
 

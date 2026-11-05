@@ -24,4 +24,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0050](0050-verify-inversions.md) | forja.verify inversions, the QA agent and the verdict "bites / does not bite" | proposed |
 | [0051](0051-forja-as-a-separate-product.md) | Forja as a separate product, with FuseOne as its reference client | proposed |
 | [0052](0052-network-transport-and-caller-authentication.md) | Network transport and caller authentication | accepted |
-| [9999](9999-durable-run-store.md) | Durable run store on Postgres | proposed |
+| [0076](0076-durable-run-store.md) | Durable run store on Postgres | proposed |

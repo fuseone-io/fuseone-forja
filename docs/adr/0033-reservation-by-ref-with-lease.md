@@ -89,7 +89,7 @@ claim left by a crash is freed only by its lease. The journal is per process:
 two instances with separate state directories do not recover each other's
 claims. Multi-instance recovery arrives with a shared run store, not here.
 
-> Note (ADR 9999): "per process" is now enforced, not assumed. `serve` holds
+> Note (ADR 0076): "per process" is now enforced, not assumed. `serve` holds
 > an exclusive `flock` on `FORJA_STATE_DIR/forjad.lock` for its life and
 > refuses to start, before reading the journal, when another process holds
 > it.
