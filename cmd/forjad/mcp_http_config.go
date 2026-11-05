@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strings"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/caller"
 )
@@ -30,6 +30,8 @@ type httpConfig struct {
 	// tls is nil only on a loopback address with no certificate.
 	tls     *tls.Config
 	clients caller.Registry
+	// drain is how long a stop waits for the calls in flight.
+	drain time.Duration
 }
 
 // mcpHTTPConfig reads the HTTP transport from the environment. Unset
@@ -58,15 +60,13 @@ func mcpHTTPConfig(getenv func(string) string) (httpConfig, error) {
 	if err != nil {
 		return httpConfig{}, fmt.Errorf("%s: %w", EnvClientsFile, err)
 	}
-	return httpConfig{addr: addr, tls: tlsCfg, clients: clients}, nil
+	return httpConfig{addr: addr, tls: tlsCfg, clients: clients, drain: mcpShutdownTimeout}, nil
 }
 
-// isLoopback is a literal loopback IP or localhost. An empty host listens
-// on every interface, and any other name may resolve off the machine.
+// isLoopback is a literal loopback IP. An empty host listens on every
+// interface, and a name, localhost included, is resolved at bind time and
+// may resolve off the machine.
 func isLoopback(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }

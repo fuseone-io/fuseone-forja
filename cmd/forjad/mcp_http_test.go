@@ -102,6 +102,7 @@ func TestServe_httpMisconfigured_exitsOneNamingTheVariable(t *testing.T) {
 		{name: "all interfaces, no certificate", env: map[string]string{EnvMCPAddr: ":8443", EnvClientsFile: clients}, want: EnvTLSCertFile},
 		{name: "any address, no certificate", env: map[string]string{EnvMCPAddr: "0.0.0.0:8443", EnvClientsFile: clients}, want: EnvTLSCertFile},
 		{name: "network address, no certificate", env: map[string]string{EnvMCPAddr: "10.0.0.7:8443", EnvClientsFile: clients}, want: EnvTLSCertFile},
+		{name: "localhost, no certificate", env: map[string]string{EnvMCPAddr: "localhost:8443", EnvClientsFile: clients}, want: EnvTLSCertFile},
 		{name: "host name, no certificate", env: map[string]string{EnvMCPAddr: "forja.internal:8443", EnvClientsFile: clients}, want: EnvTLSCertFile},
 		{name: "not host:port", env: map[string]string{EnvMCPAddr: "forja please", EnvClientsFile: clients}, want: EnvMCPAddr},
 		{name: "no clients file", env: map[string]string{EnvMCPAddr: "127.0.0.1:0"}, want: EnvClientsFile},
@@ -164,7 +165,7 @@ func TestMCPHTTPConfig_networkAddressWithCertificate_accepted(t *testing.T) {
 
 func TestMCPHTTPConfig_loopbackWithoutCertificate_plainHTTP(t *testing.T) {
 	t.Parallel()
-	for _, addr := range []string{"127.0.0.1:0", "127.0.0.9:8080", "[::1]:8080", "localhost:8080", "LocalHost:8080"} {
+	for _, addr := range []string{"127.0.0.1:0", "127.0.0.9:8080", "[::1]:8080"} {
 		env := map[string]string{EnvMCPAddr: addr, EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}
 		cfg, err := mcpHTTPConfig(envOf(env))
 		if err != nil {
@@ -313,6 +314,78 @@ func TestServe_httpPlainOnTLSListener_refused(t *testing.T) {
 	}
 	cancel()
 	<-exited
+}
+
+// blockingServer serves one tool that signals entered and returns once
+// release is closed.
+func blockingServer(entered, release chan struct{}) *sdk.Server {
+	server := sdk.NewServer(&sdk.Implementation{Name: "probe", Version: "test"}, nil)
+	sdk.AddTool(server, &sdk.Tool{Name: "forja.probe"}, func(context.Context, *sdk.CallToolRequest, probeIn) (*sdk.CallToolResult, probeOut, error) {
+		close(entered)
+		<-release
+		return nil, probeOut{}, nil
+	})
+	return server
+}
+
+func TestServeMCPHTTP_stoppedWithCallInFlight_errorNotCleanExit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		finish  bool
+		wantErr bool
+	}{
+		{name: "call outlives the drain", finish: false, wantErr: true},
+		{name: "call finishes within the drain", finish: true, wantErr: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			entered, release := make(chan struct{}), make(chan struct{})
+			t.Cleanup(func() {
+				if !tt.finish {
+					close(release)
+				}
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			bound, returned := make(chan string, 1), make(chan error, 1)
+			cfg := httpConfig{addr: "127.0.0.1:0", clients: testRegistry(t), drain: 200 * time.Millisecond}
+			go func() {
+				returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, blockingServer(entered, release), cfg, &lockedBuffer{})
+			}()
+			go postCall(<-bound)
+			<-entered
+			if tt.finish {
+				go func() { time.Sleep(20 * time.Millisecond); close(release) }()
+			}
+			cancel()
+			if err := <-returned; (err != nil) != tt.wantErr {
+				t.Fatalf("serveMCPHTTP = %v, want error %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func postCall(addr string) {
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+addr+mcpPath, strings.NewReader(callBody("x")))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+testBearer)
+	if res, err := http.DefaultClient.Do(req); err == nil {
+		_ = res.Body.Close()
+	}
+}
+
+func TestMCPHTTPConfig_drain_setForServe(t *testing.T) {
+	t.Parallel()
+	cfg, err := mcpHTTPConfig(envOf(map[string]string{EnvMCPAddr: "127.0.0.1:0", EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}))
+	if err != nil || cfg.drain <= 0 {
+		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a positive drain", cfg.drain, err)
+	}
 }
 
 func TestNewMCPServer_readBoundedWriteUnbounded(t *testing.T) {

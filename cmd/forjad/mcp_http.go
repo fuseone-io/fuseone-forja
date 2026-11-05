@@ -25,7 +25,7 @@ const maxRequestBody = 1 << 20
 // The MCP server's bounds. Reading a request is bounded; writing a
 // response is not, since a tool call lasts as long as its run and the
 // run's own deadline bounds it. The shutdown lets a short call in
-// progress finish.
+// progress finish before cutting it off.
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
@@ -86,22 +86,30 @@ func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConf
 		}
 		served <- srv.Serve(ln)
 	}()
-	return awaitMCP(ctx, srv, served)
+	return awaitMCP(ctx, srv, served, cfg.drain)
 }
 
 // awaitMCP shuts srv down when ctx ends and waits for Serve to return; it
-// returns Serve's error unless that is the shutdown itself.
-func awaitMCP(ctx context.Context, srv *http.Server, served <-chan error) error {
+// returns Serve's error unless that is the shutdown itself. A call still
+// running after drain is cut off, and that is an error: the stop was not
+// clean.
+func awaitMCP(ctx context.Context, srv *http.Server, served <-chan error, drain time.Duration) error {
 	select {
 	case err := <-served:
 		return err
 	case <-ctx.Done():
 	}
-	drain, cancel := context.WithTimeout(context.WithoutCancel(ctx), mcpShutdownTimeout)
+	drainCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), drain)
 	defer cancel()
-	_ = srv.Shutdown(drain)
+	shutdown := srv.Shutdown(drainCtx)
+	if shutdown != nil {
+		_ = srv.Close()
+	}
 	if err := <-served; !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	if shutdown != nil {
+		return fmt.Errorf("mcp: stopped with tool calls in flight: %w", shutdown)
 	}
 	return nil
 }
