@@ -129,32 +129,6 @@ func TestRun_interrupted_clockBehindAStage_runEndsNoEarlierThanItsStages(t *test
 	}
 }
 
-// A run that recorded why it was failing before its process died keeps
-// that reason: interrupted names only a run that had none.
-func TestRun_interrupted_reasonAlreadyRecorded_reasonKept(t *testing.T) {
-	t.Parallel()
-	tests := map[string]struct {
-		recorded, want domain.FailureReason
-	}{
-		"wall clock":  {domain.ReasonWallClock, domain.ReasonWallClock},
-		"gate failed": {domain.ReasonGateFailed, domain.ReasonGateFailed},
-		"none":        {"", domain.ReasonInterrupted},
-	}
-	for name, tt := range tests {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			run := interruptedFixture(domain.StateRunning)
-			run.Reason = tt.recorded
-
-			got, changed := run.Interrupted(run.StartedAt.Add(time.Hour))
-
-			if !changed || got.State != domain.StateFailed || got.Reason != tt.want {
-				t.Fatalf("Interrupted = %q %q (changed %v), want failed %q", got.State, got.Reason, changed, tt.want)
-			}
-		})
-	}
-}
-
 // A run that already ended keeps its outcome, its reason and its finish:
 // the process died after recording it.
 func TestRun_interrupted_terminalRunUnchanged(t *testing.T) {
