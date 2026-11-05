@@ -132,6 +132,23 @@ func TestServe_httpMisconfigured_exitsOneNamingTheVariable(t *testing.T) {
 	}
 }
 
+func TestServe_httpPortTaken_exitsOneNamingTheVariable(t *testing.T) {
+	t.Parallel()
+	taken, err := listenTCP(context.Background(), "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { _ = taken.Close() })
+	env := map[string]string{EnvWorkspaceRuntime: "runc", EnvMCPAddr: taken.Addr().String(), EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}
+	var stderr bytes.Buffer
+	if code := (host{getenv: envOf(env), listen: listenTCP}).serve(context.Background(), &sdk.StdioTransport{}, &stderr); code != 1 {
+		t.Fatalf("serve = %d, want 1", code)
+	}
+	if !strings.Contains(stderr.String(), EnvMCPAddr) {
+		t.Fatalf("stderr %q does not name %s", stderr.String(), EnvMCPAddr)
+	}
+}
+
 func TestMCPHTTPConfig_networkAddressWithCertificate_accepted(t *testing.T) {
 	t.Parallel()
 	cert, key, _ := selfSigned(t)
@@ -300,7 +317,7 @@ func TestServe_httpPlainOnTLSListener_refused(t *testing.T) {
 
 func TestNewMCPServer_readBoundedWriteUnbounded(t *testing.T) {
 	t.Parallel()
-	srv := newMCPServer(context.Background(), http.NotFoundHandler(), nil)
+	srv := newMCPServer(http.NotFoundHandler(), nil)
 	if srv.ReadHeaderTimeout <= 0 || srv.ReadTimeout <= 0 {
 		t.Fatalf("ReadHeaderTimeout %v, ReadTimeout %v: both must bound a request", srv.ReadHeaderTimeout, srv.ReadTimeout)
 	}

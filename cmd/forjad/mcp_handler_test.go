@@ -72,6 +72,17 @@ func TestMCPHandler_knownBearer_toolRuns(t *testing.T) {
 	}
 }
 
+func TestMCPHandler_initialize_noSessionHeld(t *testing.T) {
+	t.Parallel()
+	var calls atomic.Int32
+	h := mcpHandler(probeServer(&calls), testRegistry(t))
+	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"t"}}}`
+	rec := post(t, h, "Bearer "+testBearer, body)
+	if rec.Code != http.StatusOK || rec.Header().Get("Mcp-Session-Id") != "" {
+		t.Fatalf("status %d, Mcp-Session-Id %q: want 200 and no session", rec.Code, rec.Header().Get("Mcp-Session-Id"))
+	}
+}
+
 func TestMCPHandler_missingOrUnknownBearer_401NoToolRuns(t *testing.T) {
 	t.Parallel()
 	tests := map[string]string{

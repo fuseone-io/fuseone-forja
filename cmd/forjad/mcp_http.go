@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
 	"time"
 
@@ -25,12 +24,12 @@ const maxRequestBody = 1 << 20
 
 // The MCP server's bounds. Reading a request is bounded; writing a
 // response is not, since a tool call lasts as long as its run and the
-// run's own deadline bounds it. The shutdown leaves a cancelled run the
-// time to release its claim and record its end.
+// run's own deadline bounds it. The shutdown lets a short call in
+// progress finish.
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
-	mcpShutdownTimeout   = 90 * time.Second
+	mcpShutdownTimeout   = 10 * time.Second
 )
 
 // mcpHandler serves server statelessly to the clients in reg: a request
@@ -59,16 +58,13 @@ func verifier(reg caller.Registry) auth.TokenVerifier {
 	}
 }
 
-// newMCPServer serves h, over TLS when tlsCfg is set, with every request's
-// context derived from ctx so that stopping serve cancels the tool calls
-// in flight.
-func newMCPServer(ctx context.Context, h http.Handler, tlsCfg *tls.Config) *http.Server {
+// newMCPServer serves h, over TLS when tlsCfg is set.
+func newMCPServer(h http.Handler, tlsCfg *tls.Config) *http.Server {
 	return &http.Server{
 		Handler:           h,
 		TLSConfig:         tlsCfg,
 		ReadHeaderTimeout: mcpReadHeaderTimeout,
 		ReadTimeout:       mcpReadTimeout,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 }
 
@@ -81,7 +77,7 @@ func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConf
 		return fmt.Errorf("%s: %w", EnvMCPAddr, err)
 	}
 	server.AddReceivingMiddleware(logCalls(log.New(stderr, "", 0)))
-	srv := newMCPServer(ctx, mcpHandler(server, cfg.clients), cfg.tls)
+	srv := newMCPServer(mcpHandler(server, cfg.clients), cfg.tls)
 	served := make(chan error, 1)
 	go func() {
 		if cfg.tls != nil {

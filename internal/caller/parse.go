@@ -22,10 +22,9 @@ var (
 // whole name, never for the owner or part of a name.
 var repositoryPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/([A-Za-z0-9_.-]+|\*)$`)
 
-// secretish is what a decoding error may echo of a misplaced hash: the
-// value yaml.v3 quotes in a type error, or a long hex run such as a hash
-// used as a key. It is dropped before the error is returned.
-var secretish = regexp.MustCompile("`[^`]*`|[0-9A-Fa-f]{16,}")
+// hexRun is what a decoding error may echo of a misplaced hash, as a
+// value or as a key; it is dropped before the error is returned.
+var hexRun = regexp.MustCompile(`[0-9A-Fa-f]{16,}`)
 
 type file struct {
 	Clients []entry `yaml:"clients"`
@@ -47,7 +46,7 @@ func Parse(src []byte) (Registry, error) {
 	dec := yaml.NewDecoder(bytes.NewReader(src))
 	dec.KnownFields(true)
 	if err := dec.Decode(&f); err != nil && !errors.Is(err, io.EOF) {
-		return Registry{}, fmt.Errorf("%w: %s", ErrMalformed, secretish.ReplaceAllString(err.Error(), "…"))
+		return Registry{}, fmt.Errorf("%w: %s", ErrMalformed, hexRun.ReplaceAllString(err.Error(), "…"))
 	}
 	if len(f.Clients) == 0 {
 		return Registry{}, ErrNoClients
