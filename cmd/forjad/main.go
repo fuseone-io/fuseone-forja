@@ -52,13 +52,21 @@ func serve(ctx context.Context, transport sdk.Transport, stderr io.Writer, geten
 	return host{getenv: getenv, listen: listenTCP}.serve(ctx, transport, stderr)
 }
 
-// serve opens the run store, recovers the claims a previous process left
-// and closes their runs, opens the metrics listener when one is
-// configured, then runs the server until the transport closes or ctx is
-// cancelled, and closes the listener and the store with it. A
-// cancelled context is the operator stopping the server, not a failure; a
+// serve locks the state directory, opens the run store, recovers the
+// claims a previous process left and closes their runs, opens the metrics
+// listener when one is configured, then runs the server until the
+// transport closes or ctx is cancelled, and closes the listener, the
+// store and the lock with it. The lock comes before everything else: the
+// journal it guards is read as a dead process's only while no live
+// process holds the directory. A cancelled context is the operator
+// stopping the server, not a failure; a directory another serve holds, a
 // recovery that cannot finish or a listener that cannot open is one.
 func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writer) int {
+	release, err := holdStateDir(h.getenv)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	defer release()
 	addr, err := metricsAddr(h.getenv)
 	if err != nil {
 		return fail(stderr, err)
