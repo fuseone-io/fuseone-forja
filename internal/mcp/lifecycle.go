@@ -99,7 +99,7 @@ func (l lifecycle) releaseStage(done context.Context, f *flight) error {
 }
 
 func (l lifecycle) release(ctx context.Context, c domain.Claim) error {
-	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
+	ctx, cancel := context.WithTimeout(ctx, FinishTimeout)
 	defer cancel()
 	if err := l.deps.Claims.Release(ctx, c); err != nil {
 		return fmt.Errorf("release claim: %w", err)

@@ -28,10 +28,10 @@ type RunStore interface {
 	Put(ctx context.Context, run domain.Run) error
 }
 
-// finishTimeout bounds each record of the run and the release, counted
+// FinishTimeout bounds each record of the run and the release, counted
 // from when each starts: the ref must come off and the run must end
 // whether or not anyone is still waiting for the answer.
-const finishTimeout = 30 * time.Second
+const FinishTimeout = 30 * time.Second
 
 type implementer struct {
 	lifecycle
