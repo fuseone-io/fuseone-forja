@@ -40,7 +40,11 @@ nothing with the caller.
 
    A row whose client was never recorded belongs to `(unattributed)`, a
    name no caller can have. It is neither the stdio client nor one a
-   clients file can name, so only the operator sees such a row. That
+   clients file can name, so `forja.status` answers such a row to no one.
+   It still counts in `/metrics` and stays in the database. Nothing gives
+   it back to a client: a run started on a binary from before the column
+   is lost to its client's `forja.status`, so serve is stopped before
+   `forjad migrate` when that matters. That
    covers rows from before the column, which an HTTP client may have
    written as well as stdio, so they cannot be given to stdio. It also
    covers rows a binary from before the column keeps writing while it
