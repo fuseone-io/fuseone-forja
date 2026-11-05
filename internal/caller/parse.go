@@ -9,8 +9,11 @@ import (
 	"io"
 	"regexp"
 	"slices"
+	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // The errors Parse returns; each wraps the field or entry at fault.
@@ -105,17 +108,15 @@ func (e entry) client() (Client, error) {
 	if !namePattern.MatchString(e.Name) {
 		return Client{}, errors.New("name is not a letter or digit followed by letters, digits, '.', '_' or '-'")
 	}
+	if strings.EqualFold(e.Name, domain.StdioClientName) {
+		return Client{}, fmt.Errorf("name %s is the stdio client's", domain.StdioClientName)
+	}
 	sum, err := hex.DecodeString(e.TokenSHA256)
 	if err != nil || len(sum) != sha256.Size {
 		return Client{}, fmt.Errorf("(%s): token_sha256 is not %d hex characters", e.Name, 2*sha256.Size)
 	}
-	if len(e.Repositories) == 0 {
-		return Client{}, fmt.Errorf("(%s): repositories is empty", e.Name)
-	}
-	for j, repo := range e.Repositories {
-		if !repositoryPattern.MatchString(repo) {
-			return Client{}, fmt.Errorf("(%s): repositories[%d] is not owner/name or owner/*", e.Name, j)
-		}
+	if err := e.checkRepositories(); err != nil {
+		return Client{}, err
 	}
 	if e.RotationOwner == "" {
 		return Client{}, fmt.Errorf("(%s): rotation_owner is empty", e.Name)
@@ -123,4 +124,23 @@ func (e entry) client() (Client, error) {
 	c := Client{Name: e.Name, Repositories: slices.Compact(slices.Sorted(slices.Values(e.Repositories))), RotationOwner: e.RotationOwner}
 	copy(c.tokenSHA256[:], sum)
 	return c, nil
+}
+
+// checkRepositories refuses an empty list and any pattern that is not
+// owner/name or owner/*, or whose owner or name is "." or "..".
+func (e entry) checkRepositories() error {
+	if len(e.Repositories) == 0 {
+		return fmt.Errorf("(%s): repositories is empty", e.Name)
+	}
+	for j, repo := range e.Repositories {
+		owner, name, _ := strings.Cut(repo, "/")
+		if !repositoryPattern.MatchString(repo) || dotSegment(owner) || dotSegment(name) {
+			return fmt.Errorf("(%s): repositories[%d] is not owner/name or owner/*", e.Name, j)
+		}
+	}
+	return nil
+}
+
+func dotSegment(s string) bool {
+	return s == "." || s == ".."
 }
