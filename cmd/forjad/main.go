@@ -26,17 +26,22 @@ func main() {
 func run(args []string, stdout, stderr io.Writer) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+	if len(args) == 0 {
+		usage(stderr)
+		return 2
+	}
+	cmd, rest := args[0], args[1:]
 	switch {
-	case len(args) == 1 && args[0] == "serve":
+	case cmd == "serve" && len(rest) == 0:
 		return serve(ctx, &sdk.StdioTransport{}, stderr, os.Getenv)
-	case len(args) == 1 && args[0] == "migrate":
+	case cmd == "migrate" && len(rest) == 0:
 		return migrate(ctx, stdout, stderr, os.Getenv)
-	case len(args) >= 1 && args[0] == "gateway":
-		return gateway(ctx, args[1:], stdout, stderr)
-	case len(args) >= 1 && args[0] == "registry":
-		return registryProxy(ctx, args[1:], stdout, stderr)
-	case len(args) >= 1 && args[0] == "model":
-		return model(ctx, args[1:], stdout, stderr)
+	case cmd == "gateway":
+		return gateway(ctx, rest, stdout, stderr)
+	case cmd == "registry":
+		return registryProxy(ctx, rest, stdout, stderr)
+	case cmd == "model":
+		return model(ctx, rest, stdout, stderr)
 	}
 	usage(stderr)
 	return 2

@@ -34,23 +34,28 @@ func TestRun_interrupted_inFlightRunEndsFailedWithOpenStagesClosed(t *testing.T)
 
 			got, changed := run.Interrupted(at)
 
-			if !changed || got.State != domain.StateFailed || got.Reason != domain.ReasonInterrupted {
-				t.Fatalf("Interrupted = state %q reason %q changed %v, want failed interrupted true", got.State, got.Reason, changed)
-			}
-			if got.FinishedAt == nil || !got.FinishedAt.Equal(at) {
-				t.Fatalf("FinishedAt = %v, want %v", got.FinishedAt, at)
-			}
-			if !reflect.DeepEqual(got.Stages[0], run.Stages[0]) {
-				t.Fatalf("closed stage = %+v, want it untouched %+v", got.Stages[0], run.Stages[0])
-			}
-			open := got.Stages[1]
-			if open.Outcome != domain.StageFailed || open.FinishedAt == nil || !open.FinishedAt.Equal(at) {
-				t.Fatalf("open stage = %+v, want failed at %v", open, at)
-			}
-			if run.Stages[1].Outcome != domain.StageRunning || run.Stages[1].FinishedAt != nil || run.State != state {
+			assertInterrupted(t, got, changed, at)
+			if !reflect.DeepEqual(run, interruptedFixture(state)) {
 				t.Fatalf("the receiver changed: %+v", run)
 			}
 		})
+	}
+}
+
+func assertInterrupted(t *testing.T, got domain.Run, changed bool, at time.Time) {
+	t.Helper()
+	if !changed || got.State != domain.StateFailed || got.Reason != domain.ReasonInterrupted {
+		t.Fatalf("Interrupted = state %q reason %q changed %v, want failed interrupted true", got.State, got.Reason, changed)
+	}
+	if got.FinishedAt == nil || !got.FinishedAt.Equal(at) {
+		t.Fatalf("FinishedAt = %v, want %v", got.FinishedAt, at)
+	}
+	if closed := interruptedFixture(got.State).Stages[0]; !reflect.DeepEqual(got.Stages[0], closed) {
+		t.Fatalf("closed stage = %+v, want it untouched %+v", got.Stages[0], closed)
+	}
+	open := got.Stages[1]
+	if open.Outcome != domain.StageFailed || open.FinishedAt == nil || !open.FinishedAt.Equal(at) {
+		t.Fatalf("open stage = %+v, want failed at %v", open, at)
 	}
 }
 
