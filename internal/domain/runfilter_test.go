@@ -75,6 +75,8 @@ func TestRunFilter_validate_rejectsUnknownValuesAndEmptyWindow(t *testing.T) {
 		{name: "until alone", filter: domain.RunFilter{Until: filterNoon}},
 		{name: "unknown tool", filter: domain.RunFilter{Tool: "forja.deploy"}, wantErr: "forja.deploy"},
 		{name: "unknown state", filter: domain.RunFilter{State: "paused"}, wantErr: "paused"},
+		{name: "client with a NUL", filter: domain.RunFilter{Client: "pilot\x00"}, wantErr: "client"},
+		{name: "client not UTF-8", filter: domain.RunFilter{Client: "pilot\xff"}, wantErr: "client"},
 		{name: "since equal to until", filter: domain.RunFilter{Since: filterNoon, Until: filterNoon}, wantErr: "since"},
 		{name: "since after until", filter: domain.RunFilter{Since: filterNoon.Add(time.Second), Until: filterNoon}, wantErr: "until"},
 	}

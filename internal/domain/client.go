@@ -6,6 +6,11 @@ import "strings"
 // started it. No client of a clients file may take it.
 const StdioClientName = "stdio"
 
+// UnattributedClientName owns a run whose client was never recorded. No
+// caller can be named so: it is not the stdio client, and a clients file
+// cannot name a client with a parenthesis.
+const UnattributedClientName = "(unattributed)"
+
 // Client is who calls Forja's tools: the name the runs it starts are
 // recorded under, and the repositories it may name. The zero Client owns
 // no run and reaches no repository.

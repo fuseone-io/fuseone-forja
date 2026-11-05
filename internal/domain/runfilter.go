@@ -26,6 +26,9 @@ func (f RunFilter) Validate() error {
 	if !IsText(f.Repository) {
 		return fmt.Errorf("repository %q is not text", f.Repository)
 	}
+	if !IsText(f.Client) {
+		return fmt.Errorf("client %q is not text", f.Client)
+	}
 	if f.Tool != "" && !knownTool(f.Tool) {
 		return fmt.Errorf("unknown tool %q", f.Tool)
 	}

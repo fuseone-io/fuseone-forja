@@ -55,6 +55,16 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 	return clone(run), nil
 }
 
+// GetOwned is Get for the run's own client only: a run of another client,
+// or a client that is empty, is an id no run has.
+func (m *Memory) GetOwned(ctx context.Context, client, id string) (domain.Run, error) {
+	run, err := m.Get(ctx, id)
+	if err == nil && (client == "" || run.Client != client) {
+		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
+	}
+	return run, err
+}
+
 // List returns a copy of every run the filter matches, sorted with
 // domain.CompareNewestFirst; empty, never nil, when none does. An invalid
 // filter is an error.

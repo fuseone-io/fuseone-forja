@@ -78,7 +78,7 @@ var postgresScenarios = []struct {
 	{"newerSchema_openAndMigrateRefused", testPostgres_newerSchema_openAndMigrateRefused},
 	{"unreachable_errorWithholdsPassword", testPostgres_unreachable_errorWithholdsPassword},
 	{"sharedDatabase_otherAppsRunsTableUntouched", testPostgres_sharedDatabase_otherAppsRunsTableUntouched},
-	{"rowFromBeforeClients_becomesTheStdioClients", testPostgres_rowFromBeforeClients_becomesTheStdioClients},
+	{"rowWithoutAClient_belongsToNoCaller", testPostgres_rowWithoutAClient_belongsToNoCaller},
 	{"clientColumn_isTheRunsClient", testPostgres_clientColumn_isTheRunsClient},
 	{"listByClient_anotherClientsBrokenRowNotRead", testPostgres_listByClient_anotherClientsBrokenRowNotRead},
 }
@@ -109,30 +109,53 @@ func testPostgres_listByClient_anotherClientsBrokenRowNotRead(t *testing.T, srv 
 	if _, err := store.List(ctxFor(t), domain.RunFilter{}); err == nil {
 		t.Fatal("the operator's list decoded a broken row; the fixture checks nothing")
 	}
+	if _, err := store.GetOwned(ctxFor(t), "fuseone-pilot", "run-theirs"); !errors.Is(err, domain.ErrRunNotFound) {
+		t.Fatalf("GetOwned(another client's broken row) = %v, want not found", err)
+	}
+	if _, err := store.GetOwned(ctxFor(t), "fuseone-staging", "run-theirs"); err == nil || errors.Is(err, domain.ErrRunNotFound) {
+		t.Fatalf("GetOwned(its own broken row) = %v, want the decode failure", err)
+	}
 }
 
-// A run recorded before runs carried a client was recorded over stdio, the
-// one transport that wrote to this store then: migrating makes it the stdio
-// client's, by id and in a list, and no other client's.
-func testPostgres_rowFromBeforeClients_becomesTheStdioClients(t *testing.T, srv *pgtest.Server) {
+// A run whose client was never recorded, from before the column or from a
+// binary of that time still writing, is no caller's: neither stdio's nor a
+// clients file's. Only the operator sees it.
+func testPostgres_rowWithoutAClient_belongsToNoCaller(t *testing.T, srv *pgtest.Server) {
 	dsn := srv.Database(t)
 	schemaOneWithARun(t, dsn)
 	if applied := migrate(t, dsn); len(applied) == 0 || applied[0] != 2 {
 		t.Fatalf("Migrate applied %v, want 2 and on", applied)
 	}
+	putWithoutAClient(t, dsn)
 	store := openPostgres(t, dsn)
-	got, err := store.Get(ctxFor(t), "run-old")
-	if err != nil || got.Client != domain.StdioClientName || got.Repository != "acme/api" {
-		t.Fatalf("Get = %+v, %v; want the run, the stdio client's", got, err)
-	}
-	for client, want := range map[string]int{domain.StdioClientName: 1, "fuseone-pilot": 0} {
-		if runs, err := store.List(ctxFor(t), domain.RunFilter{Client: client}); err != nil || len(runs) != want {
-			t.Fatalf("List(%s) = %v, %v; want %d runs", client, listIDs(runs), err, want)
+	for _, id := range []string{"run-old", "run-late"} {
+		if got, err := store.Get(ctxFor(t), id); err != nil || got.Client != domain.UnattributedClientName {
+			t.Fatalf("Get(%s) = %+v, %v; want it unattributed", id, got, err)
 		}
 	}
-	got.State = domain.StateFailed
-	if err := store.Put(ctxFor(t), got); err != nil {
-		t.Fatalf("Put by its client after the migration: %v", err)
+	for client, want := range map[string]int{domain.StdioClientName: 0, "fuseone-pilot": 0, "": 2} {
+		if runs, err := store.List(ctxFor(t), domain.RunFilter{Client: client}); err != nil || len(runs) != want {
+			t.Fatalf("List(%q) = %v, %v; want %d runs", client, listIDs(runs), err, want)
+		}
+	}
+	if _, err := store.GetOwned(ctxFor(t), domain.StdioClientName, "run-old"); !errors.Is(err, domain.ErrRunNotFound) {
+		t.Fatalf("GetOwned(stdio, run-old) = %v, want not found", err)
+	}
+}
+
+// putWithoutAClient records run-late with the statement a binary from
+// before the client column puts a run with.
+func putWithoutAClient(t *testing.T, dsn string) {
+	t.Helper()
+	conn, err := pgx.Connect(ctxFor(t), dsn)
+	if err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+	defer func() { _ = conn.Close(context.Background()) }()
+	old := `INSERT INTO forja_runs (id, repository, tool, state, started_at, run) VALUES ('run-late', 'acme/api', 'forja.doctor', 'running', '2026-10-31T13:00:00Z',
+		'{"ID":"run-late","Tool":"forja.doctor","Repository":"acme/api","State":"running","StartedAt":"2026-10-31T13:00:00Z"}')`
+	if _, err := conn.Exec(ctxFor(t), old); err != nil {
+		t.Fatalf("a put by a binary from before the column: %v", err)
 	}
 }
 

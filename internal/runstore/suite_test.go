@@ -18,6 +18,7 @@ import (
 type store interface {
 	Put(ctx context.Context, run domain.Run) error
 	Get(ctx context.Context, id string) (domain.Run, error)
+	GetOwned(ctx context.Context, client, id string) (domain.Run, error)
 	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
 }
 
@@ -54,6 +55,7 @@ var behaviours = []struct {
 	{"list_toolAndStateFilters", test_list_toolAndStateFilters},
 	{"putExistingIDOtherClient_refusedRunKeepsItsClient", test_putExistingIDOtherClient_refusedRunKeepsItsClient},
 	{"listByClient_onlyThatClientsRuns", test_listByClient_onlyThatClientsRuns},
+	{"getOwned_anotherClientsRunIsUnknown", test_getOwned_anotherClientsRunIsUnknown},
 }
 
 // runSuite runs every behaviour against stores open returns.
@@ -638,9 +640,11 @@ func test_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T, open ope
 	if _, err := store.List(ctx, domain.RunFilter{State: "paused"}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("List(unknown state) = %v, want an error naming it", err)
 	}
-	for _, repo := range []string{"acme/api\x00", "acme/\xffapi"} {
-		if _, err := store.List(ctx, domain.RunFilter{Repository: repo}); err == nil {
-			t.Errorf("List(repository %q) accepted a repository no run can have", repo)
+	for _, f := range []domain.RunFilter{
+		{Repository: "acme/api\x00"}, {Repository: "acme/\xffapi"}, {Client: "pilot\x00"}, {Client: "pilot\xff"},
+	} {
+		if _, err := store.List(ctx, f); err == nil {
+			t.Errorf("List(%+q) accepted a filter no run can match", f)
 		}
 	}
 }
@@ -723,5 +727,30 @@ func test_listByClient_onlyThatClientsRuns(t *testing.T, open opener) {
 	}
 	if all, err := store.List(ctx, domain.RunFilter{}); err != nil || len(all) != 3 {
 		t.Fatalf("List(zero filter) = %v, %v; want every client's runs", listIDs(all), err)
+	}
+}
+
+// GetOwned answers a run only to the client it was recorded under: to any
+// other client, and to no client, it is an id no run has, in the same
+// words.
+func test_getOwned_anotherClientsRunIsUnknown(t *testing.T, open opener) {
+	t.Parallel()
+	ctx := context.Background()
+	store := open(t)
+	run := sampleRun("run-1")
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.GetOwned(ctx, run.Client, "run-1")
+	if err != nil {
+		t.Fatalf("GetOwned by its client: %v", err)
+	}
+	assertSameRun(t, got, run)
+	_, unknown := store.GetOwned(ctx, "fuseone-staging", "run-2")
+	for _, client := range []string{"fuseone-staging", "FuseOne-Pilot", "", "pilot\x00"} {
+		_, err := store.GetOwned(ctx, client, "run-1")
+		if !errors.Is(err, domain.ErrRunNotFound) || strings.ReplaceAll(err.Error(), "run-1", "run-2") != unknown.Error() {
+			t.Fatalf("GetOwned(%q) = %v, want %v but for the id", client, err, unknown)
+		}
 	}
 }

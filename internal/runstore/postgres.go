@@ -92,6 +92,23 @@ func (p *Postgres) Put(ctx context.Context, run domain.Run) error {
 // Get returns the run with the given ID, or an error wrapping
 // domain.ErrRunNotFound.
 func (p *Postgres) Get(ctx context.Context, id string) (domain.Run, error) {
+	return p.read(ctx, id, "SELECT client, run FROM forja_runs WHERE id = $1", id)
+}
+
+// GetOwned is Get for the run's own client only: a run of another client,
+// or a client that is empty, is an id no run has. Another client's row is
+// never read, so nothing about it, not even a failure to decode it, can
+// reach the caller.
+func (p *Postgres) GetOwned(ctx context.Context, client, id string) (domain.Run, error) {
+	if client == "" || !domain.IsText(client) {
+		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
+	}
+	return p.read(ctx, id, "SELECT client, run FROM forja_runs WHERE id = $1 AND client = $2", id, client)
+}
+
+// read is the one run query selects for id; the arguments are any
+// because that is how pgx takes query parameters.
+func (p *Postgres) read(ctx context.Context, id, query string, args ...any) (domain.Run, error) {
 	if p.pool == nil {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, errNotOpen)
 	}
@@ -102,7 +119,7 @@ func (p *Postgres) Get(ctx context.Context, id string) (domain.Run, error) {
 	}
 	var client string
 	var doc []byte
-	err := p.pool.QueryRow(ctx, "SELECT client, run FROM forja_runs WHERE id = $1", id).Scan(&client, &doc)
+	err := p.pool.QueryRow(ctx, query, args...).Scan(&client, &doc)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
 	}
@@ -123,11 +140,18 @@ func (p *Postgres) List(ctx context.Context, f domain.RunFilter) ([]domain.Run, 
 	if p.pool == nil {
 		return nil, fmt.Errorf("list runs: %w", errNotOpen)
 	}
-	const query = `SELECT id, client, run FROM forja_runs
+	query := `SELECT id, client, run FROM forja_runs
 		WHERE ($1 = '' OR repository = $1) AND ($2 = '' OR tool = $2) AND ($3 = '' OR state = $3)
-			AND ($4::timestamptz IS NULL OR started_at >= $4) AND ($5::timestamptz IS NULL OR started_at <= $5)
-			AND ($6 = '' OR client = $6)`
-	rows, err := p.pool.Query(ctx, query, f.Repository, string(f.Tool), string(f.State), bound(f.Since), bound(f.Until), f.Client)
+			AND ($4::timestamptz IS NULL OR started_at >= $4) AND ($5::timestamptz IS NULL OR started_at <= $5)`
+	// any, because that is how pgx takes query parameters.
+	args := []any{f.Repository, string(f.Tool), string(f.State), bound(f.Since), bound(f.Until)}
+	// A plain equality, not an "empty or equal" test, so that a generic
+	// plan can still use the client index.
+	if f.Client != "" {
+		query += " AND client = $6"
+		args = append(args, f.Client)
+	}
+	rows, err := p.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list runs: %w", err)
 	}
