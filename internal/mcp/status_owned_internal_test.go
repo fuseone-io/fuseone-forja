@@ -79,11 +79,20 @@ func TestDoctor_noClientOnTheContext_noClone(t *testing.T) {
 	}
 }
 
-// failingReader fails to read every run with err, as a durable store does
-// on a row it cannot decode or a database it cannot reach.
-type failingReader struct{ err error }
+// failingReader fails every read of the caller's own runs with err, as a
+// durable store does on a row it cannot decode or a database it cannot
+// reach, and records which client it was asked for.
+type failingReader struct {
+	err   error
+	asked *[]string
+}
 
 func (f failingReader) Get(context.Context, string) (domain.Run, error) {
+	return domain.Run{}, errors.New("failingReader: Get reads any client's row")
+}
+
+func (f failingReader) GetOwned(_ context.Context, client, _ string) (domain.Run, error) {
+	*f.asked = append(*f.asked, client)
 	return domain.Run{}, f.err
 }
 
@@ -91,22 +100,22 @@ func (failingReader) List(context.Context, domain.RunFilter) ([]domain.Run, erro
 	return []domain.Run{}, nil
 }
 
-// A store failure on an id says nothing of whether the id exists: by id
-// and as a cursor, the answer is the one an id no run has gets. A caller
-// that went away still learns that.
-func TestStatus_storeFailsOnTheID_answeredAsUnknown(t *testing.T) {
+// forja.status reads a run by id and as a cursor only as the caller's own,
+// so the store never touches another client's row; a failure on the
+// caller's own run is then the caller's to see, not an unknown id.
+func TestStatus_byIDAndCursor_readOnlyAsTheCallersOwnFailurePassedOn(t *testing.T) {
 	t.Parallel()
 	ctx := withClient(context.Background(), domain.Client{Name: "client-b"})
-	empty := runstore.NewMemory()
-	for _, in := range []StatusInput{{RunID: "run-theirs"}, {Cursor: "run-theirs"}} {
-		_, unknown := status(ctx, empty, nil, in)
-		_, failed := status(ctx, failingReader{err: errors.New(`run "run-theirs": decode: json: cannot unmarshal number into Go struct field Run.Stages`)}, nil, in)
-		if unknown == nil || failed == nil || failed.Error() != unknown.Error() {
-			t.Fatalf("%+v: store failure = %v, unknown id = %v; want the same answer", in, failed, unknown)
+	down := errors.New("connection refused")
+	for _, in := range []StatusInput{{RunID: "run-x"}, {Cursor: "run-x"}} {
+		var asked []string
+		_, err := status(ctx, failingReader{err: down, asked: &asked}, nil, in)
+		if !errors.Is(err, down) || errors.Is(err, domain.ErrRunNotFound) {
+			t.Fatalf("%+v: = %v, want the store's failure", in, err)
 		}
-	}
-	if _, err := status(ctx, failingReader{err: context.Canceled}, nil, StatusInput{RunID: "run-theirs"}); !errors.Is(err, context.Canceled) {
-		t.Fatalf("cancelled read = %v, want the cancellation", err)
+		if len(asked) != 1 || asked[0] != "client-b" {
+			t.Fatalf("%+v: the store was asked for %q, want only client-b's runs", in, asked)
+		}
 	}
 }
 
@@ -115,6 +124,10 @@ func TestStatus_storeFailsOnTheID_answeredAsUnknown(t *testing.T) {
 type unownedReader struct{}
 
 func (unownedReader) Get(context.Context, string) (domain.Run, error) {
+	return domain.Run{ID: "run-unowned", Tool: domain.ToolDoctor, State: domain.StateSucceeded}, nil
+}
+
+func (unownedReader) GetOwned(context.Context, string, string) (domain.Run, error) {
 	return domain.Run{ID: "run-unowned", Tool: domain.ToolDoctor, State: domain.StateSucceeded}, nil
 }
 

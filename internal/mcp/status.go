@@ -14,6 +14,9 @@ import (
 // and every run a filter matches, sorted with domain.CompareNewestFirst.
 type RunReader interface {
 	Get(ctx context.Context, id string) (domain.Run, error)
+	// GetOwned is Get for the run's own client only: a run of another
+	// client is an id no run has, without the store reading it.
+	GetOwned(ctx context.Context, client, id string) (domain.Run, error)
 	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
 }
 
