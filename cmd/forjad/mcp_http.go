@@ -27,11 +27,13 @@ const maxRequestBody = 1 << 20
 // The MCP server's bounds. Reading a request is bounded; writing a
 // response is not, since a tool call lasts as long as its run and the
 // run's own deadline bounds it. A stop cancels every call in flight, and
-// the shutdown waits for a cancelled run's teardown.
+// the shutdown waits for a cancelled run's teardown, every step at its
+// bound, plus a margin for what runs between the steps.
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
-	mcpShutdownTimeout   = teardownSteps * mcp.FinishTimeout
+	mcpShutdownTimeout   = teardownSteps*mcp.FinishTimeout + teardownMargin
+	teardownMargin       = 15 * time.Second
 )
 
 // teardownSteps is how many steps a cancelled run takes, one after the

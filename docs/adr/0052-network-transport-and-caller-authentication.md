@@ -243,7 +243,7 @@ not a configuration change.
 
 A stop of `forjad serve` cancels the calls in flight the same way: every
 request's context ends with the server's (`http.Server.BaseContext`), and
-the drain (three minutes) outlasts a cancelled run's teardown, six steps one
+the drain (3 min 15 s) outlasts a cancelled run's teardown, six steps one
 after the other, each bounded by `FinishTimeout` or the workspace drivers'
 close bound of the same length. So a cancelled run removes its workspace,
 releases its claim and is recorded `failed` before the process exits. That

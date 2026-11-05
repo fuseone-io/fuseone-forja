@@ -142,7 +142,7 @@ func TestServeMCPHTTP_stoppedDuringImplement_runTornDownBeforeReturn(t *testing.
 func TestMCPHTTPConfig_drain_outlastsTheTeardownBound(t *testing.T) {
 	t.Parallel()
 	cfg, err := mcpHTTPConfig(envOf(map[string]string{EnvMCPAddr: "127.0.0.1:0", EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}))
-	if want := 6 * mcp.FinishTimeout; err != nil || cfg.drain < want {
-		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a drain of at least %v", cfg.drain, err, want)
+	if teardown := 6 * mcp.FinishTimeout; err != nil || cfg.drain <= teardown {
+		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a drain over the %v teardown", cfg.drain, err, teardown)
 	}
 }
