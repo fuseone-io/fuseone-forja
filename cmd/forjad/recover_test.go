@@ -145,6 +145,33 @@ func TestRecoverClaims_crashedRunningRun_endsFailedInterrupted(t *testing.T) {
 	}
 }
 
+// A run that recorded why it was failing before the crash ends with that
+// reason, and stderr says the reason recorded, not interrupted.
+func TestRecoverClaims_reasonRecordedBeforeCrash_reportedAsRecorded(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	runs := runstore.NewMemory()
+	run := runningRun()
+	run.Reason = domain.ReasonWallClock
+	if err := runs.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	deps := mcp.Deps{Runs: runs, Now: func() time.Time { return recoveredAt }}
+	var stderr bytes.Buffer
+	claims, _ := crashedClaim(t, "c1a1")
+
+	if err := recoverClaims(ctx, claims, deps, &stderr); err != nil {
+		t.Fatalf("recoverClaims: %v", err)
+	}
+	got, err := runs.Get(ctx, run.ID)
+	if err != nil || got.State != domain.StateFailed || got.Reason != domain.ReasonWallClock {
+		t.Fatalf("recovered run = %q %q (%v), want failed wall_clock", got.State, got.Reason, err)
+	}
+	if !strings.Contains(stderr.String(), "ended failed: wall_clock") {
+		t.Fatalf("stderr %q does not report the recorded reason", stderr.String())
+	}
+}
+
 // A run that had already ended before the crash keeps its outcome; one the
 // store never had, such as every run of an in-memory store after a
 // restart, is no failure.

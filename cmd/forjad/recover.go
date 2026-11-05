@@ -73,6 +73,6 @@ func interruptRun(ctx context.Context, deps mcp.Deps, id string, stderr io.Write
 		return fmt.Errorf("close run %s: %w", id, err)
 	}
 	// The exit code is the only channel left when stderr itself fails.
-	_, _ = fmt.Fprintf(stderr, "forjad: run %s ended failed: %s\n", id, domain.ReasonInterrupted)
+	_, _ = fmt.Fprintf(stderr, "forjad: run %s ended failed: %s\n", id, run.Reason)
 	return nil
 }
