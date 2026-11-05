@@ -234,7 +234,8 @@ App's permissions and the private key's handling, is
 | `FORJA_GITHUB_INSTALLATION_ID` | numeric Installation ID on the pilot | production |
 | `FORJA_GITHUB_PRIVATE_KEY_FILE` | **path** to the PEM file mounted by the vault; the key never goes in a variable | production |
 | `FORJA_GITHUB_TOKEN` | fine-grained PAT restricted to the pilot | development only; ignored when `FORJA_GITHUB_APP_ID` is set |
-| `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it | recommended; unset, a claim left by a crash is freed only by its lease |
+| `FORJA_STATE_DIR` | directory for the claim journal; on start, claims left by a crash are released from it. One `serve` per directory: a second refuses to start while the first holds `forjad.lock`. Must be on a local disk: `flock` does not exclude across hosts on NFS mounted `nolock` or CIFS mounted `nobrl` | recommended; unset, a claim left by a crash is freed only by its lease |
+| `FORJA_DATABASE_URL` | Postgres URL the run store is kept in; apply the schema first with `forjad migrate`, which is safe to run again | recommended; unset, runs are kept in memory and a restart loses them |
 | `FORJA_CLAIM_LEASE` | Go duration the run holds `refs/forja/claims/<n>` for; must exceed the contract's `limits.wall_clock` | optional; default `wall_clock + 15m`, or `60m` without limits |
 | `FORJA_REGISTRY_CREDENTIALS` | **path** to a JSON file mounted by the vault, `{"<entry>": {"username": "...", "password": "..."}}`, one read credential per area | needed by any contract that declares `registries`; unset, such a run is refused at launch |
 | `FORJA_PRICE_INPUT`, `FORJA_PRICE_CACHE_WRITE`, `FORJA_PRICE_CACHE_READ`, `FORJA_PRICE_OUTPUT` | non-negative integer, USD micros per million tokens of that class | optional, all five price variables or none; unset, `forja.implement` and `forja.status` report no `estimated_cost_usd_micros` |
@@ -242,6 +243,7 @@ App's permissions and the private key's handling, is
 | `FORJA_MCP_ADDR` | `host:port` `forjad serve` speaks MCP over Streamable HTTP on, at `/mcp`, stateless | optional; unset, MCP over stdio. Unless the host is a literal loopback IP (`127.0.0.1`, `::1`; not `localhost`) it needs the TLS pair below |
 | `FORJA_CLIENTS_FILE` | **path** to the clients file mounted by the vault: `clients:` entries of `name` (letters, digits, `.`, `_`, `-`; entries sharing a name must share the rest), `token_sha256` (hex SHA-256 of the client's bearer), `repositories` (`owner/name` or `owner/*`) and `rotation_owner` | required with `FORJA_MCP_ADDR`; missing, empty or malformed, `forjad` refuses to start |
 | `FORJA_TLS_CERT_FILE`, `FORJA_TLS_KEY_FILE` | **paths** to the PEM certificate and key the HTTP server presents | both or neither; required when `FORJA_MCP_ADDR` is not loopback |
+| `FORJA_MCP_ALLOWED_ORIGINS` | comma-separated exact `scheme://host[:port]` values a request's `Origin` header may carry; no wildcard, no path, compared case-insensitively | optional, read with `FORJA_MCP_ADDR`; default empty, so any request carrying `Origin` is refused. A malformed entry stops `forjad` at start |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
@@ -257,9 +259,21 @@ npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
 With `FORJA_MCP_ADDR` set, the same tools are served over HTTP instead, to a
 client that sends `Authorization: Bearer <token>` with a token whose SHA-256
 is in `FORJA_CLIENTS_FILE`; any other request to `/mcp` is answered `401`, and
-a body over 1 MiB `413`. Every authenticated client reaches every repository
-the GitHub App reaches: `repositories` is parsed and validated but not yet
-enforced, and a call in flight is not yet cancelled when its client goes away. A bearer is 32 bytes from a cryptographic random source,
+a body over 1 MiB `413`. Before the bearer is checked, a request whose
+`Origin` is not in `FORJA_MCP_ALLOWED_ORIGINS`, `null` and any `OPTIONS`
+preflight included, is answered a bare `403` and logged with the client
+address and the `Origin`; a request without `Origin` goes on to the bearer.
+No CORS is served. After the bearer, a POST whose `MCP-Protocol-Version` is
+missing or is not `2026-07-28` is answered `400`: HTTP speaks that version
+alone, the one where a client that closes its connection cancels its call.
+A `forja.implement` or `forja.verify` whose client goes away is stopped: its
+workspace is removed, its claim released and the run recorded `failed`. A
+stop (`SIGTERM`) cancels every call in flight the same way and waits up to
+3 min 15 s for those teardowns before `forjad` exits; the deployment's
+`terminationGracePeriodSeconds` (or stop timeout) must exceed that drain, or
+a kill mid-teardown leaves the claim and the run behind. Every authenticated
+client reaches every repository the GitHub App reaches: `repositories` is
+parsed and validated but not yet enforced. A bearer is 32 bytes from a cryptographic random source,
 base64url-encoded, one per integration and environment; a rotation adds an
 entry with the same `name` and a new hash, then removes the old one, and takes
 effect on restart.

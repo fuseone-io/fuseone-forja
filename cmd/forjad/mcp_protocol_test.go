@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -43,7 +45,7 @@ func TestMCPHandler_protocolVersionHeader_only2026ReachesTheTool(t *testing.T) {
 			var calls atomic.Int32
 			h := mcpHandler(probeServer(&calls), testRegistry(t))
 			o := sendOptions{authorization: "Bearer " + testBearer, version: tt.version, method: http.MethodPost}
-			rec := send(t, h, o, tt.body)
+			rec := sendMCP(t, h, o, tt.body)
 			if rec.Code != tt.want || calls.Load() != tt.wantRuns {
 				t.Fatalf("status %d, calls %d; want %d and %d; body %q", rec.Code, calls.Load(), tt.want, tt.wantRuns, rec.Body.String())
 			}
@@ -57,9 +59,36 @@ func TestMCPHandler_noBearerNoVersion_401NotVersionError(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
 	h := mcpHandler(probeServer(&calls), testRegistry(t))
-	rec := send(t, h, sendOptions{method: http.MethodPost}, callBody("x"))
+	rec := sendMCP(t, h, sendOptions{method: http.MethodPost}, callBody("x"))
 	if rec.Code != http.StatusUnauthorized || calls.Load() != 0 {
 		t.Fatalf("status %d, calls %d: want 401 and no tool run", rec.Code, calls.Load())
+	}
+}
+
+// The Origin is checked before the bearer and the version: a request from
+// an Origin outside the list, with neither a bearer nor a version, or with
+// a bearer and no version, is refused 403 and learns nothing else.
+func TestMCPStack_badOriginNoVersion_403NotVersionError(t *testing.T) {
+	t.Parallel()
+	for name, authorization := range map[string]string{"no bearer": "", "valid bearer": "Bearer " + testBearer} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			h := originStack(t, allowedOrigin, &calls, &bytes.Buffer{})
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://127.0.0.1"+mcpPath, strings.NewReader(legacyCall))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			req.Header.Set("Origin", "https://evil.example")
+			if authorization != "" {
+				req.Header.Set("Authorization", authorization)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			refusedBare(t, rec)
+			if calls.Load() != 0 {
+				t.Fatalf("a tool ran %d times behind a refused Origin", calls.Load())
+			}
+		})
 	}
 }
 
@@ -69,7 +98,7 @@ func TestMCPHandler_getWithoutVersion_methodNotAllowed(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
 	h := mcpHandler(probeServer(&calls), testRegistry(t))
-	rec := send(t, h, sendOptions{authorization: "Bearer " + testBearer, method: http.MethodGet}, "")
+	rec := sendMCP(t, h, sendOptions{authorization: "Bearer " + testBearer, method: http.MethodGet}, "")
 	if rec.Code != http.StatusMethodNotAllowed || calls.Load() != 0 {
 		t.Fatalf("status %d, calls %d: want 405 and no tool run", rec.Code, calls.Load())
 	}

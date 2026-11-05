@@ -57,9 +57,9 @@ func await(t *testing.T, done <-chan struct{}, what string) {
 	}
 }
 
-// statusOf is the run's state as forja.status answers it on a new
+// stateOverHTTP is the run's state as forja.status answers it on a new
 // connection of the same client.
-func statusOf(t *testing.T, addr, runID string) string {
+func stateOverHTTP(t *testing.T, addr, runID string) string {
 	t.Helper()
 	cs, err := connectHTTP(t, "http://"+addr+mcpPath, testBearer, http.DefaultTransport)
 	if err != nil {
@@ -95,10 +95,10 @@ func TestServeMCPHTTP_clientDropsDuringImplement_runTornDownAndFailed(t *testing
 	await(t, fx.ws.closed, "the workspace closing")
 	await(t, fx.claims.released, "the claim release")
 	deadline := time.Now().Add(waitBound)
-	state := statusOf(t, addr, cancelRunID)
+	state := stateOverHTTP(t, addr, cancelRunID)
 	for state != string(domain.StateFailed) && time.Now().Before(deadline) {
 		time.Sleep(20 * time.Millisecond)
-		state = statusOf(t, addr, cancelRunID)
+		state = stateOverHTTP(t, addr, cancelRunID)
 	}
 	if state != string(domain.StateFailed) {
 		t.Fatalf("forja.status state %q after the caller left, want failed", state)

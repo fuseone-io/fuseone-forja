@@ -84,16 +84,16 @@ func setStandardHeaders(h http.Header, body string) {
 // authorization as the Authorization header when it is not empty.
 func post(t *testing.T, h http.Handler, authorization, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	return send(t, h, sendOptions{authorization: authorization, version: protocol2026, method: http.MethodPost}, body)
+	return sendMCP(t, h, sendOptions{authorization: authorization, version: protocol2026, method: http.MethodPost}, body)
 }
 
-// sendOptions is what send sends besides the body: an empty authorization
+// sendOptions is what sendMCP sends besides the body: an empty authorization
 // or version is a header left out.
 type sendOptions struct {
 	authorization, version, method string
 }
 
-func send(t *testing.T, h http.Handler, o sendOptions, body string) *httptest.ResponseRecorder {
+func sendMCP(t *testing.T, h http.Handler, o sendOptions, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), o.method, "http://127.0.0.1"+mcpPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

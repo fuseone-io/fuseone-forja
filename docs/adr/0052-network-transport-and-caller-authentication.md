@@ -247,9 +247,10 @@ the drain (3 min 15 s) outlasts a cancelled run's teardown, six steps one
 after the other, each bounded by `FinishTimeout` or the workspace drivers'
 close bound of the same length. So a cancelled run removes its workspace,
 releases its claim and is recorded `failed` before the process exits. That
-holds only if the process is given the drain: the deployment's termination
-grace period must exceed it (Kubernetes' default of 30 s does not), and the
-chart sets it when it lands. A stop also cancels short read-only calls in
+holds only if the process is given the drain: the pod's
+`terminationGracePeriodSeconds` (or the runtime's stop timeout) must exceed
+it. Kubernetes' default of 30 s does not; the value is the maintainer's to
+set when the chart lands. A stop also cancels short read-only calls in
 flight, and a run cancelled between its push and its pull request leaves
 the pushed branch behind.
 

@@ -1,0 +1,353 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": true
+  },
+  "description": "Validate the repository's .forja.yaml at its default branch and run its setup and gates there, with no push.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "repository": {
+        "description": "repository in owner/name form",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository"
+    ],
+    "type": "object"
+  },
+  "name": "forja.doctor",
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "contract": {
+        "additionalProperties": false,
+        "properties": {
+          "agent_context": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "gates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "needs": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": [
+                    "null",
+                    "array"
+                  ]
+                },
+                "run": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "run",
+                "needs"
+              ],
+              "type": "object"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "human_merge_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "image": {
+            "type": "string"
+          },
+          "limits": {
+            "additionalProperties": false,
+            "properties": {
+              "max_attempts": {
+                "type": "integer"
+              },
+              "max_diff_lines": {
+                "type": "integer"
+              },
+              "wall_clock": {
+                "type": "integer"
+              }
+            },
+            "required": [
+              "wall_clock",
+              "max_diff_lines",
+              "max_attempts"
+            ],
+            "type": "object"
+          },
+          "proof_paths": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "registries": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "services": {
+            "additionalProperties": {
+              "additionalProperties": false,
+              "properties": {
+                "env": {
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "type": "object"
+                },
+                "image": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "image",
+                "env"
+              ],
+              "type": "object"
+            },
+            "type": "object"
+          },
+          "setup": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "null",
+              "array"
+            ]
+          },
+          "verify": {
+            "additionalProperties": false,
+            "properties": {
+              "exclude": {
+                "items": {
+                  "type": "string"
+                },
+                "type": [
+                  "null",
+                  "array"
+                ]
+              }
+            },
+            "required": [
+              "exclude"
+            ],
+            "type": "object"
+          },
+          "version": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "version",
+          "image",
+          "setup",
+          "services",
+          "registries",
+          "gates",
+          "verify",
+          "proof_paths",
+          "human_merge_paths",
+          "limits",
+          "agent_context"
+        ],
+        "type": [
+          "null",
+          "object"
+        ]
+      },
+      "contract_sha": {
+        "type": "string"
+      },
+      "errors": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "line": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "line",
+            "message"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "failed_step": {
+        "type": "string"
+      },
+      "gates": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "integer"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            },
+            "stdout": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "command",
+            "status",
+            "exit_code",
+            "duration",
+            "stdout",
+            "stderr",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "ok": {
+        "type": "boolean"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "run_id": {
+        "type": "string"
+      },
+      "setup": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "command": {
+              "type": "string"
+            },
+            "duration": {
+              "type": "integer"
+            },
+            "exit_code": {
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "status": {
+              "type": "string"
+            },
+            "stderr": {
+              "type": "string"
+            },
+            "stdout": {
+              "type": "string"
+            },
+            "truncated": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "name",
+            "command",
+            "status",
+            "exit_code",
+            "duration",
+            "stdout",
+            "stderr",
+            "truncated"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "sha": {
+        "type": "string"
+      },
+      "warnings": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      }
+    },
+    "required": [
+      "repository",
+      "sha",
+      "contract_sha",
+      "ok",
+      "errors",
+      "setup",
+      "gates",
+      "warnings"
+    ],
+    "type": "object"
+  }
+}

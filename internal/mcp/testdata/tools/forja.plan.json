@@ -1,0 +1,99 @@
+{
+  "annotations": {
+    "idempotentHint": false,
+    "readOnlyHint": true
+  },
+  "description": "Checkout and agent_context for an issue: what the agent will see.",
+  "inputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "base_branch": {
+        "description": "branch the run starts from; empty means the default branch",
+        "type": "string"
+      },
+      "issue": {
+        "description": "issue number to plan",
+        "type": "integer"
+      },
+      "repository": {
+        "description": "repository in owner/name form",
+        "type": "string"
+      }
+    },
+    "required": [
+      "repository",
+      "issue"
+    ],
+    "type": "object"
+  },
+  "name": "forja.plan",
+  "outputSchema": {
+    "additionalProperties": false,
+    "properties": {
+      "agent_context": {
+        "items": {
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "path",
+            "content"
+          ],
+          "type": "object"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      },
+      "base_branch": {
+        "type": "string"
+      },
+      "base_sha": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "contract_sha": {
+        "type": "string"
+      },
+      "issue": {
+        "type": "integer"
+      },
+      "repository": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "warnings": {
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "null",
+          "array"
+        ]
+      }
+    },
+    "required": [
+      "repository",
+      "issue",
+      "base_branch",
+      "base_sha",
+      "contract_sha",
+      "title",
+      "body",
+      "agent_context",
+      "warnings"
+    ],
+    "type": "object"
+  }
+}
