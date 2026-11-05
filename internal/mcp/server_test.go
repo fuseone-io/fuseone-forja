@@ -60,7 +60,7 @@ func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja
 func connectDeps(t *testing.T, deps forja.Deps) *sdk.ClientSession {
 	t.Helper()
 	ctx := context.Background()
-	server := forja.New(deps)
+	server := forja.New(deps, nil)
 	clientTransport, serverTransport := sdk.NewInMemoryTransports()
 
 	serverSession, err := server.Connect(ctx, serverTransport, nil)
