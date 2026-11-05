@@ -133,6 +133,20 @@ GitHub App:
   claim is attempted. The App's installations stay the outer bound (ADR
   0051 §4): a repository in the list that the App cannot reach still fails
   where it fails today.
+  - **Case.** Owners and names compare **without regard to ASCII case**,
+    because GitHub's owner and repository names are case-insensitive:
+    `Acme/Payments` is `acme/payments`, and a case-sensitive match would
+    refuse a client the same repository it was given. Only ASCII letters,
+    digits, `.`, `_` and `-` are accepted on either side, so Unicode case
+    folding (the Kelvin sign folds to `k`) cannot make a different string
+    match.
+  - **Shape.** A requested repository is exactly one owner and one name. A
+    pattern or a request whose owner or name is `.` or `..` is refused:
+    the clients file refuses such a pattern at start, and the match refuses
+    such a request whatever the patterns.
+  - **stdio.** The stdio client is the fixed name `stdio` and reaches every
+    repository, as before this ADR; the App's installations are its only
+    bound. No entry of the clients file may take that name.
 - **Runs.** Every run records the name of the client that started it.
   `forja.status` returns only the runs of the calling client; another
   client's `run_id` is answered as unknown, not as forbidden, so a client
@@ -273,7 +287,10 @@ allowlist. A failed check is logged with the client address and the
 `Origin`, never the bearer.
 
 The handler stack, outermost first: Origin check, bearer check
-(`auth.RequireBearerToken`), the SDK's Streamable HTTP handler.
+(`auth.RequireBearerToken`), removal of the `Authorization` header, the
+SDK's Streamable HTTP handler. Once the bearer is checked, the client it
+names travels on the request's context; no tool handler can read the bearer
+itself from the request's headers.
 
 ## Alternatives considered
 
