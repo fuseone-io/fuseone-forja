@@ -23,8 +23,9 @@ func (s originSet) allows(origin string) bool {
 }
 
 // parseOrigins reads a comma-separated list of exact scheme://host[:port]
-// values. A blank list is empty; an empty entry, a wildcard, or anything
-// with a path, query, fragment or user is an error naming the entry.
+// values. A blank list is empty; an empty entry, a wildcard, anything with
+// a path, query, fragment or user, or a value no browser serialises (a
+// non-ASCII host, the scheme's default port) is an error naming the entry.
 func parseOrigins(raw string) (originSet, error) {
 	set := originSet{}
 	if strings.TrimSpace(raw) == "" {
@@ -41,21 +42,47 @@ func parseOrigins(raw string) (originSet, error) {
 }
 
 func parseOrigin(entry string) (string, error) {
-	malformed := fmt.Errorf("%q is not scheme://host[:port]", entry)
-	if strings.Contains(entry, "*") || strings.HasSuffix(entry, ":") {
-		return "", malformed
+	origin, ok := serialisedOrigin(entry)
+	if !ok {
+		return "", fmt.Errorf("%q is not scheme://host[:port] as a browser sends it", entry)
+	}
+	return origin, nil
+}
+
+// defaultPort is the port a browser leaves out of an Origin of scheme.
+func defaultPort(scheme string) string {
+	switch scheme {
+	case "http":
+		return "80"
+	case "https":
+		return "443"
+	}
+	return ""
+}
+
+// serialisedOrigin is entry lower-cased when it is an Origin a browser can
+// send.
+func serialisedOrigin(entry string) (string, bool) {
+	if strings.Contains(entry, "*") || strings.HasSuffix(entry, ":") || !isASCII(entry) {
+		return "", false
 	}
 	u, err := url.Parse(entry)
-	if err != nil || u.Hostname() == "" {
-		return "", malformed
+	if err != nil || u.Hostname() == "" || (u.Port() != "" && u.Port() == defaultPort(u.Scheme)) {
+		return "", false
 	}
 	// Whatever url.Parse put outside scheme and host makes the rebuilt
 	// value differ from the entry.
 	origin := u.Scheme + "://" + strings.ToLower(u.Host)
-	if origin != strings.ToLower(entry) {
-		return "", malformed
+	return origin, origin == strings.ToLower(entry)
+}
+
+func isASCII(s string) bool {
+	for i := range len(s) {
+		if s[i] >= 0x80 {
+			return false
+		}
 	}
-	return origin, nil
+	return true
 }
 
 // mcpStack is the MCP endpoint as served: the Origin check, then the
