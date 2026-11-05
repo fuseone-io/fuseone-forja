@@ -239,6 +239,9 @@ App's permissions and the private key's handling, is
 | `FORJA_REGISTRY_CREDENTIALS` | **path** to a JSON file mounted by the vault, `{"<entry>": {"username": "...", "password": "..."}}`, one read credential per area | needed by any contract that declares `registries`; unset, such a run is refused at launch |
 | `FORJA_PRICE_INPUT`, `FORJA_PRICE_CACHE_WRITE`, `FORJA_PRICE_CACHE_READ`, `FORJA_PRICE_OUTPUT` | non-negative integer, USD micros per million tokens of that class | optional, all five price variables or none; unset, `forja.implement` and `forja.status` report no `estimated_cost_usd_micros` |
 | `FORJA_PRICE_COMPUTE_MINUTE` | non-negative integer, USD micros per container-minute | with the four token prices |
+| `FORJA_MCP_ADDR` | `host:port` `forjad serve` speaks MCP over Streamable HTTP on, at `/mcp`, stateless | optional; unset, MCP over stdio. Unless the host is a literal loopback IP (`127.0.0.1`, `::1`; not `localhost`) it needs the TLS pair below |
+| `FORJA_CLIENTS_FILE` | **path** to the clients file mounted by the vault: `clients:` entries of `name` (letters, digits, `.`, `_`, `-`; entries sharing a name must share the rest), `token_sha256` (hex SHA-256 of the client's bearer), `repositories` (`owner/name` or `owner/*`) and `rotation_owner` | required with `FORJA_MCP_ADDR`; missing, empty or malformed, `forjad` refuses to start |
+| `FORJA_TLS_CERT_FILE`, `FORJA_TLS_KEY_FILE` | **paths** to the PEM certificate and key the HTTP server presents | both or neither; required when `FORJA_MCP_ADDR` is not loopback |
 
 `make build` writes the binary to `bin/forjad`. The server speaks MCP over
 stdio, so a client starts it as a subprocess:
@@ -250,6 +253,16 @@ claude mcp add forja -- /path/to/fuseone-forja/bin/forjad serve
 # MCP Inspector
 npx @modelcontextprotocol/inspector /path/to/fuseone-forja/bin/forjad serve
 ```
+
+With `FORJA_MCP_ADDR` set, the same tools are served over HTTP instead, to a
+client that sends `Authorization: Bearer <token>` with a token whose SHA-256
+is in `FORJA_CLIENTS_FILE`; any other request to `/mcp` is answered `401`, and
+a body over 1 MiB `413`. Every authenticated client reaches every repository
+the GitHub App reaches: `repositories` is parsed and validated but not yet
+enforced, and a call in flight is not yet cancelled when its client goes away. A bearer is 32 bytes from a cryptographic random source,
+base64url-encoded, one per integration and environment; a rotation adds an
+entry with the same `name` and a new hash, then removes the old one, and takes
+effect on restart.
 
 Either client lists the five tools with their input and output schemas and
 the read/write annotation FuseOne's Gate reads. `forja.status` and

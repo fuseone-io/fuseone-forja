@@ -191,7 +191,7 @@ func TestStartMetrics_servesTheDepsRunStore(t *testing.T) {
 	}
 	bound := make(chan string, 1)
 	var stderr bytes.Buffer
-	stop, err := host{listen: capturingListen(bound)}.startMetrics(context.Background(), &stderr, "127.0.0.1:0", mcp.Deps{Runs: store})
+	stop, _, err := host{listen: capturingListen(bound)}.startMetrics(context.Background(), &stderr, "127.0.0.1:0", mcp.Deps{Runs: store})
 	if err != nil {
 		t.Fatalf("startMetrics: %v", err)
 	}
@@ -207,5 +207,167 @@ func TestStartMetrics_servesTheDepsRunStore(t *testing.T) {
 	}
 	if res, _, err := get(t, "http://"+addr+"/"); err != nil || res.StatusCode != http.StatusNotFound {
 		t.Fatalf("GET / = %v, %v; want 404", res, err)
+	}
+}
+
+// probe is one answer of a health endpoint.
+type probe struct {
+	status int
+	body   string
+}
+
+func probeOf(t *testing.T, url string) probe {
+	t.Helper()
+	res, body, err := get(t, url)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	// A cached answer would report a state the server has left.
+	if ct, cc := res.Header.Get("Content-Type"), res.Header.Get("Cache-Control"); ct != "text/plain; charset=utf-8" || cc != "no-store" {
+		t.Fatalf("GET %s headers: Content-Type %q, Cache-Control %q; want plain text, no-store", url, ct, cc)
+	}
+	return probe{status: res.StatusCode, body: body}
+}
+
+// The bodies are fixed strings: a probe answers nothing about the runs the
+// store holds, whoever asks.
+func TestStartMetrics_probes_readyzFollowsServingHealthzAlwaysOK(t *testing.T) {
+	t.Parallel()
+	store := runstore.NewMemory()
+	run := domain.Run{ID: "run-secret-id", Tool: domain.ToolImplement, Repository: "acme/private-api",
+		State: domain.StateRunning, StartedAt: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	if err := store.Put(context.Background(), run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	bound := make(chan string, 1)
+	var stderr bytes.Buffer
+	stop, ready, err := host{listen: capturingListen(bound)}.startMetrics(context.Background(), &stderr, "127.0.0.1:0", mcp.Deps{Runs: store})
+	if err != nil {
+		t.Fatalf("startMetrics: %v", err)
+	}
+	defer stop()
+	base := "http://" + <-bound
+
+	steps := []struct {
+		name            string
+		serving         bool
+		healthz, readyz probe
+	}{
+		{name: "before the MCP server serves", serving: false,
+			healthz: probe{http.StatusOK, "ok\n"}, readyz: probe{http.StatusServiceUnavailable, "not ready\n"}},
+		{name: "while it serves", serving: true,
+			healthz: probe{http.StatusOK, "ok\n"}, readyz: probe{http.StatusOK, "ready\n"}},
+		{name: "after its session ended", serving: false,
+			healthz: probe{http.StatusOK, "ok\n"}, readyz: probe{http.StatusServiceUnavailable, "not ready\n"}},
+	}
+	for _, step := range steps {
+		ready.serving.Store(step.serving)
+		if got := probeOf(t, base+"/healthz"); got != step.healthz {
+			t.Fatalf("%s: /healthz = %+v, want %+v", step.name, got, step.healthz)
+		}
+		if got := probeOf(t, base+"/readyz"); got != step.readyz {
+			t.Fatalf("%s: /readyz = %+v, want %+v", step.name, got, step.readyz)
+		}
+	}
+}
+
+// awaitReadyz polls /readyz until it answers 200 or the deadline passes:
+// the server marks itself serving on its own goroutine.
+func awaitReadyz(t *testing.T, url string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if res, _, err := get(t, url); err == nil && res.StatusCode == http.StatusOK {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("%s never answered 200", url)
+}
+
+func TestServe_mcpServing_readyzOK(t *testing.T) {
+	t.Parallel()
+	addr, cs, cancel, exited := servedMetrics(t)
+	defer func() { _ = cs.Close() }()
+
+	awaitReadyz(t, "http://"+addr+"/readyz")
+	cancel()
+	if code := <-exited; code != 0 {
+		t.Fatalf("serve after cancel = %d, want 0", code)
+	}
+}
+
+// failingTransport is a transport whose connection cannot be established.
+type failingTransport struct{}
+
+func (failingTransport) Connect(context.Context) (sdk.Connection, error) {
+	return nil, errors.New("transport refused")
+}
+
+func TestServeMCP_connectFails_neverServing(t *testing.T) {
+	t.Parallel()
+	ready := new(readiness)
+	server := sdk.NewServer(&sdk.Implementation{Name: "forjad-test", Version: "test"}, nil)
+	if err := serveMCP(context.Background(), server, failingTransport{}, ready); err == nil {
+		t.Fatal("serveMCP over a refused transport returned nil")
+	}
+	if ready.serving.Load() {
+		t.Fatal("ready although the session never started")
+	}
+}
+
+func awaitServing(t *testing.T, ready *readiness, ended <-chan error) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !ready.serving.Load() {
+		select {
+		case err := <-ended:
+			t.Fatalf("serveMCP returned %v before serving", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("never serving")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// Readiness holds while the session runs and drops when it ends, whichever
+// end stops it: the client leaving or serve's context.
+func TestServeMCP_sessionEnds_servingDropped(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		end       func(cancel context.CancelFunc, cs *sdk.ClientSession)
+		cancelled bool
+	}{
+		{name: "client closed", end: func(_ context.CancelFunc, cs *sdk.ClientSession) { _ = cs.Close() }},
+		{name: "context cancelled", end: func(cancel context.CancelFunc, _ *sdk.ClientSession) { cancel() }, cancelled: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			clientTransport, serverTransport := sdk.NewInMemoryTransports()
+			ready := new(readiness)
+			server := sdk.NewServer(&sdk.Implementation{Name: "forjad-test", Version: "test"}, nil)
+			ended := make(chan error, 1)
+			go func() { ended <- serveMCP(ctx, server, serverTransport, ready) }()
+			cs, err := sdk.NewClient(&sdk.Implementation{Name: "forjad-test-client", Version: "test"}, nil).Connect(ctx, clientTransport, nil)
+			if err != nil {
+				t.Fatalf("client.Connect: %v", err)
+			}
+			defer func() { _ = cs.Close() }()
+			awaitServing(t, ready, ended)
+
+			tt.end(cancel, cs)
+			if err := <-ended; tt.cancelled && !errors.Is(err, context.Canceled) {
+				t.Fatalf("serveMCP after cancel = %v, want context.Canceled", err)
+			}
+			if ready.serving.Load() {
+				t.Fatal("still ready after the session ended")
+			}
+		})
 	}
 }
