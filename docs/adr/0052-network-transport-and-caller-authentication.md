@@ -257,14 +257,22 @@ not a configuration change.
 
 A stop of `forjad serve` cancels the calls in flight the same way: every
 request's context ends with the server's (`http.Server.BaseContext`), and
-the drain (3 min 15 s) outlasts a cancelled run's teardown, six steps one
-after the other, each bounded by `FinishTimeout` or the workspace drivers'
-close bound of the same length. So a cancelled run removes its workspace,
-releases its claim and is recorded `failed` before the process exits. That
-holds only if the process is given the drain: the pod's
-`terminationGracePeriodSeconds` (or the runtime's stop timeout) must exceed
-it. Kubernetes' default of 30 s does not; the value is the maintainer's to
-set when the chart lands. A stop also cancels short read-only calls in
+the drain (4 min 15 s) outlasts a cancelled run's longest teardown plus a
+15 s margin. The longest is a caller that leaves during the claim: eight
+30 s steps one after the other, the ref mutation and the read-back that
+settles an answer it lost (`claim.SettleBound`), then the six records and
+the release the run still makes (`mcp.CancelledRunRecords` of
+`FinishTimeout` each). A caller that leaves as the agent runs takes the
+agent's two teardown steps, reading the proxies and removing the workspace,
+then four records, which is shorter. The drain is derived from those
+constants, and a test counts the steps against them. So a cancelled run
+removes its workspace, releases its claim and is recorded `failed` before
+the process exits. That holds only if the process is given the drain: the
+pod's `terminationGracePeriodSeconds` (or the runtime's stop timeout) must
+exceed the drain, 255 s; 270 s is the value to set. Kubernetes' default of
+30 s does not, and neither does 230 s, which covered seven steps before the
+read-back was added. There is no chart in `deploy/` yet; the value goes in
+when it lands. A stop also cancels short read-only calls in
 flight, and a run cancelled between its push and its pull request leaves
 the pushed branch behind.
 
