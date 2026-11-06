@@ -95,28 +95,32 @@ items 2 to 5; roadmap, "How FuseOne reaches an ephemeral Forja", items 4 to
 `forja.implement` and `forja.verify` do, inside the call, everything that can
 refuse the operation, and nothing after:
 
-1. Validate the input (§3 and §4 fields included).
-2. Look up the idempotency key (§3). A replay answers here.
-3. Admission (§6).
-4. What each tool reads before its claim today: the correction round's pull
+1. Validate the input's shape: types, lengths and character sets (§3, §4).
+   Nothing here depends on the clock.
+2. Look up the idempotency key (§3). A replay answers here, whatever the
+   clock, the capacity or the claim now say.
+3. Refuse a `deadline` already passed (§4).
+4. Admission: take a slot (§6).
+5. What each tool reads before its claim today: the correction round's pull
    request (`openRound`, `internal/mcp/implement_round.go`) or the verified
    pull request (`verify`), then the contract at the base commit to size the
    lease (`lifecycle.lease`).
-5. Apply the caller's deadline and budget (§4).
-6. Take the claim.
-7. In one store transaction, record the run as `running` and the idempotency
+6. Apply the caller's deadline and budget (§4).
+7. Take the claim.
+8. In one store transaction, record the run as `running` and the idempotency
    key (§3).
-8. Hand the run to the **run supervisor** and answer `RunStarted` (schemas
+9. Hand the run to the **run supervisor** and answer `RunStarted` (schemas
    below).
 
-Any refusal in steps 1 to 6 is a tool error, records no run, stores no key and
-leaves no claim, as a refused claim does today. Once the claim is held (step
-6), steps 7 and 8 run on a context detached from the request's, each bounded
-by `FinishTimeout`: from that point the run exists whether or not the caller
-is still there, and a caller that went away finds it again with the same
-idempotency key (§3). A step 7 that fails releases the claim on that detached
-context and is the tool error, as `lifecycle.run` does with a first record
-that fails today.
+Any refusal in steps 1 to 7 is a tool error, records no run, stores no key and
+leaves no claim, as a refused claim does today; a refusal after step 4 gives
+its slot back before it answers. Once the claim is held (step 7), steps 8 and
+9 run on a context detached from the request's, each bounded by
+`FinishTimeout`: from that point the run exists whether or not the caller is
+still there, and a caller that went away finds it again with the same
+idempotency key (§3). A step 8 that fails releases the claim on that detached
+context, gives the slot back and is the tool error, as `lifecycle.run` does
+with a first record that fails today.
 
 The **run supervisor** is a struct of `internal/mcp` that `serve` builds and
 owns. It holds a context derived from `serve`'s own (not from any request's),
@@ -132,11 +136,11 @@ the protocol: Forja sends no notification and never calls the client (ADR
 statuses (roadmap, item 5).
 
 **What the request's cancellation still does.** `PropagateRequestCancellation`
-stays on. A request that ends during steps 1 to 5 stops the call with nothing
-done. One that ends during step 6 is the claim's own case: the claim settles
-its answer within `claim.SettleBound` and gives back a ref it took but cannot
-hand over, as today (`internal/claim/mutation.go`). One that ends after step 6
-changes nothing: the run carries on. A dropped request therefore no longer
+stays on. A request that ends during steps 1 to 6 stops the call with nothing
+done but the slot given back. One that ends during step 7 is the claim's own
+case: the claim settles its answer within `claim.SettleBound` and gives back a
+ref it took but cannot hand over, as today (`internal/claim/mutation.go`). One
+that ends after step 7 changes nothing: the run carries on. A dropped request therefore no longer
 cancels a run; only `forja.cancel` (§2), the run's deadline (§4) and a stop of
 `forjad` do.
 
@@ -154,13 +158,23 @@ for a run a dead process left (ADR 0076 §5). On stdio, `serve` does the same
 when the transport closes, so a client that ends its session ends its runs,
 as it does today.
 
-**A run does not resume.** A run in flight when `forjad` stops, or dies, ends
-`failed` with reason `interrupted`, recorded either by the stop or by the next
-start's recovery. Its workspace is gone and its claim released. Its record,
-and its idempotency key with it, stay readable after the restart; a new
-attempt takes a new key. That is how the roadmap's first M2 criterion
-("reconnects after a `forjad` restart, and reads the same run to its end") is
-met: the end it reads is `interrupted` when the restart came first.
+**A run does not resume.** A run in flight when `forjad` stops ends `failed`
+with reason `interrupted`, recorded by the stop. A run in flight when
+`forjad` dies ends the same way only if its claim was journaled: the next
+start's recovery closes the run of every journaled claim and nothing else
+(ADR 0076 §5). Its record, and its idempotency key with it, stay readable
+after the restart; a new attempt takes a new key. That is how the roadmap's
+first M2 criterion ("reconnects after a `forjad` restart, and reads the same
+run to its end") is met: the end it reads is `interrupted` when the restart
+came first.
+
+The gap ADR 0076 names stays open: with `FORJA_STATE_DIR` unset there is no
+journal, and in the windows ADR 0076 lists (an implement run that died after
+its release removed the journal entry but before its last record) a run that
+died stays `running` in the store. Its claim's lease still frees the issue.
+Closing those runs needs the run to record its owner and a liveness lease,
+which this ADR does not add (Open question 3 makes the state directory a
+requirement of HTTP, which closes the first case).
 
 **`forja.doctor` stays synchronous.** It holds no claim, it is read-class, and
 the operator calls it while setting a repository up. It counts against
@@ -174,12 +188,21 @@ owns.
 
 - **Who.** Only the client that started the run (`domain.Run.Client`), read
   with `GetOwned`. Another client's run, a run the store does not know and an
-  id that never existed are the same tool error, byte for byte, as
-  `forja.status` answers for an unknown id (ADR 0052 §4). The stdio client
-  owns its own runs. There is no cross-client or operator cancel through MCP.
-- **What it does to a run in flight in this process.** The supervisor cancels
-  the run's context with the cause `errCancelled`, and the store records
-  `cancel_requested_at` on the run. From there the run takes the path a run
+  id that never existed are the same tool error, byte for byte: the error
+  `forja.cancel` answers for an id that never existed, built the way
+  `forja.status` builds its own (`internal/mcp/status_owned.go`), with
+  `forja.cancel` as its tool prefix (ADR 0052 §4). The stdio client owns its
+  own runs. There is no cross-client or operator cancel through MCP.
+- **What it does to a run in flight in this process.** The supervisor records
+  the instant of the first cancel and cancels the run's context with the
+  cause `errCancelled`. The cancel call never writes the run's row: the run's
+  goroutine is the only writer of its record (`flight`, "One goroutine owns
+  it", `internal/mcp/implement_stages.go`), and the store upserts the whole
+  document (`internal/runstore/postgres.go`, `Put`), so a second writer would
+  lose fields to the next record. The goroutine copies `cancel_requested_at`
+  from the supervisor into its own record on its next write. The answer of
+  `forja.cancel` takes the instant from the supervisor, so it does not wait
+  for that write. From there the run takes the path a run
   whose caller left takes today: no stage starts, the stage in flight finishes
   on its own detached budgets, the workspace is removed, the claim is
   released and the run is recorded `failed` with the new reason `cancelled`.
@@ -240,11 +263,15 @@ tool call with one set of arguments. It is not logged.
   its own run, and nothing in B's answer depends on A's key existing.
 - **Arguments hash.** Forja stores with the key a SHA-256 over the tool's name,
   a newline, and the canonical encoding of its input without
-  `idempotency_key` and `caller_ref`: the decoded Go input struct
-  re-encoded with `encoding/json`, so field order, omitted empty fields and
-  whitespace are fixed by the struct and not by the client. A `deadline` is
-  normalised to UTC before hashing (§4). The budget and the deadline are part
-  of the operation, so they are in the hash.
+  `idempotency_key` and `caller_ref`: the decoded Go input struct, normalised,
+  re-encoded with `encoding/json`, so field order and whitespace are fixed by
+  the struct and not by the client. Normalisation makes every spelling of one
+  operation the same input: a field absent, `null` or at its zero value (`""`,
+  `0`, `{}`) is absent, so `budget: {}` and no `budget` hash alike, and a
+  `deadline` is parsed and re-encoded in UTC (RFC3339 with nanoseconds). The
+  hashed struct has value fields with `omitempty`, never a pointer whose nil
+  and empty would encode differently. The budget and the deadline are part of
+  the operation, so they are in the hash.
 - **Same key, same arguments.** The same `run_id`, in whatever state the run
   is, as a `RunStarted` with `replayed: true`. No second run, no second claim,
   no second claim commit. This holds after a `forjad` restart, since the key
@@ -366,9 +393,11 @@ gates and the inversions are read from `forja.status`.
 ### 6. Admission
 
 `FORJA_MAX_RUNS`, a positive integer, is how many runs this process may have
-holding a workspace slot at once. A slot is taken at step 3 of §1 and given
-back when the run's release stage has ended, so a run that is tearing down
-still holds one. `forja.implement`, `forja.verify` and `forja.doctor` take a
+holding a workspace slot at once. A slot is taken at step 4 of §1. It is given
+back by a call refused after step 4, by a step 8 that fails, and otherwise
+when the run's release stage has ended, so a run that is tearing down still
+holds one. `forja.doctor` takes its slot before it clones and gives it back
+when its workspace is gone, on every outcome. `forja.implement`, `forja.verify` and `forja.doctor` take a
 slot; `forja.plan`, `forja.status` and `forja.cancel` do not. A call when
 every slot is taken is **refused**, not queued: a tool error with the code
 `at_capacity`, before the contract is read or the claim attempted; no run,
@@ -392,10 +421,12 @@ is part of the public contract:
 | `idempotency_key_conflict` | implement, verify | §3 | the existing `run_id` |
 | `at_capacity` | implement, verify, doctor | §6 | the limit |
 | `deadline_passed` | implement, verify | §4 | the deadline |
-| `run_not_found` | status, cancel | unknown or another client's id | the id as given; nothing else |
 
-Errors that exist today keep their text; the held claim's rendering is #60's
-(ADR 0052 §4).
+Errors that exist today keep their text. That includes the unknown-run error
+of `forja.status` (`internal/mcp/status_owned.go`), which `forja.cancel`
+answers with its own tool prefix: giving it a code is a change of text, and of
+the byte-for-byte rule of ADR 0052 §4, left to a later ADR. The held claim's
+rendering is #60's (ADR 0052 §4).
 
 ### 8. HTTP keeps protocol 2026-07-28 only
 
@@ -416,9 +447,15 @@ The middleware that answers `400` without the header, and
 
 ### Tool schemas
 
-Written with `$defs` for reading; the golden files the SDK generates
-(`internal/mcp/testdata/tools/`, `internal/mcp/schema_golden_test.go`) inline
-them. `forja.doctor` and `forja.plan` are unchanged.
+Each tool's schema below is one document, with its `$defs` inside it; the
+golden files the SDK generates (`internal/mcp/testdata/tools/`,
+`internal/mcp/schema_golden_test.go`) inline them. `RunStarted` is written
+once and is the `outputSchema` of both `forja.implement` and `forja.verify`,
+copied into each. The lengths, character sets and minimums the prose states
+are in the schemas, so a client that validates against them is refused
+nothing the schema allowed; the server enforces byte lengths, which a JSON
+Schema `maxLength` counts in characters. `forja.doctor` and `forja.plan` are
+unchanged.
 
 #### `forja.implement`
 
@@ -439,9 +476,9 @@ Annotations unchanged: `readOnlyHint: false`, `destructiveHint: true`,
       "base_branch": { "type": "string", "description": "branch the PR targets" },
       "branch": { "type": "string", "description": "for a correction round: forja/<issue>, the branch of the pull request Forja opened; set together with finding" },
       "finding": { "type": "string", "description": "for a correction round: the review finding to address, at most 64 KiB; set together with branch" },
-      "caller_ref": { "type": "string", "description": "the caller's correlation reference, 1 to 256 bytes, recorded on the run and never deduplicated" },
-      "idempotency_key": { "type": "string", "description": "one operation of this client, 1 to 128 printable ASCII bytes; the same key with the same arguments returns the same run" },
-      "deadline": { "type": "string", "description": "RFC3339 instant the run's work must end by; the earlier of it and the contract's wall clock applies" },
+      "caller_ref": { "type": "string", "minLength": 1, "maxLength": 256, "description": "the caller's correlation reference, 1 to 256 bytes, recorded on the run and never deduplicated" },
+      "idempotency_key": { "type": "string", "pattern": "^[!-~]{1,128}$", "description": "one operation of this client, 1 to 128 printable ASCII bytes; the same key with the same arguments returns the same run" },
+      "deadline": { "type": "string", "format": "date-time", "description": "RFC3339 instant the run's work must end by; the earlier of it and the contract's wall clock applies" },
       "budget": { "$ref": "#/$defs/Budget" }
     },
     "$defs": {
@@ -449,12 +486,12 @@ Annotations unchanged: `readOnlyHint: false`, `destructiveHint: true`,
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "max_tokens": { "type": "integer", "description": "total model tokens the run may use; the lower of it and the operator's cap applies" }
+          "max_tokens": { "type": "integer", "minimum": 1, "description": "total model tokens the run may use; the lower of it and the operator's cap applies" }
         }
       }
     }
   },
-  "outputSchema": { "$ref": "#/$defs/RunStarted" }
+  "outputSchema": "<the RunStarted schema below, verbatim>"
 }
 ```
 
@@ -473,13 +510,22 @@ Annotations unchanged.
     "properties": {
       "repository": { "type": "string", "description": "repository in owner/name form" },
       "pull_request": { "type": "integer", "description": "pull request number to verify" },
-      "caller_ref": { "type": "string", "description": "the caller's correlation reference, 1 to 256 bytes, recorded on the run and never deduplicated" },
-      "idempotency_key": { "type": "string", "description": "one operation of this client, 1 to 128 printable ASCII bytes; the same key with the same arguments returns the same run" },
-      "deadline": { "type": "string", "description": "RFC3339 instant the run's work must end by; the earlier of it and the contract's wall clock applies" },
+      "caller_ref": { "type": "string", "minLength": 1, "maxLength": 256, "description": "the caller's correlation reference, 1 to 256 bytes, recorded on the run and never deduplicated" },
+      "idempotency_key": { "type": "string", "pattern": "^[!-~]{1,128}$", "description": "one operation of this client, 1 to 128 printable ASCII bytes; the same key with the same arguments returns the same run" },
+      "deadline": { "type": "string", "format": "date-time", "description": "RFC3339 instant the run's work must end by; the earlier of it and the contract's wall clock applies" },
       "budget": { "$ref": "#/$defs/Budget" }
+    },
+    "$defs": {
+      "Budget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "max_tokens": { "type": "integer", "minimum": 1, "description": "total model tokens the run may use; the lower of it and the operator's cap applies" }
+        }
+      }
     }
   },
-  "outputSchema": { "$ref": "#/$defs/RunStarted" }
+  "outputSchema": "<the RunStarted schema below, verbatim>"
 }
 ```
 
@@ -487,26 +533,24 @@ Annotations unchanged.
 
 ```json
 {
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "tool", "repository", "issue", "state", "started_at", "replayed", "limits"],
+  "properties": {
+    "run_id": { "type": "string" },
+    "tool": { "enum": ["forja.implement", "forja.verify"] },
+    "repository": { "type": "string" },
+    "issue": { "type": "integer" },
+    "state": { "$ref": "#/$defs/State" },
+    "started_at": { "type": "string", "format": "date-time" },
+    "replayed": { "type": "boolean", "description": "true when the idempotency key named a run already started" },
+    "caller_ref": { "type": "string" },
+    "supersedes": { "type": "string", "description": "the caller's own run whose expired claim this run took over; absent otherwise (ADR 0052 §4)" },
+    "pull_request": { "$ref": "#/$defs/PullRequest", "description": "verify: the pull request verified" },
+    "head_sha": { "$ref": "#/$defs/SHA", "description": "verify: the pull request's head" },
+    "limits": { "$ref": "#/$defs/Limits" }
+  },
   "$defs": {
-    "RunStarted": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["run_id", "tool", "repository", "issue", "state", "started_at", "replayed", "limits"],
-      "properties": {
-        "run_id": { "type": "string" },
-        "tool": { "enum": ["forja.implement", "forja.verify"] },
-        "repository": { "type": "string" },
-        "issue": { "type": "integer" },
-        "state": { "$ref": "#/$defs/State" },
-        "started_at": { "type": "string", "format": "date-time" },
-        "replayed": { "type": "boolean", "description": "true when the idempotency key named a run already started" },
-        "caller_ref": { "type": "string" },
-        "supersedes": { "type": "string", "description": "the caller's own run whose expired claim this run took over; absent otherwise (ADR 0052 §4)" },
-        "pull_request": { "$ref": "#/$defs/PullRequest", "description": "verify: the pull request verified" },
-        "head_sha": { "$ref": "#/$defs/SHA", "description": "verify: the pull request's head" },
-        "limits": { "$ref": "#/$defs/Limits" }
-      }
-    },
     "State": { "enum": ["queued", "running", "succeeded", "failed"] },
     "SHA": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
     "PullRequest": {
@@ -673,8 +717,26 @@ Annotations unchanged (`readOnlyHint: true`).
     },
     "$defs": {
       "SHA": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-      "PullRequest": { "$ref": "RunStarted#/$defs/PullRequest" },
-      "Limits": { "$ref": "RunStarted#/$defs/Limits" },
+      "PullRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["number", "url"],
+        "properties": { "number": { "type": "integer" }, "url": { "type": "string" } }
+      },
+      "Limits": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["wall_clock_seconds", "deadline"],
+        "properties": {
+          "wall_clock_seconds": { "type": "number" },
+          "max_diff_lines": { "type": "integer" },
+          "max_attempts": { "type": "integer" },
+          "deadline": { "type": "string", "format": "date-time" },
+          "max_tokens": { "type": "integer" },
+          "caller_deadline": { "type": "string", "format": "date-time" },
+          "caller_max_tokens": { "type": "integer" }
+        }
+      },
       "Stage": {
         "type": "object",
         "additionalProperties": false,
@@ -938,9 +1000,11 @@ A structured read of a running run:
   the caller's ceilings (`CallerDeadline *time.Time`, `CallerMaxTokens
   int64`); `domain.Limits` gains the effective `Deadline` and `MaxTokens`.
   Old rows decode them empty (ADR 0076, Consequences).
-- `domain.FailureReason` gains `cancelled`, `deadline` and `token_budget`, and
-  `domain.Tool` gains `forja.cancel`. The metrics' reason list grows with them
-  so none lands in `unspecified` (`internal/domain/metrics.go`).
+- `domain.FailureReason` gains `cancelled`, `deadline` and `token_budget`.
+  The metrics' reason list grows with them so none lands in `unspecified`
+  (`internal/domain/metrics.go`). `forja.cancel` records no run of its own,
+  so `domain.Tool`, which names the tools a run is recorded under, does not
+  gain it; the tool's name is a constant of `internal/mcp`.
 - `domain.RunFilter` gains `CallerRef`; the Postgres store narrows on the
   `caller_ref` column under the client, as it does on `client` (ADR 0076 §3).
 
@@ -966,8 +1030,9 @@ A structured read of a running run:
 
 - **Breaking schema changes, once, before v1.0.0.** `forja.implement` and
   `forja.verify` return `RunStarted`; `forja.status` moves agent-influenced
-  fields under `untrusted` and replaces lists by counts on the structured side;
-  `forja.cancel` is a sixth tool. The golden files in
+  fields under `untrusted`, replaces lists by counts on the structured side,
+  and moves `wall_clock_seconds` and `max_diff_lines` from its top level into
+  `limits`; `forja.cancel` is a sixth tool. The golden files in
   `internal/mcp/testdata/tools/` change with each slice and gain
   `forja.cancel.json`. Clients of the blocking shape (the MCP tests, FuseOne's
   M3 work, a Claude Code session over stdio) move to polling.
@@ -983,7 +1048,7 @@ A structured read of a running run:
   (`mcp.CancelledRunRecords`) gain the cancel and the shutdown causes.
 - **ADR 0052's acceptance criterion C1 changes meaning.** A client closing the
   connection during `forja.implement` now finds the run still running, and
-  `forja.cancel` is what removes the workspace and the claim (criterion X3
+  `forja.cancel` is what removes the workspace and the claim (criterion X1
   below). Pilot release gate G6 becomes "the worker cancels a run with
   `forja.cancel`". ADR 0052 is amended by this ADR's ratification, not edited
   silently.
@@ -1014,8 +1079,8 @@ daemon, and a fake GitHub that enforces the API's invariants.
 |---|---|---|
 | S1 | `forja.implement` on a free issue | The call returns `RunStarted` with `state: running` before the agent stage starts; `refs/forja/claims/<n>` exists; `forja.status` with the `run_id` shows the stages as they progress, and the run's end |
 | S2 | The client closes the connection after S1's answer, reconnects | `forja.status` (new connection, same client) shows the run still `running`, then terminal; the workspace was not torn down by the disconnect |
-| S3 | A refused start (held claim, contract that does not parse, correction round on a branch Forja did not open) | A tool error; `forja.status` lists no new run; no key is stored (S5 with the same key then starts a run) |
-| S4 | `forjad` restarts while S1's run is in flight | After the restart `forja.status` shows the run `failed`, reason `interrupted`; the claim ref is gone; no workspace container with the run's label remains |
+| S3 | A refused start (held claim, contract that does not parse, correction round on a branch Forja did not open) | A tool error; `forja.status` lists no new run; no key is stored (a later call with the same key, once the cause is gone, starts a run) |
+| S4 | `forjad` killed (SIGKILL) with `FORJA_STATE_DIR` set while S1's run is in its agent stage, then started again | After the restart `forja.status` shows the run `failed`, reason `interrupted`; the claim ref is gone. Removing the dead run's containers is #84's, not this ADR's |
 | I1 | `forja.implement` twice with the same key and arguments | The same `run_id`, the second with `replayed: true`; the repository has one claim commit for the issue |
 | I2 | I1's second call after a `forjad` restart | The same `run_id`, `replayed: true`, in the run's terminal state |
 | I3 | The same key with a different `finding` | Tool error `idempotency_key_conflict` naming the first `run_id`; no run recorded; no claim commit |
@@ -1025,7 +1090,7 @@ daemon, and a fake GitHub that enforces the API's invariants.
 | I7 | The same key used for `forja.implement` and then `forja.verify` | `idempotency_key_conflict` |
 | X1 | `forja.cancel` on the caller's running run, delivered during its agent stage | `outcome: cancelling`; within 180 s `forja.status` shows `failed`, reason `cancelled`, `cancel_requested_at` set, no stage started after it; the claim ref is deleted; no container or network with the run's label remains; no commit status was published on the run's head |
 | X2 | `forja.cancel` twice on the same run, and once on a succeeded run | The second answers `cancelling` (or `already_terminal` once ended); the succeeded run answers `already_terminal` and stays `succeeded` |
-| X3 | Client B cancels client A's run | The tool error is identical to that for a random id; A's run is unaffected |
+| X3 | Client B cancels client A's run | The tool error is identical to `forja.cancel`'s for a random id; A's run is unaffected |
 | X4 | `forja.cancel` on a run recorded `running` that this process does not hold (a row a dead process left) | `outcome: not_held`; the record is unchanged |
 | D1 | `deadline` five minutes ahead, `limits.wall_clock` 30 minutes | `limits.deadline` in `RunStarted` is the caller's; a run still working at it ends `failed`, reason `deadline` |
 | D2 | `deadline` in the past | Tool error `deadline_passed`; no claim commit |
@@ -1034,9 +1099,12 @@ daemon, and a fake GitHub that enforces the API's invariants.
 | T1 | `forja.status` without `include_untrusted` on a run with red gates, egress refusals and proof paths | No `untrusted` key; no `stdout`, `stderr`, path, destination or evidence anywhere in the response; the counts and exit codes are present |
 | T2 | The same with `include_untrusted: true` | `untrusted` carries the logs, paths, destinations and evidence; the structured fields are byte-identical to T1's |
 | T3 | `RunStarted` from implement and verify | Contains no field of `untrusted` |
-| C1 | `FORJA_MAX_RUNS=1`, one run in flight, a second `forja.implement` on another issue | Tool error `at_capacity`; no claim commit, no run, no key |
-| C2 | C1's second call retried with the same key after the first run ended | A new run starts; no `idempotency_key_conflict` |
-| C3 | C1's state, a replay of the first run's key | The replay answers; capacity does not apply |
+| B1 | `FORJA_MAX_RUNS=1`, one run in flight, a second `forja.implement` on another issue | Tool error `at_capacity`; no claim commit, no run, no key |
+| B2 | B1's second call retried with the same key after the first run ended | A new run starts; no `idempotency_key_conflict` |
+| B3 | B1's state, a replay of the first run's key | The replay answers; capacity does not apply |
+| B4 | `FORJA_MAX_RUNS=1`, two starts refused after admission in a row (a held claim, a contract that does not parse), then a start on a free issue | The third starts a run: refused starts gave their slot back |
+| R1 | A retry of a started run, with the same key and arguments, after its `deadline` has passed | The replay answers (`replayed: true`), not `deadline_passed` |
+| R2 | `forja.implement` with `budget: {}`, then the same key without `budget` | The same `run_id`, `replayed: true` |
 | P1 | `MCP-Protocol-Version: 2025-11-25` on any request | `400`, as ADR 0052 C3 |
 | G1 | `forjad` stopped (SIGTERM) with two runs in flight | Both end `failed`, reason `interrupted`, claims deleted, workspaces removed, before the process exits within the 195 s drain |
 
@@ -1052,11 +1120,13 @@ ratifies the recommendation unless the maintainer changes it.
    cheaper to keep compatible.
 2. **Run reasons, not states.** Recommended: `cancelled` is a failure reason
    of the state `failed` (§2). Confirm, or make it a fifth state.
-3. **HTTP without a durable store.** Recommended: once M2 lands, `forjad`
-   refuses to start with `FORJA_MCP_ADDR` set and `FORJA_DATABASE_URL` unset,
-   because asynchronous runs over HTTP are followed across reconnects and
-   restarts and the key must outlive the process. stdio keeps the in-memory
-   store, where idempotency holds for the life of the process.
+3. **HTTP without a durable store or a state directory.** Recommended: once
+   M2 lands, `forjad` refuses to start with `FORJA_MCP_ADDR` set and either
+   `FORJA_DATABASE_URL` or `FORJA_STATE_DIR` unset. Asynchronous runs over
+   HTTP are followed across reconnects and restarts, so the key must outlive
+   the process, and without a journal a run that died with the process stays
+   `running` forever (§1). stdio keeps the in-memory store and an optional
+   state directory, where idempotency holds for the life of the process.
 4. **Money budget.** Recommended: none in M2; the caller sends tokens and a
    deadline (§4). Revisit if FuseOne cannot convert its per-run budget.
 5. **Default for `FORJA_MAX_RUNS`.** Recommended: unset means unlimited and
