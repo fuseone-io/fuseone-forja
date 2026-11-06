@@ -173,6 +173,7 @@ These change tool schemas. ADR 0051 freezes them under semver, so they land
 
 | Slice | PRD item |
 |---|---|
+| ADR 9999: asynchronous runs, `forja.cancel` and per-client idempotency ([proposed](adr/9999-async-runs-cancel-and-idempotency.md)) | 2–5 |
 | `implement` and `verify` return the `run_id` at start; `status` reports the outcome | 4 |
 | `forja.cancel` (a write tool) stops the run, tears down the workspace, releases the claim | 4 |
 | `caller_ref` for correlation and cost (never deduplicates); `idempotency_key` per client and per operation, stored with an arguments hash in the durable store; same key and arguments return the same run, different arguments are `idempotency_key_conflict` | 2 |
@@ -197,8 +198,8 @@ These change tool schemas. ADR 0051 freezes them under semver, so they land
   `caller_ref`, and `forja.status` filtered by that `caller_ref` lists both.
 - `forja.cancel` stops a run that a caller started and no longer waits on.
   With asynchronous runs, a dropped request no longer cancels anything (ADR
-  0052 §7). Whether HTTP then widens beyond 2026-07-28 is decided in the M2
-  ADR.
+  0052 §7). Whether HTTP then widens beyond 2026-07-28 is decided in
+  [ADR 9999](adr/9999-async-runs-cancel-and-idempotency.md) §8.
 
 ### M3 · The factory uses Forja (Gate 1)
 
