@@ -1,4 +1,4 @@
-# ADR 9999: asynchronous runs, forja.cancel and per-client idempotency
+# ADR 0086: asynchronous runs, forja.cancel and per-client idempotency
 
 - **Status:** proposed
 - **Issue:** #63
