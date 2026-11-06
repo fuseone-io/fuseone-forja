@@ -70,11 +70,21 @@ A sweep by `forja.run` alone would remove another instance's live runs.
    before this change and those of an instance with no `FORJA_STATE_DIR`,
    which has no lasting id and labels no owner. Nothing tells whether a live
    process still owns them. The operator removes them by hand once no
-   older `forjad` is running on the daemon:
-   `docker rm -f $(docker ps -aq --filter label=forja.run)` and then
-   `docker network prune --filter label=forja.run`. The warning that
-   `FORJA_STATE_DIR` is not set now says that a crashed run's Docker objects
-   are not removed either.
+   older `forjad`, and no `forjad` without a state directory, is running on
+   the daemon. Docker cannot filter on a missing label, so the commands list
+   every `forja.run` object with its owner and keep only those with none.
+   Objects that carry `forja.owner` belong to an instance that may be live,
+   and are left alone:
+
+   ```sh
+   docker ps -a --filter label=forja.run --format '{{.ID}} {{.Label "forja.owner"}}' \
+     | awk 'NF == 1 {print $1}' | xargs -r docker rm -f
+   docker network ls --filter label=forja.run --format '{{.ID}} {{.Label "forja.owner"}}' \
+     | awk 'NF == 1 {print $1}' | xargs -r docker network rm
+   ```
+
+   The warning that `FORJA_STATE_DIR` is not set now says that a crashed
+   run's Docker objects are not removed either.
 
 ## Consequences
 
