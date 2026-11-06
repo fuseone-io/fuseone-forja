@@ -34,12 +34,11 @@ type RunStore interface {
 const FinishTimeout = 30 * time.Second
 
 // CancelledRunRecords is the most FinishTimeout-bounded calls a run makes,
-// one after the other, once its caller left: left during the claim, five
-// records and the release, recording the run running, the clone stage's
-// start and end, the release's start, the release, and the run's end. A
-// caller that left later, as the agent ran, leaves fewer, after the
-// agent's own teardown.
-const CancelledRunRecords = 6
+// one after the other, after the call its caller left during: no stage
+// starts once the caller left, so what remains is the record that ends
+// the call in flight (the run's running record after the claim, or the
+// stage's end), the release's start, the release and the run's end.
+const CancelledRunRecords = 4
 
 type implementer struct {
 	lifecycle

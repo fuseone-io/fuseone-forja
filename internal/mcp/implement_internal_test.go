@@ -186,9 +186,9 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 		Now:   func() time.Time { return now },
 	}
 
-	_, out, err := implementHandler(deps)(withClient(ctx, domain.Client{Name: "test-client", Unrestricted: true}), nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
-	if err != nil {
-		t.Fatalf("handler: %v", err)
+	_, _, err := implementHandler(deps)(withClient(ctx, domain.Client{Name: "test-client", Unrestricted: true}), nil, ImplementInput{Repository: "fuseone-io/fuseone-forja", Issue: 12})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("handler = %v, want the cancellation: no stage starts once the caller left", err)
 	}
 	if !errors.Is(ctx.Err(), context.Canceled) {
 		t.Fatal("the fixture did not cancel the caller's context")
@@ -204,8 +204,8 @@ func TestImplement_callerCancelled_releaseStillHappens(t *testing.T) {
 	if !claims.releaseDline {
 		t.Fatal("release ran with no deadline of its own")
 	}
-	run, err := runs.Get(context.Background(), out.RunID)
-	if err != nil || run.State != domain.StateSucceeded {
-		t.Fatalf("run = %+v, %v; want succeeded", run, err)
+	run, err := runs.Get(context.Background(), "run-cancelled")
+	if err != nil || run.State != domain.StateFailed {
+		t.Fatalf("run = %+v, %v; want failed", run, err)
 	}
 }

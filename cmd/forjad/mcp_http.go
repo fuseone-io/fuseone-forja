@@ -37,12 +37,13 @@ const (
 	teardownMargin       = 15 * time.Second
 )
 
-// teardownBound is the longest a run whose caller left takes to end. The
-// caller leaving during the claim is the longest path: the claim settles
-// its ref mutation, then the run makes every one of its records and the
-// release. A caller leaving as the agent runs takes the agent's own
-// teardown, reading the proxies and removing the workspace, then fewer
-// records, which is shorter.
+// teardownBound is the longest a run whose caller left takes to end: the
+// call it left during finishes on its own detached budgets, then the run
+// starts no further stage and makes only its last records and the
+// release. The call in flight takes at most two 30 s steps: the claim's
+// mutation and read-back, the agent's or the gates' proxy reads and
+// workspace removal, or a stage's start record and a failed launch's
+// removal.
 const teardownBound = claim.SettleBound + mcp.CancelledRunRecords*mcp.FinishTimeout
 
 // mcpHandler serves server statelessly to the clients in reg: a request

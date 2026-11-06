@@ -142,7 +142,7 @@ func TestServeMCPHTTP_stoppedDuringImplement_runTornDownBeforeReturn(t *testing.
 }
 
 // The drain outlasts the longest teardown of a run whose caller left: the
-// claim settling a mutation whose answer was lost, then every record and
+// call in flight settling on its own budgets, then the last records and
 // the release, one after the other, each at its bound. The stop waits for
 // it instead of cutting it off.
 func TestMCPHTTPConfig_drain_outlastsTheTeardownBound(t *testing.T) {
