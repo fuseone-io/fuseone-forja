@@ -47,11 +47,14 @@ func instanceOwner(getenv func(string) string) (string, error) {
 // power loss leaves either no file or a whole id.
 func recordInstance(path string) (string, error) {
 	id := newRunID()
-	tmp := path + ".tmp"
-	if err := writeSynced(tmp, id); err != nil {
+	tmp, err := writeSynced(filepath.Dir(path), id)
+	if err != nil {
 		return "", fmt.Errorf("%s: instance id: %w", EnvStateDir, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// The rename failure is the one to report; the temporary file is
+		// only clutter.
+		_ = os.Remove(tmp)
 		return "", fmt.Errorf("%s: instance id: %w", EnvStateDir, err)
 	}
 	if err := syncDir(filepath.Dir(path)); err != nil {
@@ -60,17 +63,24 @@ func recordInstance(path string) (string, error) {
 	return id, nil
 }
 
-// writeSynced writes content to the file at path and syncs it.
-func writeSynced(path, content string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+// writeSynced writes content to a new file in dir and syncs it, and
+// returns its path. The file is created exclusively under a name of its
+// own, so nothing already at a name, a link included, receives the write.
+func writeSynced(dir, content string) (string, error) {
+	f, err := os.CreateTemp(dir, instanceFile+"-*.tmp")
 	if err != nil {
-		return err
+		return "", err
 	}
 	_, err = f.WriteString(content)
 	if err == nil {
 		err = f.Sync()
 	}
-	return errors.Join(err, f.Close())
+	if err = errors.Join(err, f.Close()); err != nil {
+		// The write failure is the one to report.
+		_ = os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
 }
 
 // syncDir syncs the directory at path, which makes a rename in it last.

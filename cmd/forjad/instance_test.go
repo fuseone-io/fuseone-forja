@@ -27,6 +27,29 @@ func TestInstanceOwner_stateDir_sameOnEveryStartOtherForAnotherDir(t *testing.T)
 	}
 }
 
+// A link planted where the id is written does not redirect the write: the
+// file it points at keeps its content and the id is still recorded.
+func TestInstanceOwner_linkPlantedAtTheTemporaryName_notFollowed(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	victim := filepath.Join(t.TempDir(), "victim")
+	if err := os.WriteFile(victim, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, filepath.Join(dir, instanceFile+".tmp")); err != nil {
+		t.Fatal(err)
+	}
+
+	owner, err := instanceOwner(envOf(map[string]string{EnvStateDir: dir}))
+
+	if got, _ := os.ReadFile(victim); string(got) != "keep" {
+		t.Errorf("the linked file now holds %q, want it untouched", got)
+	}
+	if again, _ := instanceOwner(envOf(map[string]string{EnvStateDir: dir})); err != nil || owner == "" || again != owner {
+		t.Errorf("instanceOwner = %q, %v, then %q; want one id recorded", owner, err, again)
+	}
+}
+
 // With no state directory there is no instance to own anything.
 func TestInstanceOwner_noStateDir_none(t *testing.T) {
 	t.Parallel()
