@@ -42,16 +42,42 @@ func instanceOwner(getenv func(string) string) (string, error) {
 	return id, nil
 }
 
-// recordInstance writes a new id to path, through a temporary file renamed
-// over it, so that a crash leaves either no file or a whole id.
+// recordInstance writes a new id to path through a temporary file, synced
+// and then renamed over it, and syncs the directory, so that a crash or a
+// power loss leaves either no file or a whole id.
 func recordInstance(path string) (string, error) {
 	id := newRunID()
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(id), 0o600); err != nil {
+	if err := writeSynced(tmp, id); err != nil {
 		return "", fmt.Errorf("%s: instance id: %w", EnvStateDir, err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return "", fmt.Errorf("%s: instance id: %w", EnvStateDir, err)
 	}
+	if err := syncDir(filepath.Dir(path)); err != nil {
+		return "", fmt.Errorf("%s: instance id: %w", EnvStateDir, err)
+	}
 	return id, nil
+}
+
+// writeSynced writes content to the file at path and syncs it.
+func writeSynced(path, content string) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	_, err = f.WriteString(content)
+	if err == nil {
+		err = f.Sync()
+	}
+	return errors.Join(err, f.Close())
+}
+
+// syncDir syncs the directory at path, which makes a rename in it last.
+func syncDir(path string) error {
+	d, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return errors.Join(d.Sync(), d.Close())
 }

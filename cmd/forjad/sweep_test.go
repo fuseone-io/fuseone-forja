@@ -115,6 +115,27 @@ func TestHostStart_noStateDir_noSweep(t *testing.T) {
 	}
 }
 
+// The sweep needs only the instance and the daemon: a run store that
+// fails the start does not keep the dead runs' objects on the daemon.
+func TestHostStart_runStoreFails_deadRunsStillSwept(t *testing.T) {
+	t.Parallel()
+	swept := false
+	sweep := func(context.Context, string) (workspace.Swept, error) {
+		swept = true
+		return workspace.Swept{}, nil
+	}
+	env := envOf(map[string]string{
+		EnvStateDir: t.TempDir(), EnvWorkspaceRuntime: "runc",
+		EnvDatabaseURL: "postgres://forja@127.0.0.1:1/forja?sslmode=disable",
+	})
+
+	_, err := startWith(t, host{getenv: env, sweep: sweep, startup: 5 * time.Second})
+
+	if err == nil || !swept {
+		t.Fatalf("start = %v, swept %v; want the store's failure and the sweep done", err, swept)
+	}
+}
+
 // A start the operator already stopped sends no sweep and reports
 // nothing about one.
 func TestHostStart_stoppedBeforeTheSweep_noSweepNothingReported(t *testing.T) {

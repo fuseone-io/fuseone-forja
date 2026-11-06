@@ -5,20 +5,28 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/workspace"
 )
+
+// sweepTimeout bounds the sweep within the startup deadline, so that a
+// daemon that never answers delays the start by that much at most.
+const sweepTimeout = 30 * time.Second
 
 // sweepFunc removes from the daemon every object of owner's runs and says
 // what it removed.
 type sweepFunc func(ctx context.Context, owner string) (workspace.Swept, error)
 
-// dockerSweep is the sweep of the daemon the environment points at.
+// dockerSweep is the sweep of the daemon the environment points at, on a
+// client of its own that it closes.
 func dockerSweep(ctx context.Context, owner string) (workspace.Swept, error) {
 	d, err := workspace.NewDocker(workspace.Options{Owner: owner})
 	if err != nil {
 		return workspace.Swept{}, err
 	}
+	// The client holds nothing the sweep's result depends on.
+	defer func() { _ = d.Close() }()
 	return d.Sweep(ctx)
 }
 
@@ -44,6 +52,8 @@ func (h host) sweepDeadRuns(ctx context.Context, stderr io.Writer) {
 	}
 	swept := workspace.Swept{}
 	if err == nil {
+		ctx, cancel := context.WithTimeout(ctx, sweepTimeout)
+		defer cancel()
 		swept, err = h.sweeper()(ctx, owner)
 	}
 	// The exit code is the only channel left when stderr itself fails.
