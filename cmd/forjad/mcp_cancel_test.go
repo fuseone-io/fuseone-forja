@@ -11,6 +11,7 @@ import (
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/fuseone-io/fuseone-forja/internal/claim"
 	"github.com/fuseone-io/fuseone-forja/internal/domain"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 )
@@ -140,14 +141,15 @@ func TestServeMCPHTTP_stoppedDuringImplement_runTornDownBeforeReturn(t *testing.
 	}
 }
 
-// The drain outlasts a cancelled run's teardown, six steps one after the
-// other, each bounded by FinishTimeout: the proxies' reads, the
-// workspace's removal, the stage record, the release's start, the release
-// and the terminal record. The stop waits for it instead of cutting it off.
+// The drain outlasts the longest teardown of a run whose caller left: the
+// call in flight settling on its own budgets, then the last records and
+// the release, one after the other, each at its bound. The stop waits for
+// it instead of cutting it off.
 func TestMCPHTTPConfig_drain_outlastsTheTeardownBound(t *testing.T) {
 	t.Parallel()
 	cfg, err := mcpHTTPConfig(envOf(map[string]string{EnvMCPAddr: "127.0.0.1:0", EnvClientsFile: writeFile(t, "c.yaml", clientsYAML())}))
-	if teardown := 6 * mcp.FinishTimeout; err != nil || cfg.drain <= teardown {
+	teardown := claim.SettleBound + mcp.CancelledRunRecords*mcp.FinishTimeout
+	if err != nil || cfg.drain <= teardown {
 		t.Fatalf("mcpHTTPConfig = (drain %v, %v), want a drain over the %v teardown", cfg.drain, err, teardown)
 	}
 }

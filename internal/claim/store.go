@@ -32,6 +32,10 @@ type Store struct {
 	Refs    refs
 	Now     func() time.Time
 	Journal *Journal
+
+	// mutationTimeout and followUpTimeout override the package budgets
+	// when set; zero means the package figure.
+	mutationTimeout, followUpTimeout time.Duration
 }
 
 // NewStore builds a store over the repository, the clock and the journal.
@@ -59,7 +63,7 @@ func (s *Store) Claim(ctx context.Context, req domain.ClaimRequest) (domain.Clai
 	if err != nil {
 		return domain.Claim{}, err
 	}
-	mctx, cancel, err := mutation(ctx)
+	mctx, cancel, err := s.mutation(ctx)
 	if err != nil {
 		return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
 	}
@@ -71,7 +75,7 @@ func (s *Store) Claim(ctx context.Context, req domain.ClaimRequest) (domain.Clai
 	case errors.Is(err, github.ErrRefExists):
 		return s.takeOver(ctx, c)
 	}
-	return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
+	return s.unsettled(ctx, c, sha, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err))
 }
 
 // takeOver handles a ref that already exists: refuse while the lease
@@ -90,7 +94,7 @@ func (s *Store) takeOver(ctx context.Context, c domain.Claim) (domain.Claim, err
 	if err != nil {
 		return domain.Claim{}, err
 	}
-	mctx, cancel, err := mutation(ctx)
+	mctx, cancel, err := s.mutation(ctx)
 	if err != nil {
 		return domain.Claim{}, fmt.Errorf("take over issue %d of %s: %w", c.Issue, c.Repository, err)
 	}
@@ -106,41 +110,7 @@ func (s *Store) takeOver(ctx context.Context, c domain.Claim) (domain.Claim, err
 		}
 		return domain.Claim{}, &domain.ClaimHeldError{Holder: winner}
 	}
-	return domain.Claim{}, fmt.Errorf("take over issue %d of %s: %w", c.Issue, c.Repository, err)
-}
-
-// mutationTimeout bounds a ref mutation and what completes it, counted
-// from its start, once the caller may be gone.
-const mutationTimeout = 30 * time.Second
-
-// mutation is the context a ref mutation and its journaling or giving
-// back run on: detached from the caller's, since a mutation GitHub
-// applied while the caller left must still be journaled or undone, and
-// bounded by mutationTimeout. A caller already gone starts none.
-func mutation(ctx context.Context) (context.Context, context.CancelFunc, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, nil, err
-	}
-	mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mutationTimeout)
-	return mctx, cancel, nil
-}
-
-// hold completes a claim the ref now points at: it is journaled so a crash
-// can be recovered. A claim that cannot be journaled is given back, since
-// nothing would release it after a crash. ctx is the mutation's.
-func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Claim, error) {
-	c.SHA = sha
-	if s.Journal == nil {
-		return c, nil
-	}
-	err := s.Journal.Put(Entry{Repository: c.Repository, Issue: c.Issue, RunID: c.RunID, SHA: c.SHA})
-	if err == nil {
-		return c, nil
-	}
-	if rerr := s.Refs.DeleteRef(ctx, c.Repository, domain.ClaimRef(c.Issue)); rerr != nil {
-		return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w (and the ref could not be released: %w)", c.Issue, c.Repository, err, rerr)
-	}
-	return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
+	return s.unsettled(ctx, c, sha, fmt.Errorf("take over issue %d of %s: %w", c.Issue, c.Repository, err))
 }
 
 // holder reads the claim the ref points at.

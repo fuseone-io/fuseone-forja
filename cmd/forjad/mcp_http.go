@@ -15,6 +15,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/caller"
+	"github.com/fuseone-io/fuseone-forja/internal/claim"
 	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 )
 
@@ -32,16 +33,18 @@ const maxRequestBody = 1 << 20
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
-	mcpShutdownTimeout   = teardownSteps*mcp.FinishTimeout + teardownMargin
+	mcpShutdownTimeout   = teardownBound + teardownMargin
 	teardownMargin       = 15 * time.Second
 )
 
-// teardownSteps is how many steps a cancelled run takes, one after the
-// other, to end: reading its workspace's proxies, removing the workspace,
-// recording the stage, recording the release's start, releasing the claim
-// and recording the run's end. Each is bounded by mcp.FinishTimeout or by
-// the workspace drivers' close bound of the same length.
-const teardownSteps = 6
+// teardownBound is the longest a run whose caller left takes to end: the
+// call it left during finishes on its own detached budgets, then the run
+// starts no further stage and makes only its last records and the
+// release. The call in flight takes at most two 30 s steps: the claim's
+// mutation and read-back, the agent's or the gates' proxy reads and
+// workspace removal, or a stage's start record and a failed launch's
+// removal.
+const teardownBound = claim.SettleBound + mcp.CancelledRunRecords*mcp.FinishTimeout
 
 // mcpHandler serves server statelessly to the clients in reg: a request
 // without a bearer whose hash is in reg is answered 401, and then one not

@@ -76,7 +76,7 @@ func stopped(runCtx context.Context, f *flight, err error) error {
 // correction round, and reads at the base commit what the run needs, then
 // starts the run's branch.
 func (h implementer) cloneStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageClone, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageClone, func() (bool, error) {
 		co, err := h.clone(ctx, f)
 		if err != nil {
 			return false, err
@@ -121,7 +121,7 @@ func (h implementer) prepare(ctx context.Context, f *flight) error {
 // happened; an agent stopped, failed or that committed nothing ends the
 // run without an error.
 func (h implementer) agentStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageAgent, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageAgent, func() (bool, error) {
 		f.bundle = filepath.Join(f.bundles, "attempt-"+strconv.Itoa(f.attempt)+".bundle")
 		res, err := h.deps.Agent.Run(ctx, agent.Task{
 			RunID: f.run.ID, Contract: f.contract, Tree: f.co.Dir(), Issue: f.issue, Context: agentFiles(f.context),

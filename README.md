@@ -269,9 +269,12 @@ alone, the one where a client that closes its connection cancels its call.
 A `forja.implement` or `forja.verify` whose client goes away is stopped: its
 workspace is removed, its claim released and the run recorded `failed`. A
 stop (`SIGTERM`) cancels every call in flight the same way and waits up to
-3 min 15 s for those teardowns before `forjad` exits; the deployment's
-`terminationGracePeriodSeconds` (or stop timeout) must exceed that drain, or
-a kill mid-teardown leaves the claim and the run behind. Every authenticated
+3 min 15 s (195 s) for those teardowns before `forjad` exits; the
+deployment's `terminationGracePeriodSeconds` (or stop timeout) must be
+above 230 s, which exceeds that drain — set it to 240 s — or a kill
+mid-teardown leaves the claim and the run behind. A run store failure is
+answered `run store unavailable`; its cause goes to the operator's log on
+stderr. Every authenticated
 client reaches every repository the GitHub App reaches: `repositories` is
 parsed and validated but not yet enforced. A bearer is 32 bytes from a cryptographic random source,
 base64url-encoded, one per integration and environment; a rotation adds an

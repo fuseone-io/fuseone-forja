@@ -77,7 +77,7 @@ func (v verifier) steps(runCtx, done context.Context, f *verifyFlight) (bool, er
 // read at, reads the contract at the base commit and sizes what is left of
 // the wall clock.
 func (v verifier) cloneStage(ctx, done context.Context, f *verifyFlight) (bool, error) {
-	return f.stage(done, domain.StageClone, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageClone, func() (bool, error) {
 		co, err := v.deps.BranchCloner.CloneBranch(ctx, f.run.Repository, f.base, f.pr.HeadRef)
 		if err != nil {
 			return false, err
@@ -99,8 +99,8 @@ func (v verifier) cloneStage(ctx, done context.Context, f *verifyFlight) (bool, 
 }
 
 // diffStage classifies the changed paths under the base contract.
-func (v verifier) diffStage(_, done context.Context, f *verifyFlight) (bool, error) {
-	return f.stage(done, domain.StageDiff, func() (bool, error) {
+func (v verifier) diffStage(ctx, done context.Context, f *verifyFlight) (bool, error) {
+	return f.stage(ctx, done, domain.StageDiff, func() (bool, error) {
 		outcome := verify.Classify(f.contract, f.pr.Files)
 		f.run.QA, f.production, f.classified = outcome.QA, outcome.Production, true
 		return true, nil
@@ -110,7 +110,7 @@ func (v verifier) diffStage(_, done context.Context, f *verifyFlight) (bool, err
 // statusStage publishes forja/qa on the head with the verdict's state and
 // fixed description.
 func (v verifier) statusStage(ctx, done context.Context, f *verifyFlight) (bool, error) {
-	return f.stage(done, domain.StageStatus, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageStatus, func() (bool, error) {
 		state, description, err := qaStatus(f.run.QA)
 		if err != nil {
 			return false, err

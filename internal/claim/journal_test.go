@@ -128,6 +128,29 @@ func TestJournal_undecodableEntry_listFailsNamingTheFile(t *testing.T) {
 	}
 }
 
+// PutNew records an entry only for an issue the journal has none for: an
+// entry already there, a claim this process holds, is kept as it was.
+func TestJournal_putNew_issueAlreadyJournaled_entryKeptNotAdded(t *testing.T) {
+	t.Parallel()
+	journal := &claim.Journal{Dir: filepath.Join(t.TempDir(), "claims")}
+	held := claim.Entry{Repository: "o/r", Issue: 7, RunID: "run-held", SHA: "aaa"}
+	added, err := journal.PutNew(held)
+	if err != nil || !added {
+		t.Fatalf("PutNew on an empty journal = (%v, %v), want added", added, err)
+	}
+	added, err = journal.PutNew(claim.Entry{Repository: "o/r", Issue: 7, RunID: "run-other", SHA: "bbb"})
+	if err != nil || added {
+		t.Fatalf("PutNew over a journaled issue = (%v, %v), want not added", added, err)
+	}
+	got, err := journal.List()
+	if err != nil || !reflect.DeepEqual(got, []claim.Entry{held}) {
+		t.Fatalf("List = %+v, %v; want only %+v", got, err, held)
+	}
+	if files, _ := os.ReadDir(journal.Dir); len(files) != 1 {
+		t.Fatalf("journal directory holds %d files, want the one entry", len(files))
+	}
+}
+
 func TestJournal_noDirectoryConfigured_failsLoudly(t *testing.T) {
 	t.Parallel()
 	var journal claim.Journal

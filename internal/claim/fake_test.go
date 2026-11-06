@@ -33,13 +33,28 @@ type fakeRefs struct {
 	// leaves just after.
 	cancelOn string
 	cancel   context.CancelFunc
+	// stallOn names a ref mutation that GitHub applies but whose answer
+	// never comes back: the call waits until its context ends and reports
+	// that, as an HTTP client whose deadline passed does.
+	stallOn string
+	// lateOn names a ref mutation whose answer arrives, a success, just as
+	// the call's context ends: the mutation spent its whole budget.
+	lateOn string
 }
 
 // answer is a mutation's answer once it was applied: the context's error
-// when the call's context ended meanwhile.
+// when the call's context ended meanwhile. It runs under f.mu.
 func (f *fakeRefs) answer(ctx context.Context, op string) error {
 	if f.cancelOn == op && f.cancel != nil {
 		f.cancel()
+	}
+	if f.stallOn == op || f.lateOn == op {
+		f.mu.Unlock()
+		<-ctx.Done()
+		f.mu.Lock()
+	}
+	if f.lateOn == op {
+		return nil
 	}
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("fake: %s answered after the context ended: %w", op, err)
@@ -72,7 +87,10 @@ func (f *fakeRefs) record(op string) error {
 	return f.fail[op]
 }
 
-func (f *fakeRefs) GetRef(_ context.Context, repo, ref string) (github.RefObject, error) {
+func (f *fakeRefs) GetRef(ctx context.Context, repo, ref string) (github.RefObject, error) {
+	if err := refuseDead(ctx, "GetRef"); err != nil {
+		return github.RefObject{}, err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.record("GetRef"); err != nil {
@@ -216,6 +234,14 @@ func (f *fakeRefs) seed(repo, ref string, files map[string][]byte) string {
 	sha := f.store("", files, "seed "+ref)
 	f.refs[key(repo, ref)] = sha
 	return sha
+}
+
+// point moves ref to sha bypassing the API, as GitHub applying a request
+// whose answer the caller already gave up on.
+func (f *fakeRefs) point(repo, ref, sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refs[key(repo, ref)] = sha
 }
 
 func (f *fakeRefs) refSHA(repo, ref string) (string, bool) {

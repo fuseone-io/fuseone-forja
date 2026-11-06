@@ -46,7 +46,7 @@ const humanMergeLabel = "forja/human-merge"
 // renders the evidence. A red gate ends the attempt without an error; a
 // runner that failed still charges the run its workspace's compute.
 func (h implementer) gatesStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageGates, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageGates, func() (bool, error) {
 		report, err := h.deps.Gates.Run(ctx, f.run.ID, f.contract, f.co.Dir())
 		f.charge(report.Compute, domain.TokenUsage{})
 		if err != nil {
@@ -81,8 +81,8 @@ func (h implementer) evidenceOf(f *flight) evidence.Run {
 // diffStage holds back a head that changes more lines against the base
 // than the contract allows: nothing is pushed, opened or published, and
 // the run fails without an error. The limit itself passes.
-func (h implementer) diffStage(_, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageDiff, func() (bool, error) {
+func (h implementer) diffStage(ctx, done context.Context, f *flight) (bool, error) {
+	return f.stage(ctx, done, domain.StageDiff, func() (bool, error) {
 		if f.run.DiffLines == nil {
 			return false, errors.New("diff of the head was never counted")
 		}
@@ -97,7 +97,7 @@ func (h implementer) diffStage(_, done context.Context, f *flight) (bool, error)
 // pushStage sends the head to the run's branch from the control plane's
 // clone.
 func (h implementer) pushStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StagePush, func() (bool, error) {
+	return f.stage(ctx, done, domain.StagePush, func() (bool, error) {
 		err := h.deps.Pusher.Push(ctx, github.PushRequest{
 			Repository: f.run.Repository, Dir: f.co.Dir(), Head: f.run.HeadSHA, Branch: f.run.Branch,
 		})
@@ -110,7 +110,7 @@ func (h implementer) pushStage(ctx, done context.Context, f *flight) (bool, erro
 // a human merge. The label comes before forja/gates: a failed label fails
 // the stage, so no green status ever sits on an unmarked pull request.
 func (h implementer) pullRequestStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StagePullRequest, func() (bool, error) {
+	return f.stage(ctx, done, domain.StagePullRequest, func() (bool, error) {
 		pr, err := h.deps.PullRequests.Open(ctx, github.PullRequestRequest{
 			Repository: f.run.Repository, Title: pullRequestTitle(f.issue), Head: f.run.Branch, Base: f.co.Branch(), Body: f.evidence,
 		})
@@ -137,7 +137,7 @@ func (h implementer) labelHumanMerge(ctx context.Context, f *flight) (bool, erro
 // statusStage publishes forja/gates success on the head, pointing at the
 // pull request that carries the evidence.
 func (h implementer) statusStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageStatus, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageStatus, func() (bool, error) {
 		err := h.deps.Statuses.Publish(ctx, github.StatusRequest{
 			Repository: f.run.Repository, SHA: f.run.HeadSHA, State: github.StateSuccess,
 			Context: gatesContext, Description: gatesDescription, TargetURL: f.run.PullRequest.URL,
