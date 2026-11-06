@@ -50,7 +50,7 @@ func (l lifecycle) claim(ctx context.Context, t runTarget) (*flight, error) {
 		Repository: t.repo, Issue: t.issue, RunID: l.deps.NewID(), Lease: lease,
 	})
 	if err != nil {
-		return nil, err
+		return nil, heldFor(ctx, ownedRuns{runs: l.deps.Runs, owner: t.client}, err)
 	}
 	return newFlight(l.deps, t, c, claimStage(started, l.deps.Now())), nil
 }

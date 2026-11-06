@@ -110,6 +110,7 @@ func TestVerify_held_toolErrorNamesHolderAndRecordsNoRun(t *testing.T) {
 	fx := newVerifyFixture(t, verifyWiring{pr: markdownPull(), claims: func(f *fakeClaims) {
 		f.claimErr = &domain.ClaimHeldError{Holder: holder}
 	}})
+	mustPut(t, fx.runs.Memory, terminalRun("run-holder"))
 
 	res := callVerify(t, fx.cs, verifyPR)
 	if !res.IsError || !strings.Contains(textOf(res), "run-holder") || !strings.Contains(textOf(res), string(domain.ToolVerify)) {

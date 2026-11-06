@@ -466,6 +466,7 @@ func TestImplement_correctionRound_issueHeld_toolErrorNamesHolderNoRunNoAgent(t 
 	fx := newImplementFixture(t, contractWithWallClock, func(f *fakeClaims) {
 		f.claimErr = &domain.ClaimHeldError{Holder: holder}
 	})
+	mustPut(t, fx.runs.Memory, terminalRun("run-holder"))
 
 	res := callRound(t, fx.cs, nil)
 	if !res.IsError || !strings.Contains(textOf(res), "run-holder") {

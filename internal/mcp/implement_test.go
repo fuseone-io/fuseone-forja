@@ -305,6 +305,7 @@ func TestImplement_held_toolErrorNamesHolderRunIDAndRecordsNoRun(t *testing.T) {
 	fx := newImplementFixture(t, contractWithWallClock, func(f *fakeClaims) {
 		f.claimErr = &domain.ClaimHeldError{Holder: holder}
 	})
+	mustPut(t, fx.runs.Memory, terminalRun("run-holder"))
 
 	res := callImplement(t, fx.cs, implementIssue)
 	if !res.IsError {
@@ -479,6 +480,7 @@ func TestImplement_supersedes_visibleInStatus(t *testing.T) {
 	fx := newImplementFixture(t, contractWithWallClock, func(f *fakeClaims) {
 		f.supersedes = &domain.ClaimSummary{RunID: "run-expired", SHA: "sha-expired", ExpiresAt: startedAt().Add(-time.Minute)}
 	})
+	mustPut(t, fx.runs.Memory, terminalRun("run-expired"))
 
 	out := decodeImplement(t, callImplement(t, fx.cs, implementIssue))
 	res := callStatus(t, fx.cs, map[string]any{"run_id": out.RunID})
