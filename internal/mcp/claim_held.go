@@ -27,16 +27,12 @@ func (e claimHeldElsewhere) Error() string {
 // refusal it renders.
 func (e claimHeldElsewhere) Is(target error) bool { return target == domain.ErrClaimHeld }
 
-// heldFor is err as client may read it. A claim refused because it is held
-// names its holder only when runs records that run under client; a holder
-// of another client, one runs does not know and one runs could not look up
-// are all the same refusal without the holder. Any other err is unchanged.
-func heldFor(ctx context.Context, runs RunReader, client string, err error) error {
+// heldFor is err as the owner of runs may read it. A claim refused because
+// it is held names its holder only when the owner owns that run; any other
+// holder is the same refusal without it. Any other err is unchanged.
+func heldFor(ctx context.Context, runs ownedRuns, err error) error {
 	var held *domain.ClaimHeldError
-	if !errors.As(err, &held) {
-		return err
-	}
-	if _, getErr := (ownedRuns{runs: runs, owner: client}).Get(ctx, held.Holder.RunID); getErr == nil {
+	if !errors.As(err, &held) || runs.owns(ctx, held.Holder.RunID) {
 		return err
 	}
 	return claimHeldElsewhere{repo: held.Holder.Repository, issue: held.Holder.Issue, expires: held.Holder.ExpiresAt}

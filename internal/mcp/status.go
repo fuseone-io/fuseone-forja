@@ -46,8 +46,9 @@ type StatusOutput struct {
 	StartedAt time.Time `json:"started_at"`
 	// FinishedAt is absent while the run is not terminal.
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	// Supersedes names the run whose expired claim this run took over;
-	// absent when the issue was free.
+	// Supersedes names the run whose expired claim this run took over when
+	// that run is the caller's too; absent otherwise, whether the issue was
+	// free or held by a run the caller does not own.
 	Supersedes string `json:"supersedes,omitempty"`
 	// EgressDeniedCount is every attempt the run's gateway refused;
 	// EgressDenied lists the first of them, empty when there were none.

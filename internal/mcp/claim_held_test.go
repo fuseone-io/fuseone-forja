@@ -48,12 +48,13 @@ type holderState struct {
 	own       bool
 }
 
-var holderStates = []holderState{
-	{name: "the caller's own run", owner: testClient, own: true},
-	{name: "another client's run", owner: clientB},
-	{name: "a run the store does not know"},
-	{name: "a store that cannot say", owner: testClient, readFails: true},
-}
+var (
+	ownHolder     = holderState{name: "the caller's own run", owner: testClient, own: true}
+	foreignHolder = holderState{name: "another client's run", owner: clientB}
+	unknownHolder = holderState{name: "a run the store does not know"}
+	failedHolder  = holderState{name: "a store that cannot say", owner: testClient, readFails: true}
+	holderStates  = []holderState{ownHolder, foreignHolder, unknownHolder, failedHolder}
+)
 
 // seeded is the wiring that records the run id under owner, unless owner
 // is empty, and makes the store fail the ownership lookup of id when
@@ -124,9 +125,9 @@ func TestClaimHeld_holderOwnership_runIDNamedOnlyToItsOwner(t *testing.T) {
 func TestClaimHeld_foreignAndUnknownHolder_answeredAlike(t *testing.T) {
 	t.Parallel()
 	for _, tool := range []domain.Tool{domain.ToolImplement, domain.ToolVerify} {
-		foreign := textOf(heldCall(t, tool, holderStates[1]))
-		unknown := textOf(heldCall(t, tool, holderStates[2]))
-		failing := textOf(heldCall(t, tool, holderStates[3]))
+		foreign := textOf(heldCall(t, tool, foreignHolder))
+		unknown := textOf(heldCall(t, tool, unknownHolder))
+		failing := textOf(heldCall(t, tool, failedHolder))
 		if foreign != unknown || failing != unknown {
 			t.Fatalf("%s: another client's holder = %q\nan unknown holder     = %q\na store that failed   = %q\nwant one answer", tool, foreign, unknown, failing)
 		}
