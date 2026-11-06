@@ -60,18 +60,18 @@ func newFlight(deps Deps, t runTarget, c domain.Claim, claimed domain.Stage) *fl
 	return &flight{claim: c, base: t.base, runs: deps.Runs, now: deps.Now, run: run}
 }
 
-// stage records name as started, runs do and records how it ended. do
-// says whether the run goes on: false with a nil error is a run that
-// failed on its own terms, such as a red gate. A record that cannot be
-// written stops the run.
-func (f *flight) stage(ctx context.Context, name domain.StageName, do func() (bool, error)) (bool, error) {
-	if err := f.begin(ctx, name); err != nil {
+// stage records name as started, runs do and records how it ended, the
+// records on done. do says whether the run goes on: false with a nil error
+// is a run that failed on its own terms, such as a red gate. A record that
+// cannot be written stops the run. ctx is the work's.
+func (f *flight) stage(_, done context.Context, name domain.StageName, do func() (bool, error)) (bool, error) {
+	if err := f.begin(done, name); err != nil {
 		return false, err
 	}
 	ok, err := do()
 	ok = ok && err == nil
 	f.finish(ok)
-	if putErr := f.put(ctx); putErr != nil {
+	if putErr := f.put(done); putErr != nil {
 		return false, errors.Join(err, putErr)
 	}
 	return ok, err

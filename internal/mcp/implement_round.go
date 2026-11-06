@@ -136,7 +136,7 @@ func (f *flight) finding() string {
 // it when the head needs a human merge, before forja/gates as on a first
 // run's pull request.
 func (h implementer) commentStage(ctx, done context.Context, f *flight) (bool, error) {
-	return f.stage(done, domain.StageComment, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageComment, func() (bool, error) {
 		err := h.deps.PullRequests.Comment(ctx, github.CommentRequest{
 			Repository: f.run.Repository, Number: f.run.PullRequest.Number, Body: f.evidence,
 		})

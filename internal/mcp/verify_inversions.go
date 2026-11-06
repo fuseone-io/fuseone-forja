@@ -84,7 +84,7 @@ func (v verifier) inversionStages(ctx, done context.Context, f *verifyFlight) (b
 // is not green fails the run without an error: an inversion of a red head
 // proves nothing.
 func (v verifier) baselineStage(ctx, done context.Context, f *verifyFlight) (bool, error) {
-	return f.stage(done, domain.StageGates, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageGates, func() (bool, error) {
 		report, err := v.deps.Gates.Run(ctx, f.run.ID, f.contract, f.co.Dir())
 		f.charge(report.Compute, domain.TokenUsage{})
 		if err != nil {
@@ -104,7 +104,7 @@ func (v verifier) baselineStage(ctx, done context.Context, f *verifyFlight) (boo
 // is the reason whatever else happened; an agent stopped or failed ends
 // the run without an error.
 func (v verifier) qaStage(ctx, done context.Context, f *verifyFlight) (bool, error) {
-	return f.stage(done, domain.StageAgent, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageAgent, func() (bool, error) {
 		issue, err := v.deps.Issues.Read(ctx, f.run.Repository, f.run.Issue)
 		if err != nil {
 			return false, err
@@ -187,7 +187,7 @@ func (v verifier) candidate(ctx context.Context, f *verifyFlight, c agent.Candid
 // the base contract's gates on it. What the gates showed is the
 // inversion's outcome, never the stage's: every admitted one runs.
 func (v verifier) inversionStage(ctx, done context.Context, f *verifyFlight, i int) (bool, error) {
-	return f.stage(done, domain.StageInversion, func() (bool, error) {
+	return f.stage(ctx, done, domain.StageInversion, func() (bool, error) {
 		inv := &f.run.Inversions[i]
 		commit, err := f.co.Adopt(ctx, f.bundleOf(inv.Branch), inv.Branch)
 		if err != nil {
