@@ -70,7 +70,7 @@ func (d *Docker) sweepContainers(ctx context.Context, filter client.Filters, run
 	removed, errs := 0, []error{}
 	for _, c := range list.Items {
 		if err := removeContainer(ctx, d.cli, c.ID); err != nil {
-			errs = append(errs, err)
+			errs = append(errs, fmt.Errorf("container of run %s: %w", c.Labels[labelRun], err))
 			continue
 		}
 		removed++
