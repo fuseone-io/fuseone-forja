@@ -60,7 +60,7 @@ func (c *Container) createRegistry(ctx context.Context, entries []string) (strin
 	cmd := []string{gatewayDir + "/" + gatewayBin, "registry", "-run", c.runID,
 		"-registries", strings.Join(entries, ","), "-credentials", registryCredentialsPath}
 	netName := networkName(c.runID)
-	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name:   netName + "-registry",
 		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
@@ -76,7 +76,7 @@ func (c *Container) createRegistry(ctx context.Context, entries []string) (strin
 	if err != nil {
 		return "", fmt.Errorf("workspace: create registry proxy of run %s: %w", c.runID, err)
 	}
-	return created.ID, nil
+	return id, nil
 }
 
 // registrySpec is one registry proxy to start.

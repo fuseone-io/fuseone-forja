@@ -66,7 +66,7 @@ func (c *Container) createGateway(ctx context.Context, allow []string) (string, 
 		cmd = append(cmd, "-allow", strings.Join(allow, ","))
 	}
 	netName := networkName(c.runID)
-	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name:   netName + "-gateway",
 		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
@@ -82,7 +82,7 @@ func (c *Container) createGateway(ctx context.Context, allow []string) (string, 
 	if err != nil {
 		return "", fmt.Errorf("workspace: create gateway of run %s: %w", c.runID, err)
 	}
-	return created.ID, nil
+	return id, nil
 }
 
 // startGateway copies the binary in, gives the gateway its way out when

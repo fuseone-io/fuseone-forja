@@ -161,7 +161,7 @@ func (c *Container) createModel(ctx context.Context, opts ModelOptions) (string,
 		"-cap", strconv.FormatInt(opts.Cap, 10), "-key-file", keyFile, "-token-file", tokenFile,
 	}
 	netName := networkName(c.runID)
-	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name:   netName + "-model",
 		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
 		HostConfig: &container.HostConfig{
@@ -177,7 +177,7 @@ func (c *Container) createModel(ctx context.Context, opts ModelOptions) (string,
 	if err != nil {
 		return "", fmt.Errorf("workspace: create model proxy of run %s: %w", c.runID, err)
 	}
-	return created.ID, nil
+	return id, nil
 }
 
 // startModel attaches the proxy to the bridge, since its upstream is

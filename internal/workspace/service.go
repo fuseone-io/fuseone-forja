@@ -78,7 +78,7 @@ func sidecarReadiness(ctx context.Context, cli *client.Client, image string) (re
 // createSidecar creates the sidecar on the run network only, with no port
 // published, and tracks it before anything else can fail.
 func (c *Container) createSidecar(ctx context.Context, name string, svc domain.Service, probe *container.HealthConfig) (string, error) {
-	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:       svc.Image,
 			Env:         envList(svc.Env),
@@ -93,8 +93,8 @@ func (c *Container) createSidecar(ctx context.Context, name string, svc domain.S
 	if err != nil {
 		return "", fmt.Errorf("workspace: create service %s from %s: %w", name, svc.Image, err)
 	}
-	c.track(created.ID)
-	return created.ID, nil
+	c.track(id)
+	return id, nil
 }
 
 // awaitReady reads the sidecar's state until verdict decides, readiness

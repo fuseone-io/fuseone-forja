@@ -210,7 +210,7 @@ func (d *Docker) addProxies(ctx context.Context, c *Container, plan launchPlan) 
 // container connected afterwards does not get the embedded DNS.
 func (c *Container) createWorkspace(ctx context.Context, image string, env []string) (string, error) {
 	netName := networkName(c.runID)
-	created, err := c.cli.ContainerCreate(ctx, client.ContainerCreateOptions{
+	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name: netName + "-workspace",
 		Config: &container.Config{
 			Image:      image,
@@ -225,7 +225,7 @@ func (c *Container) createWorkspace(ctx context.Context, image string, env []str
 	if err != nil {
 		return "", fmt.Errorf("workspace: create container from %s: %w", image, err)
 	}
-	return created.ID, nil
+	return id, nil
 }
 
 // proxyEnv points both spellings tools read at the gateway, except for the
