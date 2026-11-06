@@ -52,16 +52,17 @@ A sweep by `forja.run` alone would remove another instance's live runs.
    The id survives a crash, so the next start knows the dead process's
    objects as its own. A file that does not hold an id fails the start and
    names the file.
-3. **Sweep.** `serve` sweeps after locking the directory and recovering the
-   claims, and before it serves. It removes every container, in any state,
-   then every network, that carries both `forja.run` and this instance's
-   `forja.owner`. Containers go first because the daemon refuses to remove
-   a network that still has something attached.
+3. **Sweep.** `serve` sweeps after it locks the directory and before it
+   opens the run store and recovers the claims. The sweep needs neither, so
+   a database or GitHub that fails the start cannot keep the objects there.
+   It removes every container, in any state, then every network, that
+   carries both `forja.run` and this instance's `forja.owner`. Containers go
+   first because the daemon refuses to remove a network that still has
+   something attached.
 4. **Never fatal.** A daemon that fails or does not answer is reported on
-   stderr and the start goes on. Nothing runs after the sweep that needs the
-   daemon, so it is bounded by the startup deadline. What it could not
-   remove waits for the next start. A start that was already stopped does
-   not sweep.
+   stderr and the start goes on. The sweep is bounded by 30 s, inside the
+   startup deadline. What it could not remove waits for the next start. A
+   start that was already stopped does not sweep.
 5. **The report.** One line with the number of containers and networks
    removed and the ids of their runs. Never the env, the command or the
    config: `workspace.Swept` holds only counts and run ids.
