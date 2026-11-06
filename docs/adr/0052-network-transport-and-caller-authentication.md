@@ -275,8 +275,8 @@ during the claim, the agent and the gates. So a cancelled run removes
 its workspace, releases its claim and is recorded `failed` before the
 process exits. That holds only if the process is given the drain: the
 pod's `terminationGracePeriodSeconds` (or the runtime's stop timeout)
-must exceed the drain plus its margin, 195 s, and the maintainer set the
-requirement above 230 s. Kubernetes' default of 30 s does not suffice.
+must exceed the drain, 195 s (the 180 s teardown and its 15 s margin),
+and the maintainer set the requirement above 230 s. Kubernetes' default of 30 s does not suffice.
 There is no chart in `deploy/` yet; 240 s is the value to set when it
 lands. A stop also cancels short read-only calls in flight, and a run
 cancelled between its push and its pull request leaves the pushed
