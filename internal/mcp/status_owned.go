@@ -10,9 +10,10 @@ import (
 
 // ownedRuns is the store as one client sees it: only the runs recorded
 // under owner, by id, as a cursor and in a list. The store reads only the
-// owner's rows, so a failure is the owner's own and is passed on. Another
-// client's run and one the store does not know are the same error, built
-// here so that no store's wording can tell them apart.
+// owner's rows, so a failure of Get or List is the owner's own and is
+// passed on. Another client's run and one the store does not know are the
+// same error, built here so that no store's wording can tell them apart.
+// owns answers only yes or no, a failure included.
 type ownedRuns struct {
 	runs  RunReader
 	owner string

@@ -45,11 +45,13 @@ type holderState struct {
 	owner string
 	// readFails makes the store fail the ownership lookup of the holder.
 	readFails bool
-	own       bool
 }
 
+// own is whether the store vouches for the holder as testClient's.
+func (h holderState) own() bool { return h.owner == testClient && !h.readFails }
+
 var (
-	ownHolder     = holderState{name: "the caller's own run", owner: testClient, own: true}
+	ownHolder     = holderState{name: "the caller's own run", owner: testClient}
 	foreignHolder = holderState{name: "another client's run", owner: clientB}
 	unknownHolder = holderState{name: "a run the store does not know"}
 	failedHolder  = holderState{name: "a store that cannot say", owner: testClient, readFails: true}
@@ -109,8 +111,8 @@ func TestClaimHeld_holderOwnership_runIDNamedOnlyToItsOwner(t *testing.T) {
 						t.Errorf("error %q does not name %q", text, want)
 					}
 				}
-				if named := strings.Contains(text, holderRun); named != h.own {
-					t.Fatalf("error %q names the holder %v, want %v", text, named, h.own)
+				if named := strings.Contains(text, holderRun); named != h.own() {
+					t.Fatalf("error %q names the holder %v, want %v", text, named, h.own())
 				}
 				if strings.Contains(text, clientB) || strings.Contains(text, "store down") {
 					t.Fatalf("error %q names the holder's client or the store's failure", text)
@@ -120,9 +122,10 @@ func TestClaimHeld_holderOwnership_runIDNamedOnlyToItsOwner(t *testing.T) {
 	}
 }
 
-// Another client's holder and one no run has are the same refusal, byte
-// for byte: the answer tells a caller nothing about whose run it is.
-func TestClaimHeld_foreignAndUnknownHolder_answeredAlike(t *testing.T) {
+// Another client's holder, one no run has and one the store failed to look
+// up are the same refusal, byte for byte: the answer tells a caller
+// nothing about whose run it is.
+func TestClaimHeld_holderNotVouchedFor_foreignUnknownAndFailedAnsweredAlike(t *testing.T) {
 	t.Parallel()
 	for _, tool := range []domain.Tool{domain.ToolImplement, domain.ToolVerify} {
 		foreign := textOf(heldCall(t, tool, foreignHolder))
@@ -183,10 +186,11 @@ func TestStatus_supersedes_namedOnlyWhenTheCallersOwn(t *testing.T) {
 			}
 			wire := wireOf(t, res)
 			raw, present := wire["supersedes"]
-			if present != h.own || (h.own && string(raw) != `"`+supersededRun+`"`) {
-				t.Fatalf("supersedes = %s (present %v), want present %v: %s", raw, present, h.own, structuredJSON(t, res))
+			own := h.own()
+			if present != own || (own && string(raw) != `"`+supersededRun+`"`) {
+				t.Fatalf("supersedes = %s (present %v), want present %v: %s", raw, present, own, structuredJSON(t, res))
 			}
-			if !h.own && strings.Contains(string(structuredJSON(t, res)), supersededRun) {
+			if !own && strings.Contains(string(structuredJSON(t, res)), supersededRun) {
 				t.Fatalf("the superseded run of another client is on the wire: %s", structuredJSON(t, res))
 			}
 		})
