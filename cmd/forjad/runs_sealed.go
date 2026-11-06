@@ -19,7 +19,7 @@ var errRunStoreUnavailable = errors.New("run store unavailable")
 // driver's error names the database's address and user. A run the store
 // does not find, or one recorded under another client, is the store's own
 // answer and is passed on as it is; a call whose own context ended is
-// answered that context's error.
+// answered that context's error, its cause logged all the same.
 type sealedRuns struct {
 	runs mcp.RunStore
 	log  io.Writer
@@ -53,10 +53,10 @@ func (s sealedRuns) seal(ctx context.Context, op string, err error) error {
 	if err == nil || errors.Is(err, domain.ErrRunNotFound) || errors.Is(err, domain.ErrRunClientChanged) {
 		return err
 	}
+	// A log that cannot be written leaves the caller's answer as it is.
+	_, _ = fmt.Fprintf(s.log, "forjad: run store: %s: %v\n", op, err)
 	if ended := ctx.Err(); ended != nil {
 		return ended
 	}
-	// A log that cannot be written leaves the caller's answer as it is.
-	_, _ = fmt.Fprintf(s.log, "forjad: run store: %s: %v\n", op, err)
 	return errRunStoreUnavailable
 }
