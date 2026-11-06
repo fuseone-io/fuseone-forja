@@ -257,28 +257,30 @@ not a configuration change.
 
 A stop of `forjad serve` cancels the calls in flight the same way: every
 request's context ends with the server's (`http.Server.BaseContext`), and
-the drain (4 min 15 s) outlasts a cancelled run's longest teardown plus a
-15 s margin. The longest is a caller that leaves during the claim: eight
-30 s steps one after the other, the ref mutation and the read-back that
-settles an answer it lost (`claim.SettleBound`), then six steps the run
-still takes, five records and the release (`mcp.CancelledRunRecords` of
-`FinishTimeout` each): the running record, the clone stage's start and
-end, the release's start, the release, and the terminal record. A caller
-that leaves as the agent runs takes the agent's two teardown steps,
-reading the proxies and removing the workspace, then four: the agent
-stage's end, the release's start, the release and the terminal record,
-which is shorter. A claim refused after its read-back may give the ref
-back on a third 30 s budget, but no run follows it. The drain is derived
-from those constants, and tests count the calls against them. So a cancelled run
-removes its workspace, releases its claim and is recorded `failed` before
-the process exits. That holds only if the process is given the drain: the
-pod's `terminationGracePeriodSeconds` (or the runtime's stop timeout) must
-exceed the drain, 255 s; 270 s is the value to set. Kubernetes' default of
-30 s does not, and neither does 230 s, which covered seven steps before the
-read-back was added. There is no chart in `deploy/` yet; the value goes in
-when it lands. A stop also cancels short read-only calls in
-flight, and a run cancelled between its push and its pull request leaves
-the pushed branch behind.
+the drain (3 min 15 s) outlasts a cancelled run's longest teardown plus a
+15 s margin. Once the caller left, no stage of the run starts: the
+teardown is the call in flight finishing on its own detached budgets,
+then four `FinishTimeout` steps (`mcp.CancelledRunRecords`): the record
+that ends the call in flight (the stage's end, or the running record
+after the claim), the release's start, the release and the terminal
+record. The call in flight takes at most two 30 s steps
+(`claim.SettleBound`): the claim's ref mutation and the read-back that
+settles an answer it lost, the agent's or the gates' proxy reads and
+workspace removal, or a stage's start record and a failed launch's
+removal. That is six 30 s steps one after the other, 180 s. A claim
+refused after its read-back may give the ref back on a third 30 s
+budget, but no run follows it. The drain is derived from those
+constants, and tests count the calls against them for a caller leaving
+during the claim, the agent and the gates. So a cancelled run removes
+its workspace, releases its claim and is recorded `failed` before the
+process exits. That holds only if the process is given the drain: the
+pod's `terminationGracePeriodSeconds` (or the runtime's stop timeout)
+must exceed the drain plus its margin, 195 s, and the maintainer set the
+requirement above 230 s. Kubernetes' default of 30 s does not suffice.
+There is no chart in `deploy/` yet; 240 s is the value to set when it
+lands. A stop also cancels short read-only calls in flight, and a run
+cancelled between its push and its pull request leaves the pushed
+branch behind.
 
 ### 8. Origin validation
 
