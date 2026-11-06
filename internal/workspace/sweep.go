@@ -50,35 +50,33 @@ func (d *Docker) Sweep(ctx context.Context) (Swept, error) {
 	filter := client.Filters{}.Add("label", labelRun, labelOwner+"="+d.opts.Owner)
 	runs := map[string]bool{}
 	var swept Swept
-	var errs []error
-	swept.Containers, errs = d.sweepContainers(ctx, filter, runs)
-	n, err := d.sweepNetworks(ctx, filter, runs)
-	swept.Networks = n
-	errs = append(errs, err)
+	var errC, errN error
+	swept.Containers, errC = d.sweepContainers(ctx, filter, runs)
+	swept.Networks, errN = d.sweepNetworks(ctx, filter, runs)
 	for id := range runs {
 		swept.Runs = append(swept.Runs, id)
 	}
 	slices.Sort(swept.Runs)
-	return swept, errors.Join(errs...)
+	return swept, errors.Join(errC, errN)
 }
 
 // sweepContainers removes the containers filter matches and adds the run
 // of each one removed to runs.
-func (d *Docker) sweepContainers(ctx context.Context, filter client.Filters, runs map[string]bool) (int, []error) {
+func (d *Docker) sweepContainers(ctx context.Context, filter client.Filters, runs map[string]bool) (int, error) {
 	list, err := d.cli.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: filter})
 	if err != nil {
-		return 0, []error{fmt.Errorf("workspace: sweep: list containers: %w", err)}
+		return 0, fmt.Errorf("workspace: sweep: list containers: %w", err)
 	}
 	removed, errs := 0, []error{}
 	for _, c := range list.Items {
 		if err := removeContainer(ctx, d.cli, c.ID); err != nil {
-			errs = append(errs, fmt.Errorf("workspace: sweep: %w", err))
+			errs = append(errs, err)
 			continue
 		}
 		removed++
 		runs[c.Labels[labelRun]] = true
 	}
-	return removed, errs
+	return removed, errors.Join(errs...)
 }
 
 // sweepNetworks removes the networks filter matches and adds the run of
@@ -91,7 +89,7 @@ func (d *Docker) sweepNetworks(ctx context.Context, filter client.Filters, runs 
 	removed, errs := 0, []error{}
 	for _, n := range list.Items {
 		if err := removeNetwork(ctx, d.cli, n.ID); err != nil {
-			errs = append(errs, fmt.Errorf("workspace: sweep: network of run %s: %w", n.Labels[labelRun], err))
+			errs = append(errs, fmt.Errorf("network of run %s: %w", n.Labels[labelRun], err))
 			continue
 		}
 		removed++

@@ -90,6 +90,10 @@ func (d *Docker) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Close releases the client's connections to the daemon; what it launched
+// stays on the daemon.
+func (d *Docker) Close() error { return d.cli.Close() }
+
 // LaunchSpec is one workspace to create: run RunID's, from Image, with a
 // copy of Tree, a directory on the control plane, at workDir. Registries
 // are the contract's private registries, reached through the run's
