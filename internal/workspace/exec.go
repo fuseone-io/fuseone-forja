@@ -46,6 +46,9 @@ type Container struct {
 	// runtime is the daemon runtime every container of the run is created
 	// under; empty is the daemon's default.
 	runtime string
+	// owner is the instance every object of the run is labelled with;
+	// empty labels none.
+	owner string
 
 	mu       sync.Mutex
 	sidecars []string

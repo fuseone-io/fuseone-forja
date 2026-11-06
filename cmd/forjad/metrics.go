@@ -42,6 +42,9 @@ type host struct {
 	// startup bounds opening the run store and recovering claims; zero is
 	// defaultStartupTimeout.
 	startup time.Duration
+	// sweep removes what this instance's dead runs left on the daemon;
+	// nil is dockerSweep.
+	sweep sweepFunc
 }
 
 // metricsAddr is the configured address, empty when unset; one that is not

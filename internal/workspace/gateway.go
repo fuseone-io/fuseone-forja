@@ -68,7 +68,7 @@ func (c *Container) createGateway(ctx context.Context, allow []string) (string, 
 	netName := networkName(c.runID)
 	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name:   netName + "-gateway",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: c.labels()},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},

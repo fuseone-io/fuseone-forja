@@ -42,19 +42,19 @@ func nameRune(r rune) bool {
 // attached elsewhere. A container created on it gets the daemon's embedded
 // DNS, which resolves the gateway and every sidecar by its alias, and the
 // daemon isolates it from every other bridge, the default one included.
-func createNetwork(ctx context.Context, cli *client.Client, runID string) (string, error) {
+func (c *Container) createNetwork(ctx context.Context) (string, error) {
 	ctx, cancel, err := createContext(ctx, createGrace)
 	if err != nil {
-		return "", fmt.Errorf("workspace: create network of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create network of run %s: %w", c.runID, err)
 	}
 	defer cancel()
-	created, err := cli.NetworkCreate(ctx, networkName(runID), client.NetworkCreateOptions{
+	created, err := c.cli.NetworkCreate(ctx, networkName(c.runID), client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: true,
-		Labels:   map[string]string{labelRun: runID},
+		Labels:   c.labels(),
 	})
 	if err != nil {
-		return "", fmt.Errorf("workspace: create network of run %s: %w", runID, err)
+		return "", fmt.Errorf("workspace: create network of run %s: %w", c.runID, err)
 	}
 	return created.ID, nil
 }

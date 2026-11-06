@@ -32,8 +32,9 @@ const (
 )
 
 // workspaceOptions assembles the Docker driver's options from the
-// environment. A malformed allowlist or credentials file is an error; an
-// unset runtime is one warning on stderr.
+// environment, with the state directory's instance as the owner of every
+// object. A malformed allowlist, credentials file or instance file is an
+// error; an unset runtime is one warning on stderr.
 func workspaceOptions(getenv func(string) string, stderr io.Writer) (workspace.Options, error) {
 	allow, err := egress.ParseAllow(getenv(EnvEgressAllow))
 	if err != nil {
@@ -43,12 +44,16 @@ func workspaceOptions(getenv func(string) string, stderr io.Writer) (workspace.O
 	if err != nil {
 		return workspace.Options{}, err
 	}
+	owner, err := instanceOwner(getenv)
+	if err != nil {
+		return workspace.Options{}, err
+	}
 	runtime := getenv(EnvWorkspaceRuntime)
 	if runtime == "" {
 		// The exit code is the only channel left when stderr itself fails.
 		_, _ = fmt.Fprintf(stderr, "forjad: %s is not set: workspaces run under the Docker daemon's default runtime\n", EnvWorkspaceRuntime)
 	}
-	return workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow, RegistryCredentials: creds, Runtime: runtime}, nil
+	return workspace.Options{GatewayBinary: getenv(EnvGatewayBinary), EgressAllow: allow, RegistryCredentials: creds, Runtime: runtime, Owner: owner}, nil
 }
 
 // loadRegistryCredentials reads the file the variable names; unset, there
