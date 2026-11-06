@@ -3,6 +3,7 @@ package workspace_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -65,16 +66,30 @@ func (l *lateCancel) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !armed {
 		return l.base.RoundTrip(req)
 	}
-	resp, err := l.base.RoundTrip(req.WithContext(context.WithoutCancel(req.Context())))
+	sent, stop := context.WithTimeout(context.WithoutCancel(req.Context()), time.Minute)
+	resp, err := l.base.RoundTrip(req.WithContext(sent))
 	cancel()
 	if err != nil {
+		stop()
 		return nil, err
 	}
+	resp.Body = stopOnClose{ReadCloser: resp.Body, stop: stop}
 	if ctxErr := req.Context().Err(); ctxErr != nil {
 		_ = resp.Body.Close()
 		return nil, ctxErr
 	}
 	return resp, nil
+}
+
+// stopOnClose ends the armed request's own context once its body is closed.
+type stopOnClose struct {
+	io.ReadCloser
+	stop context.CancelFunc
+}
+
+func (s stopOnClose) Close() error {
+	defer s.stop()
+	return s.ReadCloser.Close()
 }
 
 func isCreate(req *http.Request) bool {

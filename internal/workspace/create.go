@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/moby/moby/client"
@@ -15,35 +14,32 @@ const createGrace = 30 * time.Second
 // a create whose request was cancelled, and the id it answered is then lost
 // to Close; the end of the run, cancellation or deadline, therefore reaches
 // a create in flight only grace later, so its answer can still come back.
-// A run that has already ended sends no create at all.
+// The run's deadline, when it has one, moves by grace and stays visible. A
+// run found ended here sends no create.
 func createContext(ctx context.Context, grace time.Duration) (context.Context, context.CancelFunc, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
 	}
-	created, cancel := context.WithCancel(context.WithoutCancel(ctx))
-	var (
-		mu       sync.Mutex
-		released bool
-		timer    *time.Timer
-	)
+	created, cancel := detachedFrom(ctx, grace)
 	stop := context.AfterFunc(ctx, func() {
-		mu.Lock()
-		defer mu.Unlock()
-		if !released {
-			timer = time.AfterFunc(grace, cancel)
+		timer := time.NewTimer(grace)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+			cancel()
+		case <-created.Done():
 		}
 	})
-	release := func() {
-		stop()
-		mu.Lock()
-		released = true
-		if timer != nil {
-			timer.Stop()
-		}
-		mu.Unlock()
-		cancel()
+	return created, func() { stop(); cancel() }, nil
+}
+
+// detachedFrom is ctx without its cancellation, with its deadline, if any,
+// grace later.
+func detachedFrom(ctx context.Context, grace time.Duration) (context.Context, context.CancelFunc) {
+	if deadline, ok := ctx.Deadline(); ok {
+		return context.WithDeadline(context.WithoutCancel(ctx), deadline.Add(grace))
 	}
-	return created, release, nil
+	return context.WithCancel(context.WithoutCancel(ctx))
 }
 
 // createContainer creates one container of the run under createContext and

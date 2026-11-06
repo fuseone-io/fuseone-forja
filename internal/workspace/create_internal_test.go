@@ -27,6 +27,24 @@ func TestCreateContext_runAlive_noDeadlineOfItsOwn(t *testing.T) {
 	}
 }
 
+// A create of a run with a deadline carries that deadline, grace later.
+func TestCreateContext_runWithDeadline_deadlineMovedByTheGrace(t *testing.T) {
+	t.Parallel()
+	deadline := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	defer cancel()
+	const grace = 7 * time.Second
+
+	created, release, err := createContext(ctx, grace)
+	if err != nil {
+		t.Fatalf("createContext: %v", err)
+	}
+	defer release()
+	if got, ok := created.Deadline(); !ok || !got.Equal(deadline.Add(grace)) {
+		t.Errorf("create deadline = %v (set %v), want %v", got, ok, deadline.Add(grace))
+	}
+}
+
 // The run's cancellation reaches a create in flight only after the grace,
 // so the daemon's answer can still come back.
 func TestCreateContext_runCancelled_createEndsAfterTheGrace(t *testing.T) {
@@ -40,7 +58,7 @@ func TestCreateContext_runCancelled_createEndsAfterTheGrace(t *testing.T) {
 	}
 	defer release()
 	cancel()
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(grace * 4 / 5)
 	if err := created.Err(); err != nil {
 		t.Fatalf("create ended with the run, before the grace: %v", err)
 	}
