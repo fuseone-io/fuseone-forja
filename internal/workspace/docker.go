@@ -60,6 +60,10 @@ type Options struct {
 	AgentBinary string
 	// Model configures the model proxy of every agent launch.
 	Model ModelOptions
+	// Owner is the instance every object of a run is labelled as created
+	// by, and the one Sweep removes the objects of. Empty, objects carry no
+	// owner and Sweep is refused.
+	Owner string
 }
 
 // Docker launches containers on the daemon the environment points at.
@@ -130,7 +134,7 @@ func (d *Docker) launch(ctx context.Context, spec LaunchSpec, agent *agentSpec) 
 			return nil, fmt.Errorf("workspace: image %s: %w", img, err)
 		}
 	}
-	c := &Container{cli: d.cli, runID: spec.RunID, runtime: d.opts.Runtime}
+	c := &Container{cli: d.cli, runID: spec.RunID, runtime: d.opts.Runtime, owner: d.opts.Owner}
 	if err := d.assemble(ctx, c, launchPlan{spec: spec, binary: binary, creds: creds, agent: agent}); err != nil {
 		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), closeTimeout)
 		defer cancel()
@@ -157,7 +161,7 @@ type launchPlan struct {
 // an agent launch installs the agent once the tree is in.
 func (d *Docker) assemble(ctx context.Context, c *Container, plan launchPlan) error {
 	var err error
-	if c.network, err = createNetwork(ctx, d.cli, c.runID); err != nil {
+	if c.network, err = c.createNetwork(ctx); err != nil {
 		return err
 	}
 	if c.gateway, err = c.createGateway(ctx, d.opts.EgressAllow); err != nil {
@@ -217,7 +221,7 @@ func (c *Container) createWorkspace(ctx context.Context, image string, env []str
 			Cmd:        []string{"sleep", "infinity"},
 			WorkingDir: workDir,
 			Env:        env,
-			Labels:     map[string]string{labelRun: c.runID},
+			Labels:     c.labels(),
 		},
 		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName), Runtime: c.runtime},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}},

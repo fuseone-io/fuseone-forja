@@ -62,7 +62,7 @@ func (c *Container) createRegistry(ctx context.Context, entries []string) (strin
 	netName := networkName(c.runID)
 	id, err := createContainer(ctx, c.cli, client.ContainerCreateOptions{
 		Name:   netName + "-registry",
-		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: map[string]string{labelRun: c.runID}},
+		Config: &container.Config{Image: gatewayImage, User: gatewayUser, Cmd: cmd, Labels: c.labels()},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(netName),
 			CapDrop:     []string{"ALL"},
