@@ -1,4 +1,4 @@
-# 9999 · Startup sweep of Docker objects by instance owner
+# 0087 · Startup sweep of Docker objects by instance owner
 
 Status: proposed
 

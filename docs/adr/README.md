@@ -25,4 +25,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0051](0051-forja-as-a-separate-product.md) | Forja as a separate product, with FuseOne as its reference client | proposed |
 | [0052](0052-network-transport-and-caller-authentication.md) | Network transport and caller authentication | accepted |
 | [0076](0076-durable-run-store.md) | Durable run store on Postgres | proposed |
-| [9999](9999-startup-sweep-by-instance-owner.md) | Startup sweep of Docker objects by instance owner | proposed |
+| [0087](0087-startup-sweep-by-instance-owner.md) | Startup sweep of Docker objects by instance owner | proposed |
