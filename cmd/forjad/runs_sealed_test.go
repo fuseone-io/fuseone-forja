@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -139,7 +140,7 @@ func TestHostStart_runStore_sealed(t *testing.T) {
 
 // A run the store does not find, or one recorded under another client,
 // is the store's own answer and is passed on; anything else is sealed.
-func TestSealRuns_domainOutcomesPassedOnOthersSealed(t *testing.T) {
+func TestSealRuns_notFoundOrClientChanged_passedOnOthersSealed(t *testing.T) {
 	t.Parallel()
 	for _, tt := range []struct {
 		cause  error
@@ -157,5 +158,20 @@ func TestSealRuns_domainOutcomesPassedOnOthersSealed(t *testing.T) {
 		if tt.sealed && (strings.Contains(err.Error(), driverUser) || !strings.Contains(operator.String(), driverUser)) {
 			t.Fatalf("sealed %v: client sees %q, operator log %q", tt.cause, err, operator.String())
 		}
+	}
+}
+
+// A call whose own context ended is answered that context's error, which
+// names no database, and is not the operator's to read: the driver's text
+// stays out of the answer and out of the log.
+func TestSealRuns_callerContextEnded_answeredItsErrorNotLogged(t *testing.T) {
+	t.Parallel()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var operator bytes.Buffer
+	cause := fmt.Errorf("failed to connect to user=%s: %w", driverUser, context.Canceled)
+	_, err := sealRuns(downRuns{cause: cause}, &operator).Get(ctx, "run-1")
+	if !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), driverUser) || operator.Len() != 0 {
+		t.Fatalf("Get on an ended context = %v, operator log %q; want context.Canceled alone and nothing logged", err, operator.String())
 	}
 }
