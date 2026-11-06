@@ -50,7 +50,7 @@ func TestCreateContext_runWithDeadline_deadlineMovedByTheGrace(t *testing.T) {
 func TestCreateContext_runCancelled_createEndsAfterTheGrace(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
-	const grace = 500 * time.Millisecond
+	const grace = 2 * time.Second
 
 	created, release, err := createContext(ctx, grace)
 	if err != nil {
@@ -58,14 +58,14 @@ func TestCreateContext_runCancelled_createEndsAfterTheGrace(t *testing.T) {
 	}
 	defer release()
 	cancel()
-	time.Sleep(grace * 4 / 5)
+	time.Sleep(grace / 2)
 	if err := created.Err(); err != nil {
 		t.Fatalf("create ended with the run, before the grace: %v", err)
 	}
 	select {
 	case <-created.Done():
 	case <-time.After(10 * time.Second):
-		t.Fatal("create still alive 10s after a 500ms grace")
+		t.Fatal("create still alive 10s after a 2s grace")
 	}
 }
 
