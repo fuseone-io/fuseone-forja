@@ -108,7 +108,9 @@ func lateCancelDocker(t *testing.T, opts workspace.Options) (*workspace.Docker, 
 	newDocker(t)
 	probe := dockerCLI(t)
 	dial := probe.Dialer()
-	l := &lateCancel{base: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) }}}
+	base := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) { return dial(ctx) }}
+	t.Cleanup(base.CloseIdleConnections)
+	l := &lateCancel{base: base}
 	cli, err := client.New(client.FromEnv, client.WithHTTPClient(&http.Client{Transport: l}))
 	if err != nil {
 		t.Fatalf("client.New: %v", err)
