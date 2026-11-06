@@ -73,6 +73,27 @@ func sweepOf(t *testing.T, d *workspace.Docker) (workspace.Swept, error) {
 	return d.Sweep(ctx)
 }
 
+// launchDead launches a run on d that is never closed and returns its id:
+// an agent launch with a sidecar, or a plain one with a registry proxy.
+func launchDead(t *testing.T, d *workspace.Docker, agent bool) string {
+	t.Helper()
+	runID := newRunID(t)
+	removeRunAfter(t, runID)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	c, err := launchFor(ctx, d, runID, agent, treeWith(t))
+	if err != nil {
+		t.Fatalf("launch of run %s: %v", runID, err)
+	}
+	if !agent {
+		return runID
+	}
+	if _, err := c.StartService(ctx, "db", domain.Service{Image: testImage}, time.Minute); err != nil {
+		t.Fatalf("StartService: %v", err)
+	}
+	return runID
+}
+
 // Every object a launch of this instance creates, the network, the
 // gateway, the model and registry proxies, the workspace and a sidecar,
 // a create that never came back, and a container whose network is already
@@ -87,26 +108,9 @@ func TestDocker_sweep_deadRunsOfThisInstance_everyObjectRemoved(t *testing.T) {
 		Model:               workspace.ModelOptions{Key: fakeKey, Upstream: "http://127.0.0.1:9", Cap: 10},
 		RegistryCredentials: map[string]registry.Credential{testRegistry: {Username: "forja-reader", Password: canary(t)}},
 	})
-	agentRun, registryRun, createdRun := newRunID(t), newRunID(t), newRunID(t)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
-	defer cancel()
-	for _, run := range []struct {
-		id    string
-		agent bool
-	}{{agentRun, true}, {registryRun, false}} {
-		removeRunAfter(t, run.id)
-		c, err := launchFor(ctx, d, run.id, run.agent, treeWith(t))
-		if err != nil {
-			t.Fatalf("launch of run %s: %v", run.id, err)
-		}
-		if run.agent {
-			if _, err := c.StartService(ctx, "db", domain.Service{Image: testImage}, time.Minute); err != nil {
-				t.Fatalf("StartService: %v", err)
-			}
-		}
-	}
+	agentRun, registryRun := launchDead(t, d, true), launchDead(t, d, false)
+	createdRun, unnetworkedRun := newRunID(t), newRunID(t)
 	plantCreated(t, createdRun, owned(createdRun, owner))
-	unnetworkedRun := newRunID(t)
 	plantContainer(t, unnetworkedRun, owned(unnetworkedRun, owner), "none")
 	wantRuns := []string{agentRun, registryRun, createdRun, unnetworkedRun}
 	var containers int
@@ -152,14 +156,21 @@ func TestDocker_sweep_objectsNotThisInstances_untouched(t *testing.T) {
 	if err != nil || swept.Containers+swept.Networks != 0 || len(swept.Runs) != 0 {
 		t.Errorf("Sweep = %+v, %v; want nothing removed", swept, err)
 	}
-	if cs, ns := leftRun(t, otherRun); !slices.Equal(cs, otherContainers) || !slices.Equal(ns, otherNetworks) {
-		t.Errorf("another instance's run went from %v %v to %v %v", otherContainers, otherNetworks, cs, ns)
-	}
+	assertRunKept(t, otherRun, otherContainers, otherNetworks)
 	if res, err := c.Exec(ctx, "true"); err != nil || res.ExitCode != 0 {
 		t.Errorf("another instance's workspace after the sweep: exec = %+v, %v; want it still running", res, err)
 	}
 	if cs, ns := leftRun(t, bareRun); len(cs) != 1 || len(ns) != 1 {
 		t.Errorf("objects with no owner: %v %v, want the container and the network left", cs, ns)
+	}
+}
+
+// assertRunKept asserts the daemon still holds exactly the containers and
+// networks of runID it held before.
+func assertRunKept(t *testing.T, runID string, containers, networks []string) {
+	t.Helper()
+	if cs, ns := leftRun(t, runID); !slices.Equal(cs, containers) || !slices.Equal(ns, networks) {
+		t.Errorf("run %s went from %v %v to %v %v", runID, containers, networks, cs, ns)
 	}
 }
 
