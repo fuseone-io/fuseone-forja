@@ -42,10 +42,18 @@ func plantCreated(t *testing.T, runID string, labels map[string]string) {
 	if _, err := cli.NetworkCreate(ctx, netName, client.NetworkCreateOptions{Driver: "bridge", Internal: true, Labels: labels}); err != nil {
 		t.Fatalf("NetworkCreate: %v", err)
 	}
-	_, err := cli.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Name:       netName + "-db",
+	plantContainer(t, runID, labels, netName)
+}
+
+// plantContainer leaves a container of runID created on network and never
+// started, labelled with labels.
+func plantContainer(t *testing.T, runID string, labels map[string]string, network string) {
+	t.Helper()
+	removeRunAfter(t, runID)
+	_, err := dockerCLI(t).ContainerCreate(context.Background(), client.ContainerCreateOptions{
+		Name:       "forja-run-" + runID + "-db",
 		Config:     &container.Config{Image: testImage, Cmd: []string{"sleep", "infinity"}, Labels: labels},
-		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(netName)},
+		HostConfig: &container.HostConfig{NetworkMode: container.NetworkMode(network)},
 	})
 	if err != nil {
 		t.Fatalf("ContainerCreate: %v", err)
@@ -67,8 +75,9 @@ func sweepOf(t *testing.T, d *workspace.Docker) (workspace.Swept, error) {
 
 // Every object a launch of this instance creates, the network, the
 // gateway, the model and registry proxies, the workspace and a sidecar,
-// and a create that never came back, are removed by the next start's
-// sweep when the run died without its Close.
+// a create that never came back, and a container whose network is already
+// gone, are removed by the next start's sweep when the run died without
+// its Close. Each run is reported once, whichever of its objects went.
 func TestDocker_sweep_deadRunsOfThisInstance_everyObjectRemoved(t *testing.T) {
 	t.Parallel()
 	owner := newRunID(t)
@@ -97,8 +106,11 @@ func TestDocker_sweep_deadRunsOfThisInstance_everyObjectRemoved(t *testing.T) {
 		}
 	}
 	plantCreated(t, createdRun, owned(createdRun, owner))
+	unnetworkedRun := newRunID(t)
+	plantContainer(t, unnetworkedRun, owned(unnetworkedRun, owner), "none")
+	wantRuns := []string{agentRun, registryRun, createdRun, unnetworkedRun}
 	var containers int
-	for _, id := range []string{agentRun, registryRun, createdRun} {
+	for _, id := range wantRuns {
 		cs, _ := leftRun(t, id)
 		containers += len(cs)
 	}
@@ -108,7 +120,6 @@ func TestDocker_sweep_deadRunsOfThisInstance_everyObjectRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sweep: %v", err)
 	}
-	wantRuns := []string{agentRun, registryRun, createdRun}
 	slices.Sort(wantRuns)
 	if !slices.Equal(swept.Runs, wantRuns) || swept.Containers != containers || swept.Networks != 3 {
 		t.Errorf("Sweep = %+v, want runs %v, %d containers and 3 networks", swept, wantRuns, containers)
