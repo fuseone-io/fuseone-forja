@@ -20,6 +20,11 @@ const (
 	followUpTimeout = 30 * time.Second
 )
 
+// SettleBound is the longest Claim keeps working once its caller left and
+// still answers a claim the run then holds: the ref mutation, then the
+// read-back that settles an answer it lost, each on its own budget.
+const SettleBound = mutationTimeout + followUpTimeout
+
 // mutation is the context a ref mutation runs on: detached from the
 // caller's, since a mutation GitHub applied while the caller left must
 // still be journaled or undone, and bounded by the mutation budget. A

@@ -3,6 +3,7 @@ package claim_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -119,4 +120,32 @@ func TestStore_claim_answerLostAndRefUnreadable_journaledForRecovery(t *testing.
 		t.Fatalf("Recover: %v", err)
 	}
 	assertNothingLeft(t, fake, journal)
+}
+
+// The longest a claim keeps its caller's run waiting once the caller left
+// is the mutation, then the read-back of an answer it lost: the two
+// budgets claim.SettleBound adds up. A further call there outgrows it, and
+// the drain sized from it, so it fails here first.
+func TestStore_claim_callerGoneAndAnswerLost_settlesInTheBudgetsCounted(t *testing.T) {
+	t.Parallel()
+	for op := range mutations {
+		t.Run(op, func(t *testing.T) {
+			t.Parallel()
+			journal := &claim.Journal{Dir: t.TempDir()}
+			fake, store := newStalling(t, op, journal)
+			ctx, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			fake.cancelOn, fake.cancel = op, cancel
+			c, err := store.Claim(ctx, request("run-1"))
+			if err != nil {
+				t.Fatalf("Claim = %v, want the claim GitHub applied held", err)
+			}
+			calls := fake.callLog()
+			after := calls[slices.Index(calls, op):]
+			if want := []string{op, "GetRef"}; !slices.Equal(after, want) {
+				t.Fatalf("calls from the mutation on = %q, want %q: one budget each", after, want)
+			}
+			settle(t, store, c, err)
+		})
+	}
 }
