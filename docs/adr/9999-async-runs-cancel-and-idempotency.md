@@ -105,30 +105,41 @@ refuse the operation, and nothing after:
    request (`openRound`, `internal/mcp/implement_round.go`) or the verified
    pull request (`verify`), then the contract at the base commit to size the
    lease (`lifecycle.lease`).
-6. Apply the caller's deadline and budget (§4).
+6. Apply the caller's deadline and budget (§4), and refuse again with
+   `deadline_passed` a deadline that passed during step 5, so no claim is
+   taken for a run that could not work.
 7. Take the claim.
-8. In one store transaction, record the run as `running` and the idempotency
+8. Register the run with the **run supervisor**, which creates the run's
+   context and keeps its cancel function. A supervisor that is stopping
+   refuses: the call releases its claim, gives its slot back and answers a
+   tool error, with no run and no key.
+9. In one store transaction, record the run as `running` and the idempotency
    key (§3).
-9. Hand the run to the **run supervisor** and answer `RunStarted` (schemas
-   below).
+10. Start the run's goroutine and answer `RunStarted` (schemas below).
 
-Any refusal in steps 1 to 7 is a tool error, records no run, stores no key and
+Any refusal in steps 1 to 8 is a tool error, records no run, stores no key and
 leaves no claim, as a refused claim does today; a refusal after step 4 gives
-its slot back before it answers. Once the claim is held (step 7), steps 8 and
-9 run on a context detached from the request's, each bounded by
+its slot back before it answers. Once the claim is held (step 7), steps 8 to
+10 run on a context detached from the request's, each bounded by
 `FinishTimeout`: from that point the run exists whether or not the caller is
 still there, and a caller that went away finds it again with the same
-idempotency key (§3). A step 8 that fails releases the claim on that detached
-context, gives the slot back and is the tool error, as `lifecycle.run` does
-with a first record that fails today.
+idempotency key (§3). A step 9 that fails unregisters the run, releases the
+claim on that detached context, gives the slot back and is the tool error, as
+`lifecycle.run` does with a first record that fails today.
 
 The **run supervisor** is a struct of `internal/mcp` that `serve` builds and
 owns. It holds a context derived from `serve`'s own (not from any request's),
-one cancel function per run in flight (`context.WithCancelCause`), the
-admission counter of §6, and a `sync.WaitGroup`. Each handed run executes the
-stages it executes today, in one goroutine the supervisor started and waits
-for. The stages, their records and the release are unchanged; only the
-context the work runs under changes, from the request's to the run's.
+one entry per registered run (its context, from `context.WithCancelCause`
+with the run's deadline on it, and the instant of its first cancel), the
+admission counter of §6, and a `sync.WaitGroup`. A run is registered before
+its first record (step 8) and unregistered only after its terminal record, so
+every run this process recorded as in flight, from its first record to its
+last, is one `forja.cancel` reaches. Each run executes the stages it executes
+today, in one goroutine the supervisor started and waits for. The stages,
+their records and the release are unchanged; only the context the work runs
+under changes, from the request's to the run's. The run's deadline (§4) is set
+on that context, so the supervisor can read why it ended
+(`context.Cause`).
 
 The client follows the run with `forja.status` and its `run_id`. Polling is
 the protocol: Forja sends no notification and never calls the client (ADR
@@ -144,17 +155,20 @@ that ends after step 7 changes nothing: the run carries on. A dropped request th
 cancels a run; only `forja.cancel` (§2), the run's deadline (§4) and a stop of
 `forjad` do.
 
-**A stop of `forjad`.** The supervisor refuses new hand-offs once `serve`'s
-context ends. It then cancels every run in flight with the cause
+**A stop of `forjad`.** The supervisor refuses new registrations once
+`serve`'s context ends. It then cancels every registered run with the cause
 `errShutdown`, and `serve` waits for the supervisor and for the HTTP drain
 under the one drain budget it has today (195 s, ADR 0052 §7). The runs tear
 down in parallel, each within the bound that already exists, so the drain is
 unchanged and so is the requirement on the pod's
 `terminationGracePeriodSeconds` (above 230 s, 240 s when the chart lands). A
-start call that took its claim after the stop began releases it and records
-its run `failed`, reason `interrupted`. A run cancelled by the stop is
-recorded `failed` with reason `interrupted`, the reason recovery already uses
-for a run a dead process left (ADR 0076 §5). On stdio, `serve` does the same
+start call refused at step 8 by the stop leaves nothing (step 8). A start call
+registered before the stop has its run cancelled like any other: its
+goroutine starts on an ended context, starts no stage, releases the claim and
+records the run `failed`, and the call answers the `RunStarted` it recorded,
+so a retry with its key after the restart replays that run. A run cancelled by
+the stop is recorded `failed` with reason `interrupted`, the reason recovery
+already uses for a run a dead process left (ADR 0076 §5). On stdio, `serve` does the same
 when the transport closes, so a client that ends its session ends its runs,
 as it does today.
 
@@ -174,7 +188,11 @@ its release removed the journal entry but before its last record) a run that
 died stays `running` in the store. Its claim's lease still frees the issue.
 Closing those runs needs the run to record its owner and a liveness lease,
 which this ADR does not add (Open question 3 makes the state directory a
-requirement of HTTP, which closes the first case).
+requirement of HTTP, which closes the first case). A replay of such a run
+answers `running` for as long as the row says so; `forja.cancel` answering
+`not_held` (§2) is the signal that no live run of this process holds it, and
+the client starts a new operation, with a new key, once the claim's lease has
+freed the issue.
 
 **`forja.doctor` stays synchronous.** It holds no claim, it is read-class, and
 the operator calls it while setting a repository up. It counts against
@@ -209,12 +227,15 @@ owns.
   That is within the existing teardown bound, 180 s from the cancel
   (`teardownBound`).
 - **What it answers.** It returns as soon as the cancel is delivered, without
-  waiting for the teardown. `outcome` is `cancelling` for a run it delivered
-  the cancel to, or that was already cancelling; `already_terminal` for a run
-  that had ended (its record is unchanged, a succeeded run stays succeeded);
-  `not_held` for a run recorded `queued` or `running` that no live run of this
-  process holds (below). A cancel is idempotent: a second call answers the
-  same outcome for the same run state.
+  waiting for the teardown. `outcome` is `cancelling` for a registered run it
+  delivered the cancel to, or that a previous cancel already reached;
+  `ending` for a registered run whose context had already ended for another
+  cause (its deadline, a stop), which keeps that cause's reason;
+  `already_terminal` for a run whose terminal record is written (the record
+  is unchanged, a succeeded run stays succeeded); `not_held` for a run
+  recorded `queued` or `running` that no registered run of this process is
+  (below). A cancel is idempotent: a second call answers the same outcome for
+  the same run state.
 - **A run this process does not hold.** With one replica (the chart runs one
   until the roadmap's open question on replicas is decided), a non-terminal
   run this process does not hold is a run a dead process left without a
@@ -234,10 +255,11 @@ owns.
   `failed`, `cancelled`, and its record says which stages ended. A run
   cancelled between its push and its pull
   request leaves the pushed branch behind, as ADR 0052 §7 says of a stop.
-- **Precedence.** A run that reaches its terminal record before the cancel
-  is delivered keeps its outcome (`already_terminal`). Once delivered, a
-  cancel wins over a deadline that would end the run later; a run whose
-  deadline cause was set first keeps that reason.
+- **Precedence.** The run's context keeps the first cause that ended it. A
+  run that reaches its terminal record before the cancel keeps its outcome
+  (`already_terminal`); one whose deadline or stop came first keeps that
+  reason (`ending`); a cancel that came first wins over a deadline that would
+  have ended the run later (`cancelling`, reason `cancelled`).
 - **Logs.** The operator log carries the client, the tool and the `run_id`.
 
 ### 3. `caller_ref` and `idempotency_key`
@@ -269,14 +291,22 @@ tool call with one set of arguments. It is not logged.
   operation the same input: a field absent, `null` or at its zero value (`""`,
   `0`, `{}`) is absent, so `budget: {}` and no `budget` hash alike, and a
   `deadline` is parsed and re-encoded in UTC (RFC3339 with nanoseconds). The
-  hashed struct has value fields with `omitempty`, never a pointer whose nil
-  and empty would encode differently. The budget and the deadline are part of
-  the operation, so they are in the hash.
+  hashed struct is its own type, separate from the wire input, and every
+  optional field of it is tagged `omitzero` (Go 1.24, `go.mod` is on 1.25),
+  which omits a zero `time.Time` and an empty struct where `omitempty` would
+  not. So an optional field added in a later release is absent from the hash
+  of every call that does not set it, and keys stored before the upgrade still
+  replay. The budget and the deadline are part of the operation, so they are
+  in the hash; `caller_ref` is not (below).
 - **Same key, same arguments.** The same `run_id`, in whatever state the run
   is, as a `RunStarted` with `replayed: true`. No second run, no second claim,
   no second claim commit. This holds after a `forjad` restart, since the key
   is in the durable store. A replay is answered at step 2 of §1, so it needs
-  no capacity, reads no contract and touches no claim.
+  no capacity, reads no contract and touches no claim. A replay keeps the
+  first call's `caller_ref`: `caller_ref` is correlation, not part of the
+  operation (roadmap, item 6), so a different one does not conflict, and
+  `RunStarted.caller_ref` returns the recorded one so the caller sees which
+  correlation the run carries.
 - **Same key, different arguments.** A tool error with the code
   `idempotency_key_conflict` naming the existing `run_id` (the caller's own
   run, so naming it discloses nothing, ADR 0052 §4). No run, no claim. Using
@@ -294,10 +324,14 @@ tool call with one set of arguments. It is not logged.
   run of its own client, reads the key again and, when the winner's key is
   there, answers the replay; when the winner has not recorded it yet, the loser
   answers the held claim, which names its own client's `run_id` (ADR 0052 §4,
-  P4). With different arguments the loser may hold a claim on another issue
-  when its transaction hits the primary key: it releases that claim, records
-  no run and answers `idempotency_key_conflict`. In that race only, a claim
-  commit of the loser appears and is deleted within the release bound.
+  P4). In every other order the loser holds a claim of its own when its step 9
+  transaction hits the primary key: with different arguments it held another
+  issue; with the same arguments the winner's run ended and released the
+  issue before the loser claimed it. Either way the loser unregisters, releases
+  its claim, records no run and answers from the stored key: the replay when
+  the hashes match, `idempotency_key_conflict` when they do not. In those races
+  only, a claim commit of the loser appears and is deleted within the release
+  bound; there is never a second run.
 - **Retention.** The key lives as long as the run's record: the key row
   references the run row with `ON DELETE CASCADE`. Forja deletes no run today,
   so no key expires.
@@ -394,7 +428,7 @@ gates and the inversions are read from `forja.status`.
 
 `FORJA_MAX_RUNS`, a positive integer, is how many runs this process may have
 holding a workspace slot at once. A slot is taken at step 4 of §1. It is given
-back by a call refused after step 4, by a step 8 that fails, and otherwise
+back by a call refused after step 4, by a step 9 that fails, and otherwise
 when the run's release stage has ended, so a run that is tearing down still
 holds one. `forja.doctor` takes its slot before it clones and gives it back
 when its workspace is gone, on every outcome. `forja.implement`, `forja.verify` and `forja.doctor` take a
@@ -406,8 +440,12 @@ no claim, no key. The text names the limit and no other client's runs.
 Unset, there is no limit, as today; the chart sets it. A refusal is
 back-pressure, not scheduling (roadmap, M2): FuseOne schedules its cards and
 retries with the same key, which does not conflict because nothing was stored
-(§3). The count is per process; the gauge `forja_runs{state="in_flight"}`
-already exposes how many are in flight (`internal/metrics/prometheus.go`).
+(§3). The count is per process and is exported as two gauges of its own,
+`forja_run_slots` (the limit, absent when unset) and `forja_run_slots_in_use`.
+The existing `forja_runs{state="in_flight"}` is not that count: it is read from
+the run store per repository (`internal/mcp/status_metrics.go`,
+`internal/domain/metrics.go`), so it includes rows a dead process left and
+runs of another process on the same database.
 Queuing is rejected under Alternatives. `queued` stays a state no run takes.
 
 ### 7. Named tool errors
@@ -626,11 +664,11 @@ Annotations: `readOnlyHint: false`, `destructiveHint: true`,
     "properties": {
       "run_id": { "type": "string" },
       "outcome": {
-        "enum": ["cancelling", "already_terminal", "not_held"],
-        "description": "cancelling: the cancel reached the run, which tears down; already_terminal: the run had ended and is unchanged; not_held: the run is recorded in flight but no live run of this process holds it, and it is unchanged"
+        "enum": ["cancelling", "ending", "already_terminal", "not_held"],
+        "description": "cancelling: the cancel reached the run, which tears down and ends failed, cancelled; ending: the run was already tearing down for another cause, whose reason it keeps; already_terminal: the run had ended and is unchanged; not_held: the run is recorded in flight but no run registered in this process is it, and it is unchanged"
       },
       "state": { "enum": ["queued", "running", "succeeded", "failed"], "description": "the state recorded when the cancel answered" },
-      "cancel_requested_at": { "type": "string", "format": "date-time", "description": "when the first cancel reached the run; absent for already_terminal and not_held" }
+      "cancel_requested_at": { "type": "string", "format": "date-time", "description": "when the first cancel reached the run; present for cancelling, and for already_terminal when a cancel ended the run" }
     }
   }
 }
@@ -726,7 +764,7 @@ Annotations unchanged (`readOnlyHint: true`).
       "Limits": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["wall_clock_seconds", "deadline"],
+        "description": "absent until the run read its contract, and for forja.doctor and forja.plan runs; deadline and the caller's fields are absent on rows recorded before migration 0003",
         "properties": {
           "wall_clock_seconds": { "type": "number" },
           "max_diff_lines": { "type": "integer" },
@@ -1086,12 +1124,15 @@ daemon, and a fake GitHub that enforces the API's invariants.
 | I3 | The same key with a different `finding` | Tool error `idempotency_key_conflict` naming the first `run_id`; no run recorded; no claim commit |
 | I4 | Two clients, the same key, the same issue | One run for the first; for the second a held-claim error without the first's `run_id` (ADR 0052 §4, P3) |
 | I5 | Implementation then correction: `K1` first run, `K2` correction, both with one `caller_ref` | Two runs; `forja.status` filtered by that `caller_ref` lists both; a retry with `K2` returns the correction's run; the correction with `K1` is `idempotency_key_conflict` |
-| I6 | Two concurrent calls with the same key and arguments | One run; the other call answers the replay or a held claim naming the caller's own `run_id`; one claim commit |
+| I6 | Two concurrent calls with the same key and arguments, in each order (the loser refused by the held claim; the loser claiming after the winner's run ended) | One run; the other call answers the replay, or a held claim naming the caller's own `run_id`; any claim commit of the loser is deleted within the release bound |
+| I8 | The same key and arguments with a different `caller_ref` | The replay; `RunStarted.caller_ref` is the first call's |
 | I7 | The same key used for `forja.implement` and then `forja.verify` | `idempotency_key_conflict` |
 | X1 | `forja.cancel` on the caller's running run, delivered during its agent stage | `outcome: cancelling`; within 180 s `forja.status` shows `failed`, reason `cancelled`, `cancel_requested_at` set, no stage started after it; the claim ref is deleted; no container or network with the run's label remains; no commit status was published on the run's head |
 | X2 | `forja.cancel` twice on the same run, and once on a succeeded run | The second answers `cancelling` (or `already_terminal` once ended); the succeeded run answers `already_terminal` and stays `succeeded` |
 | X3 | Client B cancels client A's run | The tool error is identical to `forja.cancel`'s for a random id; A's run is unaffected |
 | X4 | `forja.cancel` on a run recorded `running` that this process does not hold (a row a dead process left) | `outcome: not_held`; the record is unchanged |
+| X5 | `forja.cancel` after the run's deadline fired, while it tears down | `outcome: ending`; the run ends `failed`, reason `deadline` or `wall_clock` |
+| X6 | `forja.cancel` between the start call's first record and its goroutine's start (the start call held there by a test hook) | `outcome: cancelling`; no stage after the claim starts; the run ends `failed`, reason `cancelled` |
 | D1 | `deadline` five minutes ahead, `limits.wall_clock` 30 minutes | `limits.deadline` in `RunStarted` is the caller's; a run still working at it ends `failed`, reason `deadline` |
 | D2 | `deadline` in the past | Tool error `deadline_passed`; no claim commit |
 | D3 | `budget.max_tokens` below `FORJA_MODEL_TOKEN_CAP` | `limits.max_tokens` is the caller's; a run that reaches it ends `failed`, reason `token_budget` |
