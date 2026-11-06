@@ -22,23 +22,23 @@ const driverUser = "forja-operator-db"
 
 // driverFailure is what the real Postgres driver answers for a database it
 // cannot reach: its text names the user and the address.
-func driverFailure(t *testing.T) (error, string) {
+func driverFailure(t *testing.T) (addr string, cause error) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	addr := ln.Addr().String()
+	addr = ln.Addr().String()
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, cause := runstore.OpenPostgres(ctx, "postgres://"+driverUser+":pw@"+addr+"/forja?sslmode=disable")
+	_, cause = runstore.OpenPostgres(ctx, "postgres://"+driverUser+":pw@"+addr+"/forja?sslmode=disable")
 	if cause == nil || !strings.Contains(cause.Error(), driverUser) {
 		t.Fatalf("driver error = %v, want one naming %s: the test would check nothing", cause, driverUser)
 	}
-	return cause, addr
+	return addr, cause
 }
 
 // downRuns fails every call with the driver's error, as a Postgres
@@ -66,7 +66,12 @@ func statusOverHTTP(t *testing.T, runs mcp.RunStore, args string) (string, strin
 	go func() {
 		returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, mcpHTTPServer(deps), cfg, httpSinks{log: &lockedBuffer{}, ready: new(readiness)})
 	}()
-	t.Cleanup(func() { cancel(); <-returned })
+	t.Cleanup(func() {
+		cancel()
+		if err := <-returned; err != nil {
+			t.Errorf("serveMCPHTTP = %v, want a clean stop", err)
+		}
+	})
 	body := toolCall("forja.status", args)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+<-bound+mcpPath, strings.NewReader(body))
 	if err != nil {
@@ -91,7 +96,7 @@ func statusOverHTTP(t *testing.T, runs mcp.RunStore, args string) (string, strin
 // to the operator's log.
 func TestServeHTTP_runStoreFails_clientGetsFixedMessageDriverTextLogged(t *testing.T) {
 	t.Parallel()
-	cause, addr := driverFailure(t)
+	addr, cause := driverFailure(t)
 	for name, args := range map[string]string{"by id": `{"run_id":"run-1"}`, "list": `{}`} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
