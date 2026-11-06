@@ -36,7 +36,7 @@ func (h host) start(ctx context.Context, stderr io.Writer) (mcp.Deps, func(), er
 	if err != nil {
 		return mcp.Deps{}, nil, err
 	}
-	deps.Runs = runs
+	deps.Runs = sealRuns(runs, stderr)
 	if err := recoverClaims(ctx, store, deps, stderr); err != nil {
 		closeRuns()
 		return mcp.Deps{}, nil, err
