@@ -20,9 +20,11 @@ const (
 	followUpTimeout = 30 * time.Second
 )
 
-// SettleBound is the longest Claim keeps working once its caller left and
-// still answers a claim the run then holds: the ref mutation, then the
-// read-back that settles an answer it lost, each on its own budget.
+// SettleBound is the longest Claim keeps working once its caller left on
+// a path that answers a claim, which the run then holds: the ref mutation,
+// then the read-back that settles an answer it lost, each on its own
+// budget. A claim that is refused instead may also give the ref back on a
+// third budget; no run follows it.
 const SettleBound = mutationTimeout + followUpTimeout
 
 // mutation is the context a ref mutation runs on: detached from the
@@ -70,31 +72,47 @@ func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Cl
 	return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
 }
 
-// unsettled decides a mutation that answered an error GitHub may have
-// applied anyway, such as a lost answer. The ref is read back: pointing at
-// the claim's own commit, the mutation applied and the claim is held; not
-// pointing at it, cause is the answer. A ref that cannot be read back is
-// journaled under the claim's commit, so recovery releases it if the
-// mutation did apply and forgets it otherwise.
+// unsettled decides a mutation that answered an error other than the
+// refusals Claim and takeOver read. A 4xx was not applied: cause is the
+// answer. Any other error, a lost answer or a request failed on the way,
+// leaves the outcome open, and the ref is read back: at the claim's own
+// commit the mutation applied, and the claim is held. Otherwise GitHub may
+// still apply it later, so the claim's commit is journaled: recovery
+// releases the ref if it points there, and forgets the entry if not.
 func (s *Store) unsettled(ctx context.Context, c domain.Claim, sha string, cause error) (domain.Claim, error) {
+	if refused(cause) {
+		return domain.Claim{}, cause
+	}
 	rctx, cancel := s.followUp(ctx)
 	defer cancel()
 	obj, err := s.Refs.GetRef(rctx, c.Repository, domain.ClaimRef(c.Issue))
-	switch {
-	case err == nil && obj.SHA == sha:
+	if err == nil && obj.SHA == sha {
 		return s.hold(ctx, c, sha)
-	case err == nil, errors.Is(err, github.ErrRefMissing):
-		return domain.Claim{}, cause
 	}
-	cause = fmt.Errorf("%w (and the ref could not be read back: %w)", cause, err)
-	if s.Journal == nil {
-		return domain.Claim{}, cause
+	if err != nil && !errors.Is(err, github.ErrRefMissing) {
+		cause = fmt.Errorf("%w (and the ref could not be read back: %w)", cause, err)
 	}
 	c.SHA = sha
-	if jerr := s.Journal.Put(entryOf(c)); jerr != nil {
-		return domain.Claim{}, errors.Join(cause, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, jerr))
+	return domain.Claim{}, s.journalOpen(c, cause)
+}
+
+// refused says GitHub answered the request with a 4xx, so it applied
+// nothing.
+func refused(err error) bool {
+	var se *github.StatusError
+	return errors.As(err, &se) && se.Status >= 400 && se.Status < 500
+}
+
+// journalOpen records a claim whose mutation may yet apply and returns
+// cause, with any journal failure joined.
+func (s *Store) journalOpen(c domain.Claim, cause error) error {
+	if s.Journal == nil {
+		return cause
 	}
-	return domain.Claim{}, cause
+	if err := s.Journal.Put(entryOf(c)); err != nil {
+		return errors.Join(cause, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err))
+	}
+	return cause
 }
 
 func entryOf(c domain.Claim) Entry {

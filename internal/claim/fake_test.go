@@ -236,6 +236,14 @@ func (f *fakeRefs) seed(repo, ref string, files map[string][]byte) string {
 	return sha
 }
 
+// point moves ref to sha bypassing the API, as GitHub applying a request
+// whose answer the caller already gave up on.
+func (f *fakeRefs) point(repo, ref, sha string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.refs[key(repo, ref)] = sha
+}
+
 func (f *fakeRefs) refSHA(repo, ref string) (string, bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

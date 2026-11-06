@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fuseone-io/fuseone-forja/internal/claim"
+	"github.com/fuseone-io/fuseone-forja/internal/github"
 )
 
 // spentBudget is a mutation budget a stalled answer uses up at once; the
@@ -77,9 +78,15 @@ func TestStore_claim_mutationAppliedAnswerLost_heldJournaledAndReleased(t *testi
 	}
 }
 
-// A mutation that fails before GitHub applies it is refused as before: the
-// ref read back is not the claim's, and nothing is journaled.
-func TestStore_claim_mutationFailedUnapplied_refusedNothingJournaled(t *testing.T) {
+// refusedMutation is a mutation GitHub answered with a 4xx: it was not
+// applied, and nothing is left to settle.
+func refusedMutation() error {
+	return &github.StatusError{Status: 403, Message: "Resource not accessible by integration"}
+}
+
+// A mutation GitHub refused is the answer: the ref is not read back, it is
+// left as it was, and nothing is journaled.
+func TestStore_claim_mutationRefused_refusedNothingReadBackOrJournaled(t *testing.T) {
 	t.Parallel()
 	for op := range mutations {
 		t.Run(op, func(t *testing.T) {
@@ -87,19 +94,73 @@ func TestStore_claim_mutationFailedUnapplied_refusedNothingJournaled(t *testing.
 			fake := newFakeRefs()
 			mutations[op](t, fake)
 			before, _ := fake.refSHA(repo, ref)
-			fake.fail[op] = errors.New("fake: connection reset")
+			fake.fail[op] = refusedMutation()
 			journal := &claim.Journal{Dir: t.TempDir()}
 			store := claim.NewStore(fake, clock(t0().Add(lease)), journal)
 			if _, err := store.Claim(context.Background(), request("run-1")); err == nil {
-				t.Fatal("Claim succeeded although the mutation was never applied")
+				t.Fatal("Claim succeeded although GitHub refused the mutation")
+			}
+			calls := fake.callLog()
+			if after := calls[slices.Index(calls, op)+1:]; len(after) != 0 {
+				t.Fatalf("calls after the refused %s = %q, want none", op, after)
 			}
 			if after, _ := fake.refSHA(repo, ref); after != before {
 				t.Fatalf("ref moved from %q to %q", before, after)
 			}
 			if entries := mustList(t, journal); len(entries) != 0 {
-				t.Fatalf("journal holds %+v for a claim never made", entries)
+				t.Fatalf("journal holds %+v for a claim GitHub refused", entries)
 			}
 		})
+	}
+}
+
+// A mutation whose request failed on the way leaves its outcome open: the
+// ref read back is not the claim's yet, but GitHub may still apply it. The
+// claim's commit is journaled, so recovery releases the ref if GitHub did
+// apply it late, and leaves the ref as it was if not.
+func TestStore_claim_mutationOutcomeOpen_journaledRecoveryReleasesALateApply(t *testing.T) {
+	t.Parallel()
+	for op := range mutations {
+		for name, tt := range map[string]struct {
+			cause error
+			late  bool
+		}{
+			"reset, applied late":  {errors.New("fake: connection reset"), true},
+			"reset, never applied": {errors.New("fake: connection reset"), false},
+			"502, applied late":    {&github.StatusError{Status: 502, Message: "Server Error"}, true},
+		} {
+			late := tt.late
+			t.Run(op+"/"+name, func(t *testing.T) {
+				t.Parallel()
+				fake := newFakeRefs()
+				mutations[op](t, fake)
+				before, _ := fake.refSHA(repo, ref)
+				fake.fail[op] = tt.cause
+				journal := &claim.Journal{Dir: t.TempDir()}
+				store := claim.NewStore(fake, clock(t0().Add(lease)), journal)
+				if _, err := store.Claim(context.Background(), request("run-1")); err == nil {
+					t.Fatal("Claim succeeded although its outcome was open")
+				}
+				entries := mustList(t, journal)
+				if len(entries) != 1 || entries[0].RunID != "run-1" {
+					t.Fatalf("journal holds %+v, want the open claim of run-1", entries)
+				}
+				want := before
+				if late {
+					fake.point(repo, ref, entries[0].SHA)
+					want = ""
+				}
+				if _, err := store.Recover(context.Background()); err != nil {
+					t.Fatalf("Recover: %v", err)
+				}
+				if after, _ := fake.refSHA(repo, ref); after != want {
+					t.Fatalf("after recovery the ref points at %q, want %q", after, want)
+				}
+				if entries := mustList(t, journal); len(entries) != 0 {
+					t.Fatalf("journal still holds %+v", entries)
+				}
+			})
+		}
 	}
 }
 
