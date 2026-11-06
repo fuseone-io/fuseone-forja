@@ -145,6 +145,9 @@ func TestStore_claim_callerGoneAndAnswerLost_settlesInTheBudgetsCounted(t *testi
 			if want := []string{op, "GetRef"}; !slices.Equal(after, want) {
 				t.Fatalf("calls from the mutation on = %q, want %q: one budget each", after, want)
 			}
+			if want := claim.Budgets["mutation"] + claim.Budgets["follow-up"]; claim.SettleBound != want {
+				t.Fatalf("SettleBound = %v, want %v: the mutation's budget and one follow-up's", claim.SettleBound, want)
+			}
 			settle(t, store, c, err)
 		})
 	}
