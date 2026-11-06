@@ -28,13 +28,15 @@ func originStack(t *testing.T, allowed string, calls *atomic.Int32, logs *bytes.
 	return mcpStack(probeServer(calls), cfg, log.New(logs, "", 0))
 }
 
-// send serves one request to h with the given method, Origin values (none
-// when nil) and Authorization (none when empty).
+// send serves one 2026-07-28 request to h with the given method, Origin
+// values (none when nil) and Authorization (none when empty).
 func send(t *testing.T, h http.Handler, method string, origins []string, authorization string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequestWithContext(context.Background(), method, "http://127.0.0.1"+mcpPath, strings.NewReader(callBody("x")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", protocol2026)
+	setStandardHeaders(req.Header, callBody("x"))
 	if origins != nil {
 		req.Header["Origin"] = origins
 	}
@@ -260,17 +262,19 @@ func TestMCPHTTPConfig_allowedOrigins_readFromTheVariable(t *testing.T) {
 	}
 }
 
-// rawPost posts a tools/list to endpoint with Origin and Authorization
-// when they are not empty, and Host when it is not empty.
+// rawPost posts a 2026-07-28 tools/list to endpoint with Origin and
+// Authorization when they are not empty, and Host when it is not empty.
 func rawPost(t *testing.T, endpoint, origin, authorization, hostHeader string) int {
 	t.Helper()
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{` + requestMeta + `}}`
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, endpoint, strings.NewReader(body))
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", protocol2026)
+	setStandardHeaders(req.Header, body)
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}

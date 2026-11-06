@@ -59,10 +59,15 @@ func (s *Store) Claim(ctx context.Context, req domain.ClaimRequest) (domain.Clai
 	if err != nil {
 		return domain.Claim{}, err
 	}
-	err = s.Refs.CreateRef(ctx, c.Repository, domain.ClaimRef(c.Issue), sha)
+	mctx, cancel, err := mutation(ctx)
+	if err != nil {
+		return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
+	}
+	defer cancel()
+	err = s.Refs.CreateRef(mctx, c.Repository, domain.ClaimRef(c.Issue), sha)
 	switch {
 	case err == nil:
-		return s.hold(ctx, c, sha)
+		return s.hold(mctx, c, sha)
 	case errors.Is(err, github.ErrRefExists):
 		return s.takeOver(ctx, c)
 	}
@@ -85,10 +90,15 @@ func (s *Store) takeOver(ctx context.Context, c domain.Claim) (domain.Claim, err
 	if err != nil {
 		return domain.Claim{}, err
 	}
-	err = s.Refs.UpdateRef(ctx, c.Repository, domain.ClaimRef(c.Issue), sha)
+	mctx, cancel, err := mutation(ctx)
+	if err != nil {
+		return domain.Claim{}, fmt.Errorf("take over issue %d of %s: %w", c.Issue, c.Repository, err)
+	}
+	defer cancel()
+	err = s.Refs.UpdateRef(mctx, c.Repository, domain.ClaimRef(c.Issue), sha)
 	switch {
 	case err == nil:
-		return s.hold(ctx, c, sha)
+		return s.hold(mctx, c, sha)
 	case errors.Is(err, github.ErrNotFastForward):
 		winner, err := s.holder(ctx, c.Repository, c.Issue)
 		if err != nil {
@@ -99,9 +109,25 @@ func (s *Store) takeOver(ctx context.Context, c domain.Claim) (domain.Claim, err
 	return domain.Claim{}, fmt.Errorf("take over issue %d of %s: %w", c.Issue, c.Repository, err)
 }
 
+// mutationTimeout bounds a ref mutation and what completes it, counted
+// from its start, once the caller may be gone.
+const mutationTimeout = 30 * time.Second
+
+// mutation is the context a ref mutation and its journaling or giving
+// back run on: detached from the caller's, since a mutation GitHub
+// applied while the caller left must still be journaled or undone, and
+// bounded by mutationTimeout. A caller already gone starts none.
+func mutation(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	mctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mutationTimeout)
+	return mctx, cancel, nil
+}
+
 // hold completes a claim the ref now points at: it is journaled so a crash
 // can be recovered. A claim that cannot be journaled is given back, since
-// nothing would release it after a crash.
+// nothing would release it after a crash. ctx is the mutation's.
 func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Claim, error) {
 	c.SHA = sha
 	if s.Journal == nil {

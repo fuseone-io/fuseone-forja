@@ -26,6 +26,34 @@ type fakeRefs struct {
 	// beforeUpdate runs once, outside the lock, before the next update is
 	// applied: a window for another store to move the ref first.
 	beforeUpdate func()
+	// cancelOn names a ref mutation after which cancel runs: the mutation
+	// is applied at GitHub, and the answer is then whatever the context
+	// the call was made on says, as for a caller that went away while
+	// GitHub answered. On CommitFile the commit answers and the caller
+	// leaves just after.
+	cancelOn string
+	cancel   context.CancelFunc
+}
+
+// answer is a mutation's answer once it was applied: the context's error
+// when the call's context ended meanwhile.
+func (f *fakeRefs) answer(ctx context.Context, op string) error {
+	if f.cancelOn == op && f.cancel != nil {
+		f.cancel()
+	}
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: %s answered after the context ended: %w", op, err)
+	}
+	return nil
+}
+
+// refuseDead is what a request on a context that already ended gets: no
+// call reaches GitHub.
+func refuseDead(ctx context.Context, op string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("fake: %s not sent: %w", op, err)
+	}
+	return nil
 }
 
 type fakeCommit struct {
@@ -57,7 +85,10 @@ func (f *fakeRefs) GetRef(_ context.Context, repo, ref string) (github.RefObject
 	return github.RefObject{SHA: sha, Type: "commit"}, nil
 }
 
-func (f *fakeRefs) CreateRef(_ context.Context, repo, ref, sha string) error {
+func (f *fakeRefs) CreateRef(ctx context.Context, repo, ref, sha string) error {
+	if err := refuseDead(ctx, "CreateRef"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.record("CreateRef"); err != nil {
@@ -70,10 +101,13 @@ func (f *fakeRefs) CreateRef(_ context.Context, repo, ref, sha string) error {
 		return fmt.Errorf("fake: %s: commit %s does not exist", ref, sha)
 	}
 	f.refs[key(repo, ref)] = sha
-	return nil
+	return f.answer(ctx, "CreateRef")
 }
 
-func (f *fakeRefs) UpdateRef(_ context.Context, repo, ref, sha string) error {
+func (f *fakeRefs) UpdateRef(ctx context.Context, repo, ref, sha string) error {
+	if err := refuseDead(ctx, "UpdateRef"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	hook := f.beforeUpdate
 	f.beforeUpdate = nil
@@ -94,7 +128,7 @@ func (f *fakeRefs) UpdateRef(_ context.Context, repo, ref, sha string) error {
 		return fmt.Errorf("fake: %s: %w", ref, github.ErrNotFastForward)
 	}
 	f.refs[key(repo, ref)] = sha
-	return nil
+	return f.answer(ctx, "UpdateRef")
 }
 
 func (f *fakeRefs) descends(sha, ancestor string) bool {
@@ -107,7 +141,10 @@ func (f *fakeRefs) descends(sha, ancestor string) bool {
 	return false
 }
 
-func (f *fakeRefs) DeleteRef(_ context.Context, repo, ref string) error {
+func (f *fakeRefs) DeleteRef(ctx context.Context, repo, ref string) error {
+	if err := refuseDead(ctx, "DeleteRef"); err != nil {
+		return err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.record("DeleteRef"); err != nil {
@@ -120,7 +157,10 @@ func (f *fakeRefs) DeleteRef(_ context.Context, repo, ref string) error {
 	return nil
 }
 
-func (f *fakeRefs) CommitFile(_ context.Context, _ string, file github.FileCommit) (string, error) {
+func (f *fakeRefs) CommitFile(ctx context.Context, _ string, file github.FileCommit) (string, error) {
+	if err := refuseDead(ctx, "CommitFile"); err != nil {
+		return "", err
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if err := f.record("CommitFile"); err != nil {
@@ -131,7 +171,12 @@ func (f *fakeRefs) CommitFile(_ context.Context, _ string, file github.FileCommi
 			return "", fmt.Errorf("fake: parent %s does not exist", file.Parent)
 		}
 	}
-	return f.store(file.Parent, map[string][]byte{file.Path: file.Body}, file.Message), nil
+	sha := f.store(file.Parent, map[string][]byte{file.Path: file.Body}, file.Message)
+	if f.cancelOn == "CommitFile" && f.cancel != nil {
+		// The caller leaves right after GitHub answered.
+		f.cancel()
+	}
+	return sha, nil
 }
 
 func (f *fakeRefs) store(parent string, files map[string][]byte, message string) string {
