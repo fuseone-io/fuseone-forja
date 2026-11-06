@@ -185,6 +185,7 @@ func status(ctx context.Context, runs RunReader, prices *domain.PriceTable, in S
 	if err != nil {
 		return StatusOutput{}, err
 	}
+	run.Supersedes = owned.supersedes(ctx, run.Supersedes)
 	return statusOutput(run, prices), nil
 }
 

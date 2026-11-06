@@ -29,6 +29,19 @@ func (o ownedRuns) Get(ctx context.Context, id string) (domain.Run, error) {
 	return run, err
 }
 
+// supersedes is the run id the owner may read as the run its run took
+// over: id when that run is the owner's too, empty otherwise, as if the
+// issue had been free. A lookup that fails names nothing.
+func (o ownedRuns) supersedes(ctx context.Context, id string) string {
+	if id == "" {
+		return ""
+	}
+	if _, err := o.Get(ctx, id); err != nil {
+		return ""
+	}
+	return id
+}
+
 func (o ownedRuns) List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error) {
 	if o.owner == "" {
 		return nil, errNoClient
