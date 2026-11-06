@@ -260,12 +260,16 @@ request's context ends with the server's (`http.Server.BaseContext`), and
 the drain (4 min 15 s) outlasts a cancelled run's longest teardown plus a
 15 s margin. The longest is a caller that leaves during the claim: eight
 30 s steps one after the other, the ref mutation and the read-back that
-settles an answer it lost (`claim.SettleBound`), then the six records and
-the release the run still makes (`mcp.CancelledRunRecords` of
-`FinishTimeout` each). A caller that leaves as the agent runs takes the
-agent's two teardown steps, reading the proxies and removing the workspace,
-then four records, which is shorter. The drain is derived from those
-constants, and a test counts the steps against them. So a cancelled run
+settles an answer it lost (`claim.SettleBound`), then six steps the run
+still takes, five records and the release (`mcp.CancelledRunRecords` of
+`FinishTimeout` each): the running record, the clone stage's start and
+end, the release's start, the release, and the terminal record. A caller
+that leaves as the agent runs takes the agent's two teardown steps,
+reading the proxies and removing the workspace, then four: the agent
+stage's end, the release's start, the release and the terminal record,
+which is shorter. A claim refused after its read-back may give the ref
+back on a third 30 s budget, but no run follows it. The drain is derived
+from those constants, and tests count the calls against them. So a cancelled run
 removes its workspace, releases its claim and is recorded `failed` before
 the process exits. That holds only if the process is given the drain: the
 pod's `terminationGracePeriodSeconds` (or the runtime's stop timeout) must
