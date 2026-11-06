@@ -65,7 +65,7 @@ func listArgument(in StatusInput) string {
 }
 
 // listRuns answers a call without a run id.
-func listRuns(ctx context.Context, runs RunReader, prices *domain.PriceTable, in StatusInput) (RunList, error) {
+func listRuns(ctx context.Context, runs ownedRuns, prices *domain.PriceTable, in StatusInput) (RunList, error) {
 	filter, err := runFilter(in)
 	if err != nil {
 		return RunList{}, err
@@ -133,7 +133,7 @@ func pageLimit(limit int) (int, error) {
 // after is the runs of sorted that come after the cursor's run in the
 // store's order, all of them without a cursor. Keyed on the cursor run's
 // start and id, a run recorded between two pages does not shift the walk.
-func after(ctx context.Context, runs RunReader, sorted []domain.Run, cursor string) ([]domain.Run, error) {
+func after(ctx context.Context, runs ownedRuns, sorted []domain.Run, cursor string) ([]domain.Run, error) {
 	if cursor == "" {
 		return sorted, nil
 	}

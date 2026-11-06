@@ -19,12 +19,14 @@ type lifecycle struct {
 }
 
 // runTarget is what a run claims: the issue of the repository it works on,
-// for which tool, from which base branch.
+// for which tool, from which base branch, and the client the run is
+// recorded under.
 type runTarget struct {
-	tool  domain.Tool
-	repo  string
-	issue int
-	base  string
+	tool   domain.Tool
+	repo   string
+	issue  int
+	base   string
+	client string
 }
 
 // runStep is one stage of a run's work, run under the run's deadline
@@ -35,6 +37,10 @@ type runStep func(ctx, done context.Context, f *flight) (bool, error)
 // run's flight with its claim stage over. A refused claim is the error and
 // records nothing.
 func (l lifecycle) claim(ctx context.Context, t runTarget) (*flight, error) {
+	t.client = clientOf(ctx).Name
+	if t.client == "" {
+		return nil, errNoClient
+	}
 	lease, err := l.lease(ctx, t.repo)
 	if err != nil {
 		return nil, err

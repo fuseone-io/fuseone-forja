@@ -86,7 +86,7 @@ func filledRun(t *testing.T, id string) domain.Run {
 	t.Helper()
 	var run domain.Run
 	(&filler{t: t}).fill(reflect.ValueOf(&run).Elem())
-	run.ID, run.Repository, run.Tool, run.State = id, "acme/full", domain.ToolVerify, domain.StateFailed
+	run.ID, run.Repository, run.Tool, run.State, run.Client = id, "acme/full", domain.ToolVerify, domain.StateFailed, "client-full"
 	return run
 }
 

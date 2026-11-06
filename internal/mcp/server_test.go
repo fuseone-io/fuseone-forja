@@ -36,12 +36,27 @@ func connectWith(t *testing.T, store *runstore.Memory, cloner *fakeCloner, gates
 	return connectDeps(t, deps)
 }
 
+// testClient is the client every test calls as unless it says otherwise.
+const testClient = "test-client"
+
+// fixedCallers names every call's client as client, or fails with err.
+type fixedCallers struct {
+	client domain.Client
+	err    error
+}
+
+func (f fixedCallers) Caller(*sdk.CallToolRequest) (domain.Client, error) {
+	return f.client, f.err
+}
+
 // testDeps is the wiring every test starts from: a fixed clock, sequential
-// run ids, and GitHub readers and a gates runner that refuse every call.
+// run ids, every call from testClient, which reaches every repository, and
+// GitHub readers and a gates runner that refuse every call.
 func testDeps(store forja.RunStore, contracts forja.ContractReader, claims forja.Claimer) forja.Deps {
 	ids := &sequence{}
 	return forja.Deps{
-		Runs: store, Contracts: contracts, Claims: claims,
+		Callers: fixedCallers{client: domain.Client{Name: testClient, Unrestricted: true}},
+		Runs:    store, Contracts: contracts, Claims: claims,
 		Cloner: &fakeCloner{err: errors.New("no cloner in this test")},
 		Issues: &fakeIssues{err: errors.New("no issue reader in this test")},
 		Gates:  &fakeGates{err: errors.New("no gates runner in this test")},
@@ -91,6 +106,7 @@ func runningRun(id string) domain.Run {
 		Issue:      5,
 		State:      domain.StateRunning,
 		StartedAt:  startedAt(),
+		Client:     testClient,
 	}
 }
 
@@ -227,6 +243,7 @@ func assertStatusMatchesRun(t *testing.T, got forja.StatusOutput, want domain.Ru
 		got.Tool == string(want.Tool) &&
 		got.Repository == want.Repository &&
 		got.Issue == want.Issue &&
+		got.Client == want.Client &&
 		got.State == string(want.State) &&
 		got.StartedAt.Equal(want.StartedAt)
 	if !scalarsMatch {
@@ -323,7 +340,7 @@ func TestStatus_wireKeys_snakeCase(t *testing.T) {
 	if err := json.Unmarshal(structuredJSON(t, res), &wire); err != nil {
 		t.Fatalf("decode wire object: %v", err)
 	}
-	want := []string{"id", "tool", "repository", "issue", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "compute_minutes", "stages", "setup", "gates", "attempt", "max_attempts", "attempts", "excluded", "human_merge", "proof_apparatus", "human_merge_paths"}
+	want := []string{"id", "tool", "repository", "issue", "client", "state", "started_at", "finished_at", "egress_denied_count", "egress_denied", "registry_access_count", "registry_access", "tokens_in", "tokens_out", "compute_minutes", "stages", "setup", "gates", "attempt", "max_attempts", "attempts", "excluded", "human_merge", "proof_apparatus", "human_merge_paths"}
 	for _, key := range want {
 		if _, ok := wire[key]; !ok {
 			t.Errorf("key %q absent on the wire", key)

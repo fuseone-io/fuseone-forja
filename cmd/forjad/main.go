@@ -86,8 +86,10 @@ func (h host) serve(ctx context.Context, transport sdk.Transport, stderr io.Writ
 		return fail(stderr, err)
 	}
 	if httpCfg.addr != "" {
+		deps.Callers = registryCallers{reg: httpCfg.clients}
 		err = h.serveMCPHTTP(ctx, mcpHTTPServer(deps), httpCfg, httpSinks{log: stderr, ready: ready})
 	} else {
+		deps.Callers = stdioCallers{}
 		err = serveMCP(ctx, mcp.New(deps, nil), transport, ready)
 	}
 	stop()

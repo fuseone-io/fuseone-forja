@@ -176,7 +176,7 @@ func TestServe_postgres_runRecordedBeforeRestartReadByStatus(t *testing.T) {
 	}
 	finished := time.Date(2026, 11, 5, 10, 0, 0, 0, time.UTC)
 	run := domain.Run{
-		ID: "run-before-restart", Tool: domain.ToolImplement, Repository: "acme/api", Issue: 7,
+		ID: "run-before-restart", Tool: domain.ToolImplement, Repository: "acme/api", Issue: 7, Client: domain.StdioClientName,
 		State: domain.StateSucceeded, StartedAt: finished.Add(-time.Hour), FinishedAt: &finished,
 	}
 	writer, closeWriter, err := openRuns(ctx, env)

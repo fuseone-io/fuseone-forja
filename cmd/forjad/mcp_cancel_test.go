@@ -19,14 +19,15 @@ import (
 const waitBound = 10 * time.Second
 
 // servedFixture serves fx's server over HTTP the way serve does, with
-// drain, and returns its address, the cancel of serve's context and what
-// serveMCPHTTP returned.
+// drain and the callers serve names, and returns its address, the cancel
+// of serve's context and what serveMCPHTTP returned.
 func servedFixture(t *testing.T, fx *cancelFixture, drain time.Duration) (string, context.CancelFunc, <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	bound, returned := make(chan string, 1), make(chan error, 1)
 	cfg := httpConfig{addr: "127.0.0.1:0", clients: testRegistry(t), drain: drain}
+	fx.deps.Callers = registryCallers{reg: cfg.clients}
 	go func() {
 		returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, mcpHTTPServer(fx.deps), cfg, httpSinks{log: &lockedBuffer{}, ready: new(readiness)})
 	}()

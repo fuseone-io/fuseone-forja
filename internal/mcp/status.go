@@ -14,6 +14,9 @@ import (
 // and every run a filter matches, sorted with domain.CompareNewestFirst.
 type RunReader interface {
 	Get(ctx context.Context, id string) (domain.Run, error)
+	// GetOwned is Get for the run's own client only: a run of another
+	// client is an id no run has, without the store reading it.
+	GetOwned(ctx context.Context, client, id string) (domain.Run, error)
 	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
 }
 
@@ -32,12 +35,15 @@ type StatusInput struct {
 
 // StatusOutput is the wire form of a run as forja.status reports it.
 type StatusOutput struct {
-	ID         string    `json:"id"`
-	Tool       string    `json:"tool"`
-	Repository string    `json:"repository"`
-	Issue      int       `json:"issue"`
-	State      string    `json:"state"`
-	StartedAt  time.Time `json:"started_at"`
+	ID         string `json:"id"`
+	Tool       string `json:"tool"`
+	Repository string `json:"repository"`
+	Issue      int    `json:"issue"`
+	// Client is the name of the client that started the run, the caller's
+	// own: no other client's run is answered.
+	Client    string    `json:"client"`
+	State     string    `json:"state"`
+	StartedAt time.Time `json:"started_at"`
 	// FinishedAt is absent while the run is not terminal.
 	FinishedAt *time.Time `json:"finished_at,omitempty"`
 	// Supersedes names the run whose expired claim this run took over;
@@ -143,7 +149,7 @@ type EgressEvent struct {
 
 func statusTool() *sdk.Tool {
 	return &sdk.Tool{
-		Name:        string(domain.ToolStatus),
+		Name: string(domain.ToolStatus),
 		Description: "With run_id: state, start and end of a run, its stages, the attempt in flight out of the contract's limit with every attempt's gates, the model tokens and compute minutes it used with their estimated cost, what its workspace was refused on the way out, and every request it made to its registry proxy. " +
 			"Without run_id: the runs that match the filters, newest first, one page at a time, under list, with the per-repository totals of every matching run; the run fields outside list are then empty.",
 		Annotations: readClass(),
@@ -160,11 +166,13 @@ func statusHandler(runs RunReader, prices *domain.PriceTable) sdk.ToolHandlerFor
 	}
 }
 
-// status answers one run by id, or the list when no id is given; an id
-// with any argument of the list is refused, naming that argument.
+// status answers one run by id, or the list when no id is given, of the
+// calling client's runs only; an id with any argument of the list is
+// refused, naming that argument.
 func status(ctx context.Context, runs RunReader, prices *domain.PriceTable, in StatusInput) (StatusOutput, error) {
+	owned := ownedRuns{runs: runs, owner: clientOf(ctx).Name}
 	if in.RunID == "" {
-		list, err := listRuns(ctx, runs, prices, in)
+		list, err := listRuns(ctx, owned, prices, in)
 		if err != nil {
 			return StatusOutput{}, err
 		}
@@ -173,7 +181,7 @@ func status(ctx context.Context, runs RunReader, prices *domain.PriceTable, in S
 	if arg := listArgument(in); arg != "" {
 		return StatusOutput{}, fmt.Errorf("run_id cannot be combined with %s", arg)
 	}
-	run, err := runs.Get(ctx, in.RunID)
+	run, err := owned.Get(ctx, in.RunID)
 	if err != nil {
 		return StatusOutput{}, err
 	}
@@ -182,10 +190,7 @@ func status(ctx context.Context, runs RunReader, prices *domain.PriceTable, in S
 
 func statusOutput(run domain.Run, prices *domain.PriceTable) StatusOutput {
 	return StatusOutput{
-		ID:         run.ID,
-		Tool:       string(run.Tool),
-		Repository: run.Repository,
-		Issue:      run.Issue,
+		ID: run.ID, Tool: string(run.Tool), Repository: run.Repository, Issue: run.Issue, Client: run.Client,
 		State:      string(run.State),
 		StartedAt:  run.StartedAt,
 		FinishedAt: run.FinishedAt,

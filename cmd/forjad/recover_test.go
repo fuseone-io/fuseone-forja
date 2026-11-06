@@ -83,7 +83,7 @@ var recoveredAt = time.Date(2026, 11, 5, 9, 30, 0, 0, time.UTC)
 func runningRun() domain.Run {
 	start := recoveredAt.Add(-time.Hour)
 	return domain.Run{
-		ID: "run-crashed", Tool: domain.ToolImplement, Repository: crashedRepo, Issue: 7,
+		ID: "run-crashed", Tool: domain.ToolImplement, Repository: crashedRepo, Issue: 7, Client: "fuseone-pilot",
 		State: domain.StateRunning, StartedAt: start,
 		Stages: []domain.Stage{{Name: domain.StageAgent, StartedAt: start, Outcome: domain.StageRunning, Attempt: 1}},
 	}
@@ -274,8 +274,8 @@ func TestRecoverClaims_inFlightWithoutClaim_leftToItsProcess(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	runs := runstore.NewMemory()
-	live := domain.Run{ID: "run-live", Tool: domain.ToolImplement, Repository: crashedRepo, Issue: 8, State: domain.StateRunning, StartedAt: recoveredAt.Add(-time.Minute)}
-	queued := domain.Run{ID: "run-queued", Tool: domain.ToolDoctor, Repository: crashedRepo, State: domain.StateQueued, StartedAt: recoveredAt.Add(-time.Minute)}
+	live := domain.Run{ID: "run-live", Client: "fuseone-pilot", Tool: domain.ToolImplement, Repository: crashedRepo, Issue: 8, State: domain.StateRunning, StartedAt: recoveredAt.Add(-time.Minute)}
+	queued := domain.Run{ID: "run-queued", Client: domain.StdioClientName, Tool: domain.ToolDoctor, Repository: crashedRepo, State: domain.StateQueued, StartedAt: recoveredAt.Add(-time.Minute)}
 	for _, r := range []domain.Run{live, queued, runningRun()} {
 		if err := runs.Put(ctx, r); err != nil {
 			t.Fatalf("Put %s: %v", r.ID, err)

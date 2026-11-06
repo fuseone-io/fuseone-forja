@@ -9,6 +9,7 @@ import (
 	"testing/quick"
 
 	"github.com/fuseone-io/fuseone-forja/internal/caller"
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 func hashOf(bearer string) string {
@@ -148,6 +149,14 @@ func TestParse_malformedEntry_errMalformedNamingTheField(t *testing.T) {
 		{name: "wildcard owner", src: yamlEntry("pilot", good, "['*/payments']", "team"), field: "repositories"},
 		{name: "partial wildcard", src: yamlEntry("pilot", good, "[acme/pay*]", "team"), field: "repositories"},
 		{name: "space in repository", src: yamlEntry("pilot", good, "['acme/pay ments']", "team"), field: "repositories"},
+		{name: "dot owner", src: yamlEntry("pilot", good, "[./payments]", "team"), field: "repositories"},
+		{name: "dot-dot owner", src: yamlEntry("pilot", good, "[../payments]", "team"), field: "repositories"},
+		{name: "dot-dot owner, wildcard", src: yamlEntry("pilot", good, "['../*']", "team"), field: "repositories"},
+		{name: "dot name", src: yamlEntry("pilot", good, "[acme/.]", "team"), field: "repositories"},
+		{name: "dot-dot name", src: yamlEntry("pilot", good, "[acme/..]", "team"), field: "repositories"},
+		{name: "dot-dot name after a valid one", src: yamlEntry("pilot", good, "[acme/payments, acme/..]", "team"), field: "repositories[1]"},
+		{name: "the stdio client's name", src: yamlEntry(domain.StdioClientName, good, "[acme/payments]", "team"), field: "name"},
+		{name: "the stdio client's name in another case", src: yamlEntry("STDIO", good, "[acme/payments]", "team"), field: "name"},
 		{name: "no rotation owner", src: yamlEntry("pilot", good, "[acme/payments]", ""), field: "rotation_owner"},
 		{name: "unknown field", src: yamlEntry("pilot", good, "[acme/payments]", "team") + "    scopes: [all]\n", field: "scopes"},
 	}
@@ -262,5 +271,41 @@ func TestAuthenticate_property_onlyTheOwnBearerMatches(t *testing.T) {
 	}
 	if err := quick.Check(prop, nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestLookup_knownName_clientWithItsRepositoriesOnly(t *testing.T) {
+	t.Parallel()
+	reg := mustParse(t, twoClients())
+	got, ok := reg.Lookup("fuseone-staging")
+	if !ok || got.Name != "fuseone-staging" || got.Unrestricted || strings.Join(got.Repositories, ",") != "acme/*,acme/ledger" {
+		t.Fatalf("Lookup = (%+v, %v), want fuseone-staging restricted to [acme/* acme/ledger]", got, ok)
+	}
+	if !got.Reaches("acme/anything") || got.Reaches("evil/anything") {
+		t.Fatalf("client %+v reaches the wrong repositories", got)
+	}
+}
+
+func TestLookup_unknownName_noClient(t *testing.T) {
+	t.Parallel()
+	reg := mustParse(t, twoClients())
+	for _, name := range []string{"", "fuseone", "FUSEONE-PILOT", domain.StdioClientName, "-"} {
+		if got, ok := reg.Lookup(name); ok || got.Name != "" || got.Reaches("acme/payments") {
+			t.Fatalf("Lookup(%q) = (%+v, %v), want no client", name, got, ok)
+		}
+	}
+	if _, ok := (caller.Registry{}).Lookup("fuseone-pilot"); ok {
+		t.Fatal("the zero Registry looked up a client")
+	}
+}
+
+func TestLookup_callerEditsRepositories_registryUnchanged(t *testing.T) {
+	t.Parallel()
+	reg := mustParse(t, twoClients())
+	first, _ := reg.Lookup("fuseone-pilot")
+	first.Repositories[0] = "evil/*"
+	again, _ := reg.Lookup("fuseone-pilot")
+	if again.Reaches("evil/x") {
+		t.Fatalf("repositories = %v after a caller's edit, want [acme/payments]", again.Repositories)
 	}
 }

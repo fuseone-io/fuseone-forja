@@ -80,8 +80,8 @@ func doctorHandler(deps Deps) sdk.ToolHandlerFor[DoctorInput, DoctorOutput] {
 }
 
 func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
-	if deps.Cloner == nil || deps.Gates == nil || deps.Runs == nil || deps.NewID == nil || deps.Now == nil {
-		return DoctorOutput{}, errors.New("not wired: cloner, gates, runs, NewID and Now are all required")
+	if err := doctorReady(ctx, deps); err != nil {
+		return DoctorOutput{}, err
 	}
 	co, err := deps.Cloner.Clone(ctx, repo, "")
 	if err != nil {
@@ -110,12 +110,24 @@ func doctor(ctx context.Context, deps Deps, repo string) (DoctorOutput, error) {
 	return out, nil
 }
 
+// doctorReady refuses a server missing what a doctor run reaches, and a
+// call with no client to record the run under.
+func doctorReady(ctx context.Context, deps Deps) error {
+	if deps.Cloner == nil || deps.Gates == nil || deps.Runs == nil || deps.NewID == nil || deps.Now == nil {
+		return errors.New("not wired: cloner, gates, runs, NewID and Now are all required")
+	}
+	if clientOf(ctx).Name == "" {
+		return errNoClient
+	}
+	return nil
+}
+
 // recordedRun records a doctor run as running, runs the gates as that run
 // and records its end: succeeded only when every step that had to run
 // passed, failed otherwise, with what the gateway refused and what the
 // registry proxy served either way.
 func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract, tree string) (domain.GateReport, string, error) {
-	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, State: domain.StateRunning, StartedAt: deps.Now()}
+	run := domain.Run{ID: deps.NewID(), Tool: domain.ToolDoctor, Repository: repo, Client: clientOf(ctx).Name, State: domain.StateRunning, StartedAt: deps.Now()}
 	if err := deps.Runs.Put(ctx, run); err != nil {
 		return domain.GateReport{}, "", fmt.Errorf("record run: %w", err)
 	}

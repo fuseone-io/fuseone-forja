@@ -24,7 +24,9 @@ func NewMemory() *Memory {
 }
 
 // Put stores the run under its ID, replacing any run already there. An
-// invalid run is rejected and leaves the store untouched.
+// invalid run, or one already recorded under another client
+// (domain.ErrRunClientChanged), is rejected and leaves the store
+// untouched.
 func (m *Memory) Put(_ context.Context, run domain.Run) error {
 	if err := run.Validate(); err != nil {
 		return fmt.Errorf("put run: %w", err)
@@ -33,6 +35,9 @@ func (m *Memory) Put(_ context.Context, run domain.Run) error {
 	defer m.mu.Unlock()
 	if m.runs == nil {
 		m.runs = make(map[string]domain.Run)
+	}
+	if prev, ok := m.runs[run.ID]; ok && prev.Client != run.Client {
+		return fmt.Errorf("put run %q: %w", run.ID, domain.ErrRunClientChanged)
 	}
 	m.runs[run.ID] = clone(run)
 	return nil
@@ -48,6 +53,16 @@ func (m *Memory) Get(_ context.Context, id string) (domain.Run, error) {
 		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
 	}
 	return clone(run), nil
+}
+
+// GetOwned is Get for the run's own client only: a run of another client,
+// or a client that is empty, is an id no run has.
+func (m *Memory) GetOwned(ctx context.Context, client, id string) (domain.Run, error) {
+	run, err := m.Get(ctx, id)
+	if err == nil && (client == "" || run.Client != client) {
+		return domain.Run{}, fmt.Errorf("run %q: %w", id, domain.ErrRunNotFound)
+	}
+	return run, err
 }
 
 // List returns a copy of every run the filter matches, sorted with

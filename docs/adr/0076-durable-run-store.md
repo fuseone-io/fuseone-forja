@@ -32,6 +32,25 @@ nothing with the caller.
    either, in every store. The columns only narrow the list: the filter itself decides,
    and the sort is `domain.CompareNewestFirst` in Go. That keeps the window
    exact to the nanosecond, where `timestamptz` keeps microseconds.
+   `client` (migration 0002, ADR 0052 §4) is the exception that also
+   decides. It is the run's client on read. A client's list, and a
+   client's read by id (`GetOwned`), narrow on it in SQL, so they never
+   read another client's rows, not even to fail on them. `Put` refuses, in
+   the same statement, to move a run to another client.
+
+   A row whose client was never recorded belongs to `(unattributed)`, a
+   name no caller can have. It is neither the stdio client nor one a
+   clients file can name, so `forja.status` answers such a row to no one.
+   It still counts in `/metrics` and stays in the database. Nothing gives
+   it back to a client: a run started on a binary from before the column
+   is lost to its client's `forja.status`, so serve is stopped before
+   `forjad migrate` when that matters. That
+   covers rows from before the column, which an HTTP client may have
+   written as well as stdio, so they cannot be given to stdio. It also
+   covers rows a binary from before the column keeps writing while it
+   drains. The column keeps that default for that binary, whose insert
+   names no client, so migrating under a live server does not break its
+   writes.
 4. **Migrations.** Embedded SQL files, numbered, recorded in
    `forja_schema_migrations`. `forjad migrate` applies the pending ones in one
    transaction under an advisory lock: run twice, or twice at once, it

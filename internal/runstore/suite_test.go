@@ -18,6 +18,7 @@ import (
 type store interface {
 	Put(ctx context.Context, run domain.Run) error
 	Get(ctx context.Context, id string) (domain.Run, error)
+	GetOwned(ctx context.Context, client, id string) (domain.Run, error)
 	List(ctx context.Context, f domain.RunFilter) ([]domain.Run, error)
 }
 
@@ -52,6 +53,9 @@ var behaviours = []struct {
 	{"emptyAndNilLists_keptApart", test_emptyAndNilLists_keptApart},
 	{"list_windowBoundsToTheNanosecond", test_list_windowBoundsToTheNanosecond},
 	{"list_toolAndStateFilters", test_list_toolAndStateFilters},
+	{"putExistingIDOtherClient_refusedRunKeepsItsClient", test_putExistingIDOtherClient_refusedRunKeepsItsClient},
+	{"listByClient_onlyThatClientsRuns", test_listByClient_onlyThatClientsRuns},
+	{"getOwned_anotherClientsRunIsUnknown", test_getOwned_anotherClientsRunIsUnknown},
 }
 
 // runSuite runs every behaviour against stores open returns.
@@ -70,6 +74,7 @@ func sampleRun(id string) domain.Run {
 		Issue:      5,
 		State:      domain.StateRunning,
 		StartedAt:  time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC),
+		Client:     "fuseone-pilot",
 	}
 }
 
@@ -100,6 +105,7 @@ func assertSameRun(t *testing.T, got, want domain.Run) {
 	scalarsMatch := got.ID == want.ID &&
 		got.Tool == want.Tool &&
 		got.Repository == want.Repository &&
+		got.Client == want.Client &&
 		got.Issue == want.Issue &&
 		got.State == want.State &&
 		got.StartedAt.Equal(want.StartedAt)
@@ -151,6 +157,9 @@ func test_putInvalidRun_rejectedAndNotStored(t *testing.T, open opener) {
 		{name: "id not UTF-8", mutate: func(r *domain.Run) { r.ID = "run-\xff" }},
 		{name: "repository with a NUL", mutate: func(r *domain.Run) { r.Repository = "acme/api\x00" }},
 		{name: "repository not UTF-8", mutate: func(r *domain.Run) { r.Repository = "acme/\xffapi" }},
+		{name: "no client", mutate: func(r *domain.Run) { r.Client = "" }},
+		{name: "client with a NUL", mutate: func(r *domain.Run) { r.Client = "pilot\x00" }},
+		{name: "client not UTF-8", mutate: func(r *domain.Run) { r.Client = "pilot\xff" }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -631,9 +640,11 @@ func test_list_noMatchEmptyNotNilAndInvalidFilterRejected(t *testing.T, open ope
 	if _, err := store.List(ctx, domain.RunFilter{State: "paused"}); err == nil || !strings.Contains(err.Error(), "paused") {
 		t.Fatalf("List(unknown state) = %v, want an error naming it", err)
 	}
-	for _, repo := range []string{"acme/api\x00", "acme/\xffapi"} {
-		if _, err := store.List(ctx, domain.RunFilter{Repository: repo}); err == nil {
-			t.Errorf("List(repository %q) accepted a repository no run can have", repo)
+	for _, f := range []domain.RunFilter{
+		{Repository: "acme/api\x00"}, {Repository: "acme/\xffapi"}, {Client: "pilot\x00"}, {Client: "pilot\xff"},
+	} {
+		if _, err := store.List(ctx, f); err == nil {
+			t.Errorf("List(%+q) accepted a filter no run can match", f)
 		}
 	}
 }
@@ -665,4 +676,81 @@ func test_concurrentPutAndGet_noRace(t *testing.T, open opener) {
 		})
 	}
 	wg.Wait()
+}
+
+// A run never changes hands: a record of an existing run under another
+// client is refused and the run stays its first client's, while the same
+// client may record it again.
+func test_putExistingIDOtherClient_refusedRunKeepsItsClient(t *testing.T, open opener) {
+	t.Parallel()
+	ctx := context.Background()
+	store := open(t)
+	first := sampleRun("run-1")
+	if err := store.Put(ctx, first); err != nil {
+		t.Fatalf("Put first: %v", err)
+	}
+	taken := first
+	taken.Client, taken.State = "fuseone-staging", domain.StateFailed
+	if err := store.Put(ctx, taken); !errors.Is(err, domain.ErrRunClientChanged) {
+		t.Fatalf("Put under another client = %v, want ErrRunClientChanged", err)
+	}
+	got, err := store.Get(ctx, "run-1")
+	if err != nil || got.Client != first.Client || got.State != first.State {
+		t.Fatalf("run = %+v, %v; want it unchanged, still %s's", got, err, first.Client)
+	}
+	again := first
+	again.State = domain.StateFailed
+	if err := store.Put(ctx, again); err != nil {
+		t.Fatalf("Put by the same client: %v", err)
+	}
+	if got, err := store.Get(ctx, "run-1"); err != nil || got.State != domain.StateFailed {
+		t.Fatalf("run = %+v, %v; want the same client's record applied", got, err)
+	}
+}
+
+// List keeps one client's runs when the filter names it, compared
+// exactly, and every client's under the zero filter.
+func test_listByClient_onlyThatClientsRuns(t *testing.T, open opener) {
+	t.Parallel()
+	ctx := context.Background()
+	store := open(t)
+	mine, theirs, cased := sampleRun("run-mine"), sampleRun("run-theirs"), sampleRun("run-cased")
+	theirs.Client, cased.Client = "fuseone-staging", "FuseOne-Pilot"
+	for _, r := range []domain.Run{mine, theirs, cased} {
+		if err := store.Put(ctx, r); err != nil {
+			t.Fatalf("Put %s: %v", r.ID, err)
+		}
+	}
+	got, err := store.List(ctx, domain.RunFilter{Client: mine.Client})
+	if err != nil || !reflect.DeepEqual(listIDs(got), []string{"run-mine"}) {
+		t.Fatalf("List(client %s) = %v, %v; want [run-mine]", mine.Client, listIDs(got), err)
+	}
+	if all, err := store.List(ctx, domain.RunFilter{}); err != nil || len(all) != 3 {
+		t.Fatalf("List(zero filter) = %v, %v; want every client's runs", listIDs(all), err)
+	}
+}
+
+// GetOwned answers a run only to the client it was recorded under: to any
+// other client, and to no client, it is an id no run has, in the same
+// words.
+func test_getOwned_anotherClientsRunIsUnknown(t *testing.T, open opener) {
+	t.Parallel()
+	ctx := context.Background()
+	store := open(t)
+	run := sampleRun("run-1")
+	if err := store.Put(ctx, run); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := store.GetOwned(ctx, run.Client, "run-1")
+	if err != nil {
+		t.Fatalf("GetOwned by its client: %v", err)
+	}
+	assertSameRun(t, got, run)
+	_, unknown := store.GetOwned(ctx, "fuseone-staging", "run-2")
+	for _, client := range []string{"fuseone-staging", "FuseOne-Pilot", "", "pilot\x00"} {
+		_, err := store.GetOwned(ctx, client, "run-1")
+		if !errors.Is(err, domain.ErrRunNotFound) || strings.ReplaceAll(err.Error(), "run-1", "run-2") != unknown.Error() {
+			t.Fatalf("GetOwned(%q) = %v, want %v but for the id", client, err, unknown)
+		}
+	}
 }

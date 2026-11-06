@@ -184,6 +184,9 @@
       "base_sha": {
         "type": "string"
       },
+      "client": {
+        "type": "string"
+      },
       "compute_minutes": {
         "type": "number"
       },
@@ -777,6 +780,7 @@
       "tool",
       "repository",
       "issue",
+      "client",
       "state",
       "started_at",
       "egress_denied_count",

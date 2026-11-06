@@ -13,7 +13,7 @@ var filterNoon = time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
 func filterRun() domain.Run {
 	return domain.Run{
 		ID: "run-1", Tool: domain.ToolImplement, Repository: "acme/api",
-		State: domain.StateFailed, StartedAt: filterNoon,
+		State: domain.StateFailed, StartedAt: filterNoon, Client: "fuseone-pilot",
 	}
 }
 
@@ -28,6 +28,10 @@ func TestRunFilter_match_eachFieldAndBound(t *testing.T) {
 		{name: "same repository", filter: domain.RunFilter{Repository: "acme/api"}, want: true},
 		{name: "other repository", filter: domain.RunFilter{Repository: "acme/web"}, want: false},
 		{name: "repository is exact, not a prefix", filter: domain.RunFilter{Repository: "acme/ap"}, want: false},
+		{name: "same client", filter: domain.RunFilter{Client: "fuseone-pilot"}, want: true},
+		{name: "other client", filter: domain.RunFilter{Client: "fuseone-staging"}, want: false},
+		{name: "client is exact, not a prefix", filter: domain.RunFilter{Client: "fuseone"}, want: false},
+		{name: "client is exact, case included", filter: domain.RunFilter{Client: "FuseOne-Pilot"}, want: false},
 		{name: "same tool", filter: domain.RunFilter{Tool: domain.ToolImplement}, want: true},
 		{name: "other tool", filter: domain.RunFilter{Tool: domain.ToolDoctor}, want: false},
 		{name: "same state", filter: domain.RunFilter{State: domain.StateFailed}, want: true},
@@ -71,6 +75,8 @@ func TestRunFilter_validate_rejectsUnknownValuesAndEmptyWindow(t *testing.T) {
 		{name: "until alone", filter: domain.RunFilter{Until: filterNoon}},
 		{name: "unknown tool", filter: domain.RunFilter{Tool: "forja.deploy"}, wantErr: "forja.deploy"},
 		{name: "unknown state", filter: domain.RunFilter{State: "paused"}, wantErr: "paused"},
+		{name: "client with a NUL", filter: domain.RunFilter{Client: "pilot\x00"}, wantErr: "client"},
+		{name: "client not UTF-8", filter: domain.RunFilter{Client: "pilot\xff"}, wantErr: "client"},
 		{name: "since equal to until", filter: domain.RunFilter{Since: filterNoon, Until: filterNoon}, wantErr: "since"},
 		{name: "since after until", filter: domain.RunFilter{Since: filterNoon.Add(time.Second), Until: filterNoon}, wantErr: "until"},
 	}

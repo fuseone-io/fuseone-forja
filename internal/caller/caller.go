@@ -9,6 +9,8 @@ import (
 	"crypto/subtle"
 	"errors"
 	"slices"
+
+	"github.com/fuseone-io/fuseone-forja/internal/domain"
 )
 
 // ErrUnknownBearer is a bearer whose hash is in no entry.
@@ -49,4 +51,16 @@ func (r Registry) Authenticate(bearer string) (Client, error) {
 	c := r.clients[found]
 	c.Repositories = slices.Clone(c.Repositories)
 	return c, nil
+}
+
+// Lookup is the client named name, as the run engine scopes it: its name
+// and the repositories it may reach. Every entry of a name has the same
+// repositories, so whichever bearer authenticated it is the same client.
+func (r Registry) Lookup(name string) (domain.Client, bool) {
+	for _, c := range r.clients {
+		if c.Name == name {
+			return domain.Client{Name: c.Name, Repositories: slices.Clone(c.Repositories)}, true
+		}
+	}
+	return domain.Client{}, false
 }
