@@ -25,3 +25,4 @@ Possible statuses: `proposed`, `accepted`, `superseded by NNNN`, `rejected`.
 | [0051](0051-forja-as-a-separate-product.md) | Forja as a separate product, with FuseOne as its reference client | proposed |
 | [0052](0052-network-transport-and-caller-authentication.md) | Network transport and caller authentication | accepted |
 | [0076](0076-durable-run-store.md) | Durable run store on Postgres | proposed |
+| [0086](0086-async-runs-cancel-and-idempotency.md) | Asynchronous runs, forja.cancel and per-client idempotency | proposed |
