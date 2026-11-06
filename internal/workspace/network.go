@@ -43,6 +43,11 @@ func nameRune(r rune) bool {
 // DNS, which resolves the gateway and every sidecar by its alias, and the
 // daemon isolates it from every other bridge, the default one included.
 func createNetwork(ctx context.Context, cli *client.Client, runID string) (string, error) {
+	ctx, cancel, err := createContext(ctx)
+	if err != nil {
+		return "", fmt.Errorf("workspace: create network of run %s: %w", runID, err)
+	}
+	defer cancel()
 	created, err := cli.NetworkCreate(ctx, networkName(runID), client.NetworkCreateOptions{
 		Driver:   "bridge",
 		Internal: true,
