@@ -45,8 +45,9 @@ func budget(set, fallback time.Duration) time.Duration {
 }
 
 // hold completes a claim the ref now points at: it is journaled so a crash
-// can be recovered. A claim that cannot be journaled is given back, since
-// nothing would release it after a crash.
+// can be recovered. A claim that cannot be journaled is given back on a
+// follow-up budget of its own, since nothing would release it after a
+// crash and the mutation may have spent all of ctx's.
 func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Claim, error) {
 	c.SHA = sha
 	if s.Journal == nil {
@@ -56,7 +57,9 @@ func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Cl
 	if err == nil {
 		return c, nil
 	}
-	if rerr := s.Refs.DeleteRef(ctx, c.Repository, domain.ClaimRef(c.Issue)); rerr != nil {
+	gctx, cancel := s.followUp(ctx)
+	defer cancel()
+	if rerr := s.Refs.DeleteRef(gctx, c.Repository, domain.ClaimRef(c.Issue)); rerr != nil {
 		return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w (and the ref could not be released: %w)", c.Issue, c.Repository, err, rerr)
 	}
 	return domain.Claim{}, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err)
@@ -74,7 +77,7 @@ func (s *Store) unsettled(ctx context.Context, c domain.Claim, sha string, cause
 	obj, err := s.Refs.GetRef(rctx, c.Repository, domain.ClaimRef(c.Issue))
 	switch {
 	case err == nil && obj.SHA == sha:
-		return s.hold(rctx, c, sha)
+		return s.hold(ctx, c, sha)
 	case err == nil, errors.Is(err, github.ErrRefMissing):
 		return domain.Claim{}, cause
 	}
