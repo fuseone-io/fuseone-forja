@@ -21,11 +21,13 @@ func (h host) startupTimeout() time.Duration {
 	return h.startup
 }
 
-// start assembles the tools' dependencies, opens the run store and closes
-// and releases what a previous process left, all within the startup
-// deadline. The recovery reads the store as it is, so a failure there
-// keeps its cause; the tools get it sealed. The returned func releases the
-// store; the store itself outlives the deadline.
+// start assembles the tools' dependencies, opens the run store, closes
+// and releases what a previous process left and sweeps the Docker objects
+// its runs left, all within the startup deadline. The recovery reads the
+// store as it is, so a failure there keeps its cause; the tools get it
+// sealed. A sweep that fails is reported and does not stop the start. The
+// returned func releases the store; the store itself outlives the
+// deadline.
 func (h host) start(ctx context.Context, stderr io.Writer) (mcp.Deps, func(), error) {
 	ctx, cancel := context.WithTimeout(ctx, h.startupTimeout())
 	defer cancel()
@@ -42,6 +44,7 @@ func (h host) start(ctx context.Context, stderr io.Writer) (mcp.Deps, func(), er
 		closeRuns()
 		return mcp.Deps{}, nil, err
 	}
+	h.sweepDeadRuns(ctx, stderr)
 	deps.Runs = sealRuns(runs, stderr)
 	return deps, closeRuns, nil
 }

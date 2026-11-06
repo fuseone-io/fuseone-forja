@@ -140,7 +140,7 @@ func journal(getenv func(string) string, stderr io.Writer) *claim.Journal {
 	dir := getenv(EnvStateDir)
 	if dir == "" {
 		// The exit code is the only channel left when stderr itself fails.
-		_, _ = fmt.Fprintf(stderr, "forjad: %s is not set: a claim left by a crash is not recovered on start and is freed only when its lease expires\n", EnvStateDir)
+		_, _ = fmt.Fprintf(stderr, "forjad: %s is not set: a claim left by a crash is not recovered on start and is freed only when its lease expires, and its run's Docker objects are not removed\n", EnvStateDir)
 		return nil
 	}
 	return &claim.Journal{Dir: filepath.Join(dir, "claims")}
