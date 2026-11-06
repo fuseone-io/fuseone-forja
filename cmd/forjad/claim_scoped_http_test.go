@@ -18,15 +18,16 @@ import (
 // another client.
 const pilotRun = "run-of-pilot"
 
-// scopedServer serves fx over HTTP as serve does and returns its address
-// and the operator's log of every call.
+// scopedServer serves fx over HTTP as serve does, its store sealed, and
+// returns its address and the operator's log: every call, and what the
+// sealed store reports.
 func scopedServer(t *testing.T, fx *cancelFixture) (string, *lockedBuffer) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	bound, returned := make(chan string, 1), make(chan error, 1)
 	cfg := httpConfig{addr: "127.0.0.1:0", clients: testRegistry(t), drain: time.Second}
-	fx.deps.Callers = registryCallers{reg: cfg.clients}
 	logs := &lockedBuffer{}
+	fx.deps.Callers, fx.deps.Runs = registryCallers{reg: cfg.clients}, sealRuns(fx.deps.Runs, logs)
 	go func() {
 		returned <- host{listen: capturingListen(bound)}.serveMCPHTTP(ctx, mcpHTTPServer(fx.deps), cfg, httpSinks{log: logs, ready: new(readiness)})
 	}()
@@ -61,15 +62,21 @@ func callAs(t *testing.T, addr, bearer, tool string, args map[string]any) string
 	return string(raw)
 }
 
-// pilotHoldsTheIssue records pilotRun as fuseone-pilot's and has it hold
-// the issue the tests implement.
-func pilotHoldsTheIssue(t *testing.T, fx *cancelFixture) {
+// pilotRecorded records pilotRun as fuseone-pilot's.
+func pilotRecorded(t *testing.T, fx *cancelFixture) {
 	t.Helper()
 	run := domain.Run{ID: pilotRun, Tool: domain.ToolImplement, Repository: cancelRepo, Issue: cancelIssue, Client: "fuseone-pilot",
 		State: domain.StateRunning, StartedAt: utcNow()}
 	if err := fx.runs.Put(context.Background(), run); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// pilotHoldsTheIssue records pilotRun and has it hold the issue the tests
+// implement.
+func pilotHoldsTheIssue(t *testing.T, fx *cancelFixture) {
+	t.Helper()
+	pilotRecorded(t, fx)
 	now := utcNow()
 	fx.claims.held[claimKey(cancelRepo, cancelIssue)] = domain.Claim{RunID: pilotRun, Repository: cancelRepo, Issue: cancelIssue, SHA: cancelBaseSHA, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 }
@@ -97,13 +104,13 @@ func TestServeHTTP_claimHeldByAnotherClient_holderNamedOnlyToItsOwner(t *testing
 	}
 }
 
-// Over HTTP, fuseone-staging's run that took over fuseone-pilot's expired
-// claim is answered without supersedes, and the log of the call does not
-// name the run it took over.
+// Over HTTP, fuseone-staging's run recorded as having taken over
+// fuseone-pilot's expired claim is answered without supersedes, and the
+// log of the call does not name the run it took over.
 func TestServeHTTP_supersededAnotherClientsRun_statusAndLogDoNotNameIt(t *testing.T) {
 	t.Parallel()
 	fx := newCancelFixture(t)
-	pilotHoldsTheIssue(t, fx)
+	pilotRecorded(t, fx)
 	run := domain.Run{ID: "run-of-staging", Tool: domain.ToolImplement, Repository: cancelRepo, Issue: cancelIssue, Client: "fuseone-staging",
 		State: domain.StateRunning, StartedAt: utcNow(), Supersedes: pilotRun}
 	if err := fx.runs.Put(context.Background(), run); err != nil {
