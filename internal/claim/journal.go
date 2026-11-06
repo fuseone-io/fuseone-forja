@@ -28,32 +28,62 @@ type Journal struct {
 
 // Put records a claim, replacing any entry for the same issue.
 func (j *Journal) Put(e Entry) error {
-	if j.Dir == "" {
-		return errors.New("claim journal has no directory")
-	}
-	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
-		return fmt.Errorf("claim journal: %w", err)
-	}
-	body, err := json.Marshal(e)
+	tmp, err := j.stage(e)
 	if err != nil {
-		return fmt.Errorf("claim journal: %w", err)
+		return err
 	}
-	tmp, err := os.CreateTemp(j.Dir, ".entry-*.tmp")
-	if err != nil {
-		return fmt.Errorf("claim journal: %w", err)
-	}
-	if err := writeAndClose(tmp, body); err != nil {
+	if err := os.Rename(tmp, j.path(e.Repository, e.Issue)); err != nil {
 		// A temporary file left behind is never listed as an entry, so a
-		// failed cleanup changes nothing; the write error is the one to report.
-		_ = os.Remove(tmp.Name())
-		return fmt.Errorf("claim journal: %w", err)
-	}
-	if err := os.Rename(tmp.Name(), j.path(e.Repository, e.Issue)); err != nil {
-		// Same as above: the rename error is the one to report.
-		_ = os.Remove(tmp.Name())
+		// failed cleanup changes nothing; the rename error is the one to report.
+		_ = os.Remove(tmp)
 		return fmt.Errorf("claim journal: %w", err)
 	}
 	return nil
+}
+
+// PutNew records a claim only if the journal holds no entry for its
+// issue, atomically, and reports whether it did: an entry already there is
+// a claim this process holds and is kept.
+func (j *Journal) PutNew(e Entry) (bool, error) {
+	tmp, err := j.stage(e)
+	if err != nil {
+		return false, err
+	}
+	// The temporary name is never listed as an entry, so a failed cleanup
+	// changes nothing.
+	defer func() { _ = os.Remove(tmp) }()
+	err = os.Link(tmp, j.path(e.Repository, e.Issue))
+	if errors.Is(err, os.ErrExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("claim journal: %w", err)
+	}
+	return true, nil
+}
+
+// stage writes e, synced, to a temporary file in Dir and returns its name.
+func (j *Journal) stage(e Entry) (string, error) {
+	if j.Dir == "" {
+		return "", errors.New("claim journal has no directory")
+	}
+	if err := os.MkdirAll(j.Dir, 0o700); err != nil {
+		return "", fmt.Errorf("claim journal: %w", err)
+	}
+	body, err := json.Marshal(e)
+	if err != nil {
+		return "", fmt.Errorf("claim journal: %w", err)
+	}
+	tmp, err := os.CreateTemp(j.Dir, ".entry-*.tmp")
+	if err != nil {
+		return "", fmt.Errorf("claim journal: %w", err)
+	}
+	if err := writeAndClose(tmp, body); err != nil {
+		// Same as above: the write error is the one to report.
+		_ = os.Remove(tmp.Name())
+		return "", fmt.Errorf("claim journal: %w", err)
+	}
+	return tmp.Name(), nil
 }
 
 // writeAndClose reports the first failure; a close after a failed write

@@ -14,7 +14,7 @@ import (
 // comes off.
 func TestStore_claim_mutationSpentBudgetJournalFails_refGivenBack(t *testing.T) {
 	t.Parallel()
-	for op := range mutations {
+	for op := range mutations() {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			notADir := filepath.Join(t.TempDir(), "claims")

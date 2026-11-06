@@ -20,14 +20,85 @@ const (
 
 // mutations names the two ref mutations a claim makes, with the setup that
 // leads the store to each: a free issue is created, an expired claim moved.
-var mutations = map[string]func(t *testing.T, fake *fakeRefs){
-	"CreateRef": func(*testing.T, *fakeRefs) {},
-	"UpdateRef": func(t *testing.T, fake *fakeRefs) {
-		t.Helper()
-		if _, err := claim.NewStore(fake, clock(t0()), nil).Claim(context.Background(), request("run-old")); err != nil {
-			t.Fatalf("first Claim: %v", err)
+func mutations() map[string]func(t *testing.T, fake *fakeRefs) {
+	return map[string]func(t *testing.T, fake *fakeRefs){
+		"CreateRef": func(*testing.T, *fakeRefs) {},
+		"UpdateRef": func(t *testing.T, fake *fakeRefs) {
+			t.Helper()
+			if _, err := claim.NewStore(fake, clock(t0()), nil).Claim(context.Background(), request("run-old")); err != nil {
+				t.Fatalf("first Claim: %v", err)
+			}
+		},
+	}
+}
+
+// A request on an issue another process holds fails on the way: the ref
+// reads back at the holder's commit, which the create can never move, so
+// nothing is journaled for it.
+func TestStore_claim_outcomeOpenOnAnIssueHeldElsewhere_nothingJournaled(t *testing.T) {
+	t.Parallel()
+	fake := newFakeRefs()
+	if _, err := claim.NewStore(fake, clock(t0()), nil).Claim(context.Background(), request("run-elsewhere")); err != nil {
+		t.Fatalf("first Claim: %v", err)
+	}
+	fake.fail["CreateRef"] = errors.New("fake: connection reset")
+	journal := &claim.Journal{Dir: t.TempDir()}
+	if _, err := claim.NewStore(fake, clock(t0().Add(time.Minute)), journal).Claim(context.Background(), request("run-2")); err == nil {
+		t.Fatal("second Claim succeeded on a held issue")
+	}
+	if entries := mustList(t, journal); len(entries) != 0 {
+		t.Fatalf("journal holds %+v for a create that can never apply", entries)
+	}
+}
+
+// A take-over fails on the way while the expired claim's ref is deleted:
+// a move of a ref that is gone can never apply, so nothing is journaled.
+func TestStore_claim_takeOverOpenOnAVanishedRef_nothingJournaled(t *testing.T) {
+	t.Parallel()
+	fake := newFakeRefs()
+	mutations()["UpdateRef"](t, fake)
+	fake.beforeUpdate = func() {
+		if err := fake.DeleteRef(context.Background(), repo, ref); err != nil {
+			t.Errorf("delete the expired claim's ref: %v", err)
 		}
-	},
+	}
+	fake.fail["UpdateRef"] = errors.New("fake: connection reset")
+	journal := &claim.Journal{Dir: t.TempDir()}
+	if _, err := claim.NewStore(fake, clock(t0().Add(lease)), journal).Claim(context.Background(), request("run-1")); err == nil {
+		t.Fatal("Claim succeeded although its move failed")
+	}
+	if entries := mustList(t, journal); len(entries) != 0 {
+		t.Fatalf("journal holds %+v for a move of a ref that is gone", entries)
+	}
+}
+
+// A request on an issue this process holds fails on the way: GitHub would
+// have refused it, so the holder's ref and journal entry stay as they
+// were, whether the ref reads back as the holder's or cannot be read.
+func TestStore_claim_outcomeOpenOnAHeldIssue_holdersEntryKept(t *testing.T) {
+	t.Parallel()
+	for name, unreadable := range map[string]bool{"holder read back": false, "read-back fails": true} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			fake := newFakeRefs()
+			journal := &claim.Journal{Dir: t.TempDir()}
+			held, err := claim.NewStore(fake, clock(t0()), journal).Claim(context.Background(), request("run-held"))
+			if err != nil {
+				t.Fatalf("first Claim: %v", err)
+			}
+			fake.fail["CreateRef"] = errors.New("fake: connection reset")
+			if unreadable {
+				fake.fail["GetRef"] = errors.New("fake: connection reset")
+			}
+			if _, err := claim.NewStore(fake, clock(t0().Add(time.Minute)), journal).Claim(context.Background(), request("run-2")); err == nil {
+				t.Fatal("second Claim succeeded on a held issue")
+			}
+			want := []claim.Entry{{Repository: repo, Issue: issue, RunID: "run-held", SHA: held.SHA}}
+			if got := mustList(t, journal); !slices.Equal(got, want) {
+				t.Fatalf("journal holds %+v, want the holder's %+v", got, want)
+			}
+		})
+	}
 }
 
 // newStalling builds a store whose mutation budget runs out while GitHub
@@ -35,7 +106,7 @@ var mutations = map[string]func(t *testing.T, fake *fakeRefs){
 func newStalling(t *testing.T, op string, journal *claim.Journal) (*fakeRefs, *claim.Store) {
 	t.Helper()
 	fake := newFakeRefs()
-	mutations[op](t, fake)
+	mutations()[op](t, fake)
 	fake.stallOn = op
 	store := claim.WithTimeouts(claim.NewStore(fake, clock(t0().Add(lease)), journal), spentBudget, followBudget)
 	return fake, store
@@ -62,7 +133,7 @@ func assertJournaledIfPresent(t *testing.T, fake *fakeRefs, journal *claim.Journ
 // commit there, and holds the claim journaled, so the run releases it.
 func TestStore_claim_mutationAppliedAnswerLost_heldJournaledAndReleased(t *testing.T) {
 	t.Parallel()
-	for op := range mutations {
+	for op := range mutations() {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			journal := &claim.Journal{Dir: t.TempDir()}
@@ -88,11 +159,11 @@ func refusedMutation() error {
 // left as it was, and nothing is journaled.
 func TestStore_claim_mutationRefused_refusedNothingReadBackOrJournaled(t *testing.T) {
 	t.Parallel()
-	for op := range mutations {
+	for op := range mutations() {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			fake := newFakeRefs()
-			mutations[op](t, fake)
+			mutations()[op](t, fake)
 			before, _ := fake.refSHA(repo, ref)
 			fake.fail[op] = refusedMutation()
 			journal := &claim.Journal{Dir: t.TempDir()}
@@ -120,7 +191,7 @@ func TestStore_claim_mutationRefused_refusedNothingReadBackOrJournaled(t *testin
 // apply it late, and leaves the ref as it was if not.
 func TestStore_claim_mutationOutcomeOpen_journaledRecoveryReleasesALateApply(t *testing.T) {
 	t.Parallel()
-	for op := range mutations {
+	for op := range mutations() {
 		for name, tt := range map[string]struct {
 			cause error
 			late  bool
@@ -133,7 +204,7 @@ func TestStore_claim_mutationOutcomeOpen_journaledRecoveryReleasesALateApply(t *
 			t.Run(op+"/"+name, func(t *testing.T) {
 				t.Parallel()
 				fake := newFakeRefs()
-				mutations[op](t, fake)
+				mutations()[op](t, fake)
 				before, _ := fake.refSHA(repo, ref)
 				fake.fail[op] = tt.cause
 				journal := &claim.Journal{Dir: t.TempDir()}
@@ -189,7 +260,7 @@ func TestStore_claim_answerLostAndRefUnreadable_journaledForRecovery(t *testing.
 // the drain sized from it, so it fails here first.
 func TestStore_claim_callerGoneAndAnswerLost_settlesInTheBudgetsCounted(t *testing.T) {
 	t.Parallel()
-	for op := range mutations {
+	for op := range mutations() {
 		t.Run(op, func(t *testing.T) {
 			t.Parallel()
 			journal := &claim.Journal{Dir: t.TempDir()}
@@ -206,7 +277,8 @@ func TestStore_claim_callerGoneAndAnswerLost_settlesInTheBudgetsCounted(t *testi
 			if want := []string{op, "GetRef"}; !slices.Equal(after, want) {
 				t.Fatalf("calls from the mutation on = %q, want %q: one budget each", after, want)
 			}
-			if want := claim.Budgets["mutation"] + claim.Budgets["follow-up"]; claim.SettleBound != want {
+			mutation, followUp := claim.Budgets()
+			if want := mutation + followUp; claim.SettleBound != want {
 				t.Fatalf("SettleBound = %v, want %v: the mutation's budget and one follow-up's", claim.SettleBound, want)
 			}
 			settle(t, store, c, err)

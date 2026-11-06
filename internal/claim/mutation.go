@@ -75,10 +75,12 @@ func (s *Store) hold(ctx context.Context, c domain.Claim, sha string) (domain.Cl
 // unsettled decides a mutation that answered an error other than the
 // refusals Claim and takeOver read. A 4xx was not applied: cause is the
 // answer. Any other error, a lost answer or a request failed on the way,
-// leaves the outcome open, and the ref is read back: at the claim's own
-// commit the mutation applied, and the claim is held. Otherwise GitHub may
-// still apply it later, so the claim's commit is journaled: recovery
-// releases the ref if it points there, and forgets the entry if not.
+// leaves the outcome open, and the ref is read back. At the claim's own
+// commit the mutation applied, and the claim is held. Past where the
+// mutation moves it from, another commit or gone after a move, it can no
+// longer apply: cause is the answer. Otherwise GitHub may still apply it,
+// so the claim's commit is journaled: recovery releases the ref if it
+// points there, and forgets the entry if not.
 func (s *Store) unsettled(ctx context.Context, c domain.Claim, sha string, cause error) (domain.Claim, error) {
 	if refused(cause) {
 		return domain.Claim{}, cause
@@ -86,14 +88,26 @@ func (s *Store) unsettled(ctx context.Context, c domain.Claim, sha string, cause
 	rctx, cancel := s.followUp(ctx)
 	defer cancel()
 	obj, err := s.Refs.GetRef(rctx, c.Repository, domain.ClaimRef(c.Issue))
-	if err == nil && obj.SHA == sha {
+	from, missing := movedFrom(c), errors.Is(err, github.ErrRefMissing)
+	switch {
+	case err == nil && obj.SHA == sha:
 		return s.hold(ctx, c, sha)
-	}
-	if err != nil && !errors.Is(err, github.ErrRefMissing) {
+	case err == nil && obj.SHA != from, missing && from != "":
+		return domain.Claim{}, cause
+	case err != nil && !missing:
 		cause = fmt.Errorf("%w (and the ref could not be read back: %w)", cause, err)
 	}
 	c.SHA = sha
 	return domain.Claim{}, s.journalOpen(c, cause)
+}
+
+// movedFrom is the commit the claim's mutation moves the ref from: the
+// claim it supersedes, or none for a ref it creates.
+func movedFrom(c domain.Claim) string {
+	if c.Supersedes == nil {
+		return ""
+	}
+	return c.Supersedes.SHA
 }
 
 // refused says GitHub answered the request with a 4xx, so it applied
@@ -104,12 +118,14 @@ func refused(err error) bool {
 }
 
 // journalOpen records a claim whose mutation may yet apply and returns
-// cause, with any journal failure joined.
+// cause, with any journal failure joined. An issue already journaled is a
+// claim this process holds, whose entry is kept: a mutation on a held ref
+// never applies.
 func (s *Store) journalOpen(c domain.Claim, cause error) error {
 	if s.Journal == nil {
 		return cause
 	}
-	if err := s.Journal.Put(entryOf(c)); err != nil {
+	if _, err := s.Journal.PutNew(entryOf(c)); err != nil {
 		return errors.Join(cause, fmt.Errorf("claim issue %d of %s: %w", c.Issue, c.Repository, err))
 	}
 	return cause
