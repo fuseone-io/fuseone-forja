@@ -50,9 +50,10 @@ type Deps struct {
 }
 
 // New builds the server with the five tools registered, each backed by
-// its handler.
-func New(deps Deps) *sdk.Server {
-	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, nil)
+// its handler. opts is the transport's say over the server, such as the
+// protocol versions it speaks; nil is the SDK's defaults.
+func New(deps Deps, opts *sdk.ServerOptions) *sdk.Server {
+	server := sdk.NewServer(&sdk.Implementation{Name: "forja", Version: deps.Version}, opts)
 	sdk.AddTool(server, doctorTool(), doctorHandler(deps))
 	sdk.AddTool(server, planTool(), planHandler(deps.Cloner, deps.Issues))
 	sdk.AddTool(server, implementTool(), implementHandler(deps))

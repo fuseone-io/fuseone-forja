@@ -263,9 +263,17 @@ a body over 1 MiB `413`. Before the bearer is checked, a request whose
 `Origin` is not in `FORJA_MCP_ALLOWED_ORIGINS`, `null` and any `OPTIONS`
 preflight included, is answered a bare `403` and logged with the client
 address and the `Origin`; a request without `Origin` goes on to the bearer.
-No CORS is served. Every authenticated client reaches every repository
-the GitHub App reaches: `repositories` is parsed and validated but not yet
-enforced, and a call in flight is not yet cancelled when its client goes away. A bearer is 32 bytes from a cryptographic random source,
+No CORS is served. After the bearer, a POST whose `MCP-Protocol-Version` is
+missing or is not `2026-07-28` is answered `400`: HTTP speaks that version
+alone, the one where a client that closes its connection cancels its call.
+A `forja.implement` or `forja.verify` whose client goes away is stopped: its
+workspace is removed, its claim released and the run recorded `failed`. A
+stop (`SIGTERM`) cancels every call in flight the same way and waits up to
+3 min 15 s for those teardowns before `forjad` exits; the deployment's
+`terminationGracePeriodSeconds` (or stop timeout) must exceed that drain, or
+a kill mid-teardown leaves the claim and the run behind. Every authenticated
+client reaches every repository the GitHub App reaches: `repositories` is
+parsed and validated but not yet enforced. A bearer is 32 bytes from a cryptographic random source,
 base64url-encoded, one per integration and environment; a rotation adds an
 entry with the same `name` and a new hash, then removes the old one, and takes
 effect on restart.

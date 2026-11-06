@@ -375,12 +375,20 @@ func postCall(addr string) {
 	if err != nil {
 		return
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+testBearer)
+	setCallHeaders(req, callBody("x"))
 	if res, err := http.DefaultClient.Do(req); err == nil {
 		_ = res.Body.Close()
 	}
+}
+
+// setCallHeaders makes req, carrying body, a 2026-07-28 Streamable HTTP
+// POST of the test client.
+func setCallHeaders(req *http.Request, body string) {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+testBearer)
+	req.Header.Set("MCP-Protocol-Version", protocol2026)
+	setStandardHeaders(req.Header, body)
 }
 
 func TestMCPHTTPConfig_drain_setForServe(t *testing.T) {
@@ -419,9 +427,7 @@ func TestMCPServer_callOutlastsTheReadTimeout_answered(t *testing.T) {
 	})
 	addr := servedHandler(t, mcpHandler(server, testRegistry(t)), 100*time.Millisecond)
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, "http://"+addr+mcpPath, strings.NewReader(callBody("x")))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/event-stream")
-	req.Header.Set("Authorization", "Bearer "+testBearer)
+	setCallHeaders(req, callBody("x"))
 	res, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -443,6 +449,7 @@ func TestMCPServer_bodyStallsPastTheReadTimeout_refusedNoToolRuns(t *testing.T) 
 	}
 	defer func() { _ = conn.Close() }()
 	_, _ = io.WriteString(conn, "POST "+mcpPath+" HTTP/1.1\r\nHost: "+addr+"\r\nAuthorization: Bearer "+testBearer+
+		"\r\nMCP-Protocol-Version: "+protocol2026+
 		"\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nContent-Length: 500\r\n\r\n{\"jsonrpc\"")
 	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	status, err := bufio.NewReader(conn).ReadString('\n')

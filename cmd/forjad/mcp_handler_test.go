@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -44,20 +45,66 @@ func testRegistry(t *testing.T) caller.Registry {
 	return reg
 }
 
-func callBody(finding string) string {
-	return `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"forja.probe","arguments":{"finding":"` + finding + `"}}}`
+// protocol2026 is the one protocol version the HTTP server speaks.
+const protocol2026 = "2026-07-28"
+
+// requestMeta is the _meta a 2026-07-28 request carries in its params.
+const requestMeta = `"_meta":{"io.modelcontextprotocol/protocolVersion":"` + protocol2026 +
+	`","io.modelcontextprotocol/clientInfo":{"name":"t","version":"t"},"io.modelcontextprotocol/clientCapabilities":{}}`
+
+// toolCall is a 2026-07-28 tools/call of tool with the JSON object args.
+func toolCall(tool, args string) string {
+	return `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{` + requestMeta + `,"name":"` + tool + `","arguments":` + args + `}}`
 }
 
-// post sends body to h as a Streamable HTTP client would, with authorization
-// as the Authorization header when it is not empty.
+func callBody(finding string) string {
+	return toolCall("forja.probe", `{"finding":"`+finding+`"}`)
+}
+
+// setStandardHeaders sets the Mcp-Method and Mcp-Name headers a
+// 2026-07-28 client derives from a request body; a body that is not one
+// JSON-RPC message sets none.
+func setStandardHeaders(h http.Header, body string) {
+	var msg struct {
+		Method string `json:"method"`
+		Params struct {
+			Name string `json:"name"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(body), &msg); err != nil || msg.Method == "" {
+		return
+	}
+	h.Set("Mcp-Method", msg.Method)
+	if msg.Params.Name != "" {
+		h.Set("Mcp-Name", msg.Params.Name)
+	}
+}
+
+// post sends body to h as a 2026-07-28 Streamable HTTP client would, with
+// authorization as the Authorization header when it is not empty.
 func post(t *testing.T, h http.Handler, authorization, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequestWithContext(context.Background(), http.MethodPost, "http://127.0.0.1"+mcpPath, strings.NewReader(body))
+	return sendMCP(t, h, sendOptions{authorization: authorization, version: protocol2026, method: http.MethodPost}, body)
+}
+
+// sendOptions is what sendMCP sends besides the body: an empty authorization
+// or version is a header left out.
+type sendOptions struct {
+	authorization, version, method string
+}
+
+func sendMCP(t *testing.T, h http.Handler, o sendOptions, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequestWithContext(context.Background(), o.method, "http://127.0.0.1"+mcpPath, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json, text/event-stream")
-	if authorization != "" {
-		req.Header.Set("Authorization", authorization)
+	if o.authorization != "" {
+		req.Header.Set("Authorization", o.authorization)
 	}
+	if o.version != "" {
+		req.Header.Set("MCP-Protocol-Version", o.version)
+	}
+	setStandardHeaders(req.Header, body)
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -72,11 +119,11 @@ func TestMCPHandler_knownBearer_toolRuns(t *testing.T) {
 	}
 }
 
-func TestMCPHandler_initialize_noSessionHeld(t *testing.T) {
+func TestMCPHandler_discover_noSessionHeld(t *testing.T) {
 	t.Parallel()
 	var calls atomic.Int32
 	h := mcpHandler(probeServer(&calls), testRegistry(t))
-	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"t","version":"t"}}}`
+	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{` + requestMeta + `}}`
 	rec := post(t, h, "Bearer "+testBearer, body)
 	if rec.Code != http.StatusOK || rec.Header().Get("Mcp-Session-Id") != "" {
 		t.Fatalf("status %d, Mcp-Session-Id %q: want 200 and no session", rec.Code, rec.Header().Get("Mcp-Session-Id"))

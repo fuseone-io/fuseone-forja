@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/fuseone-io/fuseone-forja/internal/caller"
+	"github.com/fuseone-io/fuseone-forja/internal/mcp"
 )
 
 // mcpPath is where the MCP endpoint is served.
@@ -24,25 +26,35 @@ const maxRequestBody = 1 << 20
 
 // The MCP server's bounds. Reading a request is bounded; writing a
 // response is not, since a tool call lasts as long as its run and the
-// run's own deadline bounds it. The shutdown lets a short call in
-// progress finish before cutting it off.
+// run's own deadline bounds it. A stop cancels every call in flight, and
+// the shutdown waits for a cancelled run's teardown, every step at its
+// bound, plus a margin for what runs between the steps.
 const (
 	mcpReadHeaderTimeout = 10 * time.Second
 	mcpReadTimeout       = 30 * time.Second
-	mcpShutdownTimeout   = 10 * time.Second
+	mcpShutdownTimeout   = teardownSteps*mcp.FinishTimeout + teardownMargin
+	teardownMargin       = 15 * time.Second
 )
 
+// teardownSteps is how many steps a cancelled run takes, one after the
+// other, to end: reading its workspace's proxies, removing the workspace,
+// recording the stage, recording the release's start, releasing the claim
+// and recording the run's end. Each is bounded by mcp.FinishTimeout or by
+// the workspace drivers' close bound of the same length.
+const teardownSteps = 6
+
 // mcpHandler serves server statelessly to the clients in reg: a request
-// without a bearer whose hash is in reg is answered 401 before the server
-// sees it.
+// without a bearer whose hash is in reg is answered 401, and then one not
+// on mcpProtocolVersion 400, before the server sees it. A call's context
+// ends with its request.
 func mcpHandler(server *sdk.Server, reg caller.Registry) http.Handler {
 	streamable := sdk.NewStreamableHTTPHandler(func(*http.Request) *sdk.Server { return server },
-		&sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: maxRequestBody})
+		&sdk.StreamableHTTPOptions{Stateless: true, MaxRequestBodyBytes: maxRequestBody, PropagateRequestCancellation: true})
 	// The bearers are static and rotate by restart, so a TokenInfo carries
 	// no expiration, which the middleware rejects by default.
 	bearer := auth.RequireBearerToken(verifier(reg), &auth.RequireBearerTokenOptions{AllowMissingExpiration: true})
 	mux := http.NewServeMux()
-	mux.Handle(mcpPath, bearer(streamable))
+	mux.Handle(mcpPath, bearer(requireProtocol(streamable)))
 	return mux
 }
 
@@ -76,9 +88,11 @@ type httpSinks struct {
 }
 
 // serveMCPHTTP serves server over HTTP as cfg says until ctx ends. It is
-// ready from the moment the listener opens until the drain starts. A
-// listener that cannot be opened is an error naming the variable; a server
-// stopped by ctx is not an error.
+// ready from the moment the listener opens until the drain starts. Every
+// request's context ends with ctx, so a stop cancels the calls in flight
+// and the drain waits for them to wind down. A listener that cannot be
+// opened is an error naming the variable; a server stopped by ctx is not
+// an error.
 func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConfig, out httpSinks) error {
 	ln, err := h.listen(ctx, cfg.addr)
 	if err != nil {
@@ -87,6 +101,7 @@ func (h host) serveMCPHTTP(ctx context.Context, server *sdk.Server, cfg httpConf
 	logger := log.New(out.log, "", 0)
 	server.AddReceivingMiddleware(logCalls(logger))
 	srv := newMCPServer(mcpStack(server, cfg, logger), cfg.tls)
+	srv.BaseContext = func(net.Listener) context.Context { return ctx }
 	// A server being stopped is no longer ready while it drains.
 	srv.RegisterOnShutdown(func() { out.ready.serving.Store(false) })
 	out.ready.serving.Store(true)

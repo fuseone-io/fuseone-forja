@@ -123,7 +123,7 @@ The run reuses implement's lifecycle, now shared:
 - the lease is sized from the contract;
 - the claim is taken before the clone;
 - the records are written on a context detached from the caller's, each
-  bounded by `finishTimeout`;
+  bounded by `FinishTimeout`;
 - the release happens on every outcome;
 - the work runs under the base contract's wall clock counted from the claim.
 

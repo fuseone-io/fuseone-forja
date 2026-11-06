@@ -104,7 +104,7 @@ func isASCII(s string) bool {
 }
 
 // mcpStack is the MCP endpoint as served: the Origin check, then the
-// bearer check, then the SDK.
+// bearer check, then the protocol version check, then the SDK.
 func mcpStack(server *sdk.Server, cfg httpConfig, logger *log.Logger) http.Handler {
 	return requireOrigin(cfg.origins, logger, mcpHandler(server, cfg.clients))
 }

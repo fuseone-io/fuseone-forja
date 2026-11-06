@@ -121,7 +121,7 @@ func recordedRun(ctx context.Context, deps Deps, repo string, c domain.Contract,
 	}
 	report, err := runGates(ctx, deps.Gates, run.ID, c, tree)
 	// The caller may be gone by now; the run must not stay in running.
-	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	done, cancel := context.WithTimeout(context.WithoutCancel(ctx), FinishTimeout)
 	defer cancel()
 	finished := deps.Now()
 	run.FinishedAt, run.State, run.Egress, run.Registry = &finished, domain.StateFailed, report.Egress, report.Registry

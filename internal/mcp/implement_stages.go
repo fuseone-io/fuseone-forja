@@ -101,7 +101,7 @@ func (f *flight) charge(compute time.Duration, tokens domain.TokenUsage) {
 }
 
 func (f *flight) put(ctx context.Context) error {
-	ctx, cancel := context.WithTimeout(ctx, finishTimeout)
+	ctx, cancel := context.WithTimeout(ctx, FinishTimeout)
 	defer cancel()
 	if err := f.runs.Put(ctx, f.run); err != nil {
 		return fmt.Errorf("record run: %w", err)
